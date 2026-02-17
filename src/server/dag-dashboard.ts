@@ -551,7 +551,19 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         <div id="approvalPanel" style="display:none;margin-top:10px;padding:8px;border:1px solid var(--yellow);border-radius:6px;background:rgba(234,179,8,0.08)">
           <div style="font-size:11px;color:var(--yellow);margin-bottom:4px">Waiting for approval</div>
           <div id="approvalText" style="font-size:11px;color:var(--text);margin-bottom:8px"></div>
-          <div style="display:flex;gap:8px">
+          <textarea id="approvalFeedback" placeholder="If rejecting, what should change?" style="width:100%;min-height:56px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:inherit;font-size:11px"></textarea>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+            <label style="font-size:11px;color:var(--text-dim)">On reject
+              <select id="approvalRestartMode" style="margin-left:4px;padding:4px 6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:11px">
+                <option value="refine">refine current draft</option>
+                <option value="from_scratch">restart from scratch</option>
+              </select>
+            </label>
+            <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="approvalIterate" checked /> auto-iterate
+            </label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px">
             <button id="approveBtn" style="padding:6px 10px;background:var(--green);border-color:var(--green);color:white">Approve</button>
             <button id="rejectBtn" style="padding:6px 10px;background:var(--red);border-color:var(--red);color:white">Reject</button>
           </div>
@@ -776,13 +788,35 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
     async function decideApproval(decision) {
       if (!currentRunId) return;
-      await apiFetch(API + '/api/dag/runs/' + currentRunId + '/approvals', {
+      const feedback = (document.getElementById('approvalFeedback')?.value || '').trim();
+      const restart_mode = document.getElementById('approvalRestartMode')?.value || 'refine';
+      const iterate = document.getElementById('approvalIterate')?.checked !== false;
+
+      const res = await apiFetch(API + '/api/dag/runs/' + currentRunId + '/approvals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision })
+        body: JSON.stringify({ decision, feedback, restart_mode, iterate })
       });
+      const data = await res.json().catch(() => ({}));
+
       pendingApproval = null;
       document.getElementById('approvalPanel').style.display = 'none';
+      const fbEl = document.getElementById('approvalFeedback');
+      if (fbEl) fbEl.value = '';
+
+      // Auto-follow iterated run when backend spawns a new cycle
+      if (data && data.iterated_run_id) {
+        currentRunId = data.iterated_run_id;
+        document.getElementById('runId').textContent = currentRunId;
+        document.getElementById('runStatus').textContent = 'running';
+        setupSSE(currentRunId);
+        addEventLog({
+          type: 'run:start',
+          run_id: currentRunId,
+          data: { status: 'Iterated run started', from_reject: true },
+          timestamp: new Date().toISOString(),
+        });
+      }
     }
 
     async function runDAG() {
