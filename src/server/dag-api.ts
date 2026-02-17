@@ -300,6 +300,16 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const devMode = body.devMode === true || process.env.OPENSKELO_DEV_MODE === "1";
     if (devMode) context.__dev_auto_approve = true;
 
+    // Iteration/shared-memory scaffold (phase 1)
+    const originalIntent = String((context.prompt ?? context.topic ?? context.request ?? "") as string);
+    if (!context.__shared_memory || typeof context.__shared_memory !== "object") {
+      context.__shared_memory = {
+        original_intent: originalIntent,
+        feedback_history: [],
+        decisions: [],
+      };
+    }
+
     let dag: DAGDef;
     try {
       if (file) {
@@ -610,10 +620,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     const decision = (body.decision as string) ?? "reject";
     const notes = (body.notes as string) ?? "";
+    const feedback = (body.feedback as string) ?? notes;
+    const restartMode = (body.restart_mode as string) ?? "refine"; // refine | from_scratch
 
     request.status = decision;
     request.decided_at = new Date().toISOString();
     request.notes = notes;
+    request.feedback = feedback;
+    request.restart_mode = restartMode;
 
     try {
       upsertDagApproval.run(
@@ -633,6 +647,28 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
 
     const blockId = String(request.block_id);
+
+    // Shared memory update (phase 1 persistence)
+    const shared = (entry.run.context.__shared_memory as Record<string, unknown> | undefined) ?? {};
+    const decisions = Array.isArray(shared.decisions) ? (shared.decisions as Array<Record<string, unknown>>) : [];
+    decisions.push({
+      at: new Date().toISOString(),
+      run_id: entry.run.id,
+      block_id: blockId,
+      decision,
+      feedback,
+      restart_mode: restartMode,
+    });
+    shared.decisions = decisions;
+
+    if (decision === "reject" && feedback) {
+      const history = Array.isArray(shared.feedback_history) ? (shared.feedback_history as string[]) : [];
+      history.push(feedback);
+      shared.feedback_history = history;
+      entry.run.context.__latest_feedback = feedback;
+    }
+    entry.run.context.__shared_memory = shared;
+
     if (decision === "approve") {
       entry.run.context[`__approval_${blockId}`] = true;
       entry.run.status = "running";
@@ -646,11 +682,11 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       type: "approval:decided",
       run_id: entry.run.id,
       block_id: blockId,
-      data: { decision, notes },
+      data: { decision, notes, feedback, restart_mode: restartMode },
       timestamp: new Date().toISOString(),
     });
 
-    return { status: 200 as const, payload: { ok: true, decision, run_status: entry.run.status } };
+    return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status } };
   }
 
   // Approve/reject pending human approval gate (tokened)
