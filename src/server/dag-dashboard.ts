@@ -547,6 +547,10 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           <div><span class="label">DAG:</span> <span id="runDag">—</span></div>
           <div><span class="label">Status:</span> <span id="runStatus">—</span></div>
           <div><span class="label">Elapsed:</span> <span id="runElapsed">—</span></div>
+          <div><span class="label">Cycle:</span> <span id="runCycle">1/—</span></div>
+        </div>
+        <div id="iterationHistory" style="margin-top:8px;font-size:11px;color:var(--text-dim);max-height:120px;overflow:auto;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
+          No iteration history yet
         </div>
         <div id="approvalPanel" style="display:none;margin-top:10px;padding:8px;border:1px solid var(--yellow);border-radius:6px;background:rgba(234,179,8,0.08)">
           <div style="font-size:11px;color:var(--yellow);margin-bottom:4px">Waiting for approval</div>
@@ -839,6 +843,8 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       latestBlockErrors = {};
       document.getElementById('eventLog').innerHTML = '';
       document.getElementById('networkLog').innerHTML = '';
+      const cycleEl = document.getElementById('runCycle'); if (cycleEl) cycleEl.textContent = '1/5';
+      const histEl = document.getElementById('iterationHistory'); if (histEl) histEl.textContent = 'No iteration history yet';
       if (LIVE_MODE) {
         const hint = document.getElementById('previewHint');
         const frame = document.getElementById('livePreviewFrame');
@@ -1274,6 +1280,30 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       }
     }
 
+    function updateIterationUI(run) {
+      const shared = run?.context?.__shared_memory || {};
+      const cycle = Number(shared.cycle || 1);
+      const max = Number(shared.max_cycles || 5);
+      const cycleEl = document.getElementById('runCycle');
+      if (cycleEl) cycleEl.textContent = cycle + '/' + max;
+
+      const historyEl = document.getElementById('iterationHistory');
+      if (!historyEl) return;
+      const decisions = Array.isArray(shared.decisions) ? shared.decisions : [];
+      if (!decisions.length) {
+        historyEl.textContent = 'No iteration history yet';
+        return;
+      }
+      historyEl.innerHTML = decisions.slice(-8).reverse().map((d) => {
+        const at = (d.at || '').toString().replace('T', ' ').slice(0, 19);
+        const dec = d.decision || 'decision';
+        const mode = d.restart_mode || 'refine';
+        const fb = (d.feedback || '').toString();
+        const shortFb = fb.length > 90 ? fb.slice(0, 90) + '…' : fb;
+        return '<div style="margin-bottom:6px"><b>' + dec + '</b> · ' + mode + (at ? ' · ' + at : '') + (shortFb ? '<div style="color:var(--text);margin-top:2px">' + shortFb.replace(/</g,'&lt;') + '</div>' : '') + '</div>';
+      }).join('');
+    }
+
     async function refreshRunData() {
       if (!currentRunId) return;
       try {
@@ -1300,6 +1330,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           });
           updateStats();
           applyViewFilter();
+          updateIterationUI(run);
 
           if (run.status === 'failed' || run.status === 'completed' || run.status === 'cancelled') {
             const btn = document.getElementById('runBtn');
