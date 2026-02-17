@@ -446,6 +446,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           <option value="all">all</option>
           <option value="active">active</option>
           <option value="failed">failed</option>
+          <option value="failedPath">failed-path</option>
         </select>
       </label>
       <div style="display:flex;gap:4px;align-items:center">
@@ -983,11 +984,32 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     }
 
     function applyViewFilter() {
-      const nodes = document.querySelectorAll('.block-node');
+      const nodes = Array.from(document.querySelectorAll('.block-node'));
+
+      const failedIds = new Set(nodes.filter((n) => n.classList.contains('status-failed')).map((n) => n.id.replace('block-', '')));
+      const pathIds = new Set(failedIds);
+      if (currentFilter === 'failedPath') {
+        const edges = Array.from(document.querySelectorAll('svg.edges path'));
+        // include direct upstream/downstream neighbors of failed nodes
+        edges.forEach((p) => {
+          const from = p.dataset.from;
+          const to = p.dataset.to;
+          if (failedIds.has(from) || failedIds.has(to)) {
+            if (from) pathIds.add(from);
+            if (to) pathIds.add(to);
+          }
+        });
+      }
+
       nodes.forEach((n) => {
         const isRunning = n.classList.contains('status-running');
         const isFailed = n.classList.contains('status-failed');
-        const show = currentFilter === 'all' || (currentFilter === 'active' && isRunning) || (currentFilter === 'failed' && isFailed);
+        const id = n.id.replace('block-', '');
+        const show =
+          currentFilter === 'all' ||
+          (currentFilter === 'active' && isRunning) ||
+          (currentFilter === 'failed' && isFailed) ||
+          (currentFilter === 'failedPath' && pathIds.has(id));
         n.style.display = show ? 'block' : 'none';
       });
 
