@@ -114,6 +114,36 @@ flowchart TD
   F --> G
 ```
 
+### Visual: Approval flow (Telegram/UI ↔ Runtime)
+
+```mermaid
+sequenceDiagram
+  participant U as User (Andy)
+  participant T as Telegram/UI
+  participant A as OpenSkelo API
+  participant E as DAG Executor
+  participant P as Provider Adapter
+
+  E->>P: Execute next block
+  P-->>E: Block reaches approval-required step
+  E->>A: Emit approval:requested
+  A->>T: Send approval prompt
+  T->>U: "APPROVE or REJECT"
+
+  U->>T: APPROVE (or REJECT <reason>)
+  T->>A: POST /api/dag/runs/:id/approvals
+  A->>E: Apply decision
+
+  alt Approved
+    E->>E: Resume run
+    E->>P: Continue next block dispatch
+  else Rejected
+    E->>E: Mark run failed/cancelled path
+  end
+
+  A-->>T: approval:decided + updated run status
+```
+
 ### Visual: Runtime lifecycle for one block
 
 ```text

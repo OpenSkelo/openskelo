@@ -179,6 +179,22 @@ flowchart TD
   F --> G
 ```
 
+Approval flow (high level):
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Channel as Telegram/UI
+  participant API as OpenSkelo API
+  participant Exec as DAG Executor
+
+  Exec->>API: approval:requested
+  API->>Channel: notify
+  User->>Channel: APPROVE / REJECT
+  Channel->>API: approval decision
+  API->>Exec: resume or fail path
+```
+
 ### 4. Gates enforce quality — deterministically
 
 Gates are rules that **cannot be broken**. The API rejects transitions that fail gates.
