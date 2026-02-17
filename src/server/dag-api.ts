@@ -642,6 +642,42 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     });
   });
 
+  // Emergency stop all active runs
+  app.post("/api/dag/runs/stop-all", (c) => {
+    let stopped = 0;
+    const now = new Date().toISOString();
+
+    for (const [runId, entry] of activeRuns.entries()) {
+      const status = entry.run.status;
+      if (status === "completed" || status === "failed" || status === "cancelled") continue;
+
+      entry.run.status = "cancelled";
+      for (const block of Object.values(entry.run.blocks)) {
+        if (block.status === "running" || block.status === "pending" || block.status === "ready" || block.status === "retrying") {
+          block.status = "skipped";
+        }
+      }
+
+      const ctl = runAbortControllers.get(runId);
+      if (ctl && !ctl.signal.aborted) ctl.abort("emergency stop-all");
+      runAbortControllers.delete(runId);
+
+      const t = runSafetyTimers.get(runId); if (t) clearTimeout(t);
+      runSafetyTimers.delete(runId);
+
+      persistRunSnapshot(entry);
+      broadcast(runId, {
+        type: "run:fail",
+        run_id: runId,
+        data: { status: "cancelled", reason: "emergency_stop_all", stopped_at: now },
+        timestamp: now,
+      });
+      stopped++;
+    }
+
+    return c.json({ ok: true, stopped });
+  });
+
   // Stop/cancel a run
   app.post("/api/dag/runs/:id/stop", (c) => {
     const runId = c.req.param("id");
