@@ -421,6 +421,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         <option value="openclaw">🦞 OpenClaw (real agents)</option>
       </select>
       <input id="topicInput" placeholder="Enter pipeline input (e.g., research about cats vs dogs)" style="width:420px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px" />
+      <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:6px"><input type="checkbox" id="devModeToggle" /> dev mode</label>
       <button class="primary" id="runBtn" disabled>▶ Run DAG</button>
       <button id="stopBtn" style="display:none;background:var(--red);border-color:var(--red);color:white;font-weight:600">■ Stop</button>
     </div>
@@ -677,11 +678,13 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         }
       }
       if (!currentDag) return;
+
       const btn = document.getElementById('runBtn');
-      staleRunDetected = false;
-      btn.disabled = true;
-      btn.textContent = '⏳ Running...';
-      document.getElementById('stopBtn').style.display = 'inline-block';
+      try {
+        staleRunDetected = false;
+        btn.disabled = true;
+        btn.textContent = '⏳ Running...';
+        document.getElementById('stopBtn').style.display = 'inline-block';
 
       // Reset UI
       document.getElementById('eventLog').innerHTML = '';
@@ -711,8 +714,8 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         context: buildContext(currentDag.name, userTopic),
         provider: providerMode,
         timeoutSeconds: 300,
-        devMode: true,
       };
+      if (document.getElementById('devModeToggle')?.checked) reqBody.devMode = true;
 
       const res = await apiFetch(API + '/api/dag/run', {
         method: 'POST',
@@ -721,6 +724,9 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       });
 
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || ('Run failed to start (HTTP ' + res.status + ')'));
+      }
       currentRunId = data.run_id;
       currentRunData = null;
 
@@ -772,6 +778,15 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       eventSource.addEventListener('run:start', onSseEvent(handleEvent));
       eventSource.addEventListener('run:complete', onSseEvent(handleRunEnd));
       eventSource.addEventListener('run:fail', onSseEvent(handleRunEnd));
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = '▶ Run DAG';
+        document.getElementById('stopBtn').style.display = 'none';
+        clearInterval(elapsedInterval);
+        const msg = err?.message || String(err);
+        document.getElementById('runStatus').textContent = 'failed';
+        addEventLog({ type: 'run:fail', run_id: 'ui', data: { status: msg }, timestamp: new Date().toISOString() });
+      }
     }
 
     function handleEvent(event) {
