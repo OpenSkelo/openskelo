@@ -68,6 +68,87 @@ Example (conceptual):
 
 `spec -> build -> qa -> release`
 
+### Visual: What a single block contains
+
+```text
+┌──────────────────────────────────────────────┐
+│ Block: build                                │
+├──────────────────────────────────────────────┤
+│ Inputs   : game_spec, dev_plan              │
+│ Agent    : role=worker (mapped to rei)      │
+│ Pre-gates: required inputs present          │
+│ Execute  : provider dispatch (OpenClaw)     │
+│ Post-gates: artifact_html must exist        │
+│ Retry    : max_attempts=2, backoff=linear   │
+│ Output   : artifact_html, changelog, branch │
+└──────────────────────────────────────────────┘
+```
+
+### Visual: How blocks tie into OpenSkelo architecture
+
+```text
+DAG YAML
+  ↓ parse
+Block Engine (types/wiring/gates)
+  ↓ ready-to-run blocks
+DAG Executor (scheduling + retries + approvals)
+  ↓ dispatch
+Provider Adapter (OpenClaw/Ollama/OpenAI/...)
+  ↓ result
+Runtime State (run + block metadata)
+  ↓ persist
+SQLite (dag_runs, dag_events, dag_approvals)
+  ↓ surface
+API + SSE + /dag Dashboard
+```
+
+```mermaid
+flowchart TD
+  A[DAG YAML] --> B[Block Engine\nparse + validate + wire]
+  B --> C[DAG Executor\nready queue + retries + approvals + stop]
+  C --> D[Provider Adapter\nOpenClaw / Ollama / OpenAI / HTTP]
+  D --> E[Runtime State\nrun + block metadata]
+  E --> F[(SQLite\ndag_runs / dag_events / dag_approvals)]
+  E --> G[API + SSE]
+  G --> H[/dag Dashboard]
+  F --> G
+```
+
+### Visual: Runtime lifecycle for one block
+
+```text
+pending → ready → running → completed
+                     │
+                     ├─ pre/post gate fail → retrying → pending
+                     ├─ approval required → paused_approval
+                     ├─ stop/timeout/stall → skipped/cancelled
+                     └─ unrecoverable error → failed
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending
+  pending --> ready
+  ready --> running
+  running --> completed
+
+  running --> retrying: gate fail / dispatch fail
+  retrying --> pending: retry delay elapsed
+
+  ready --> paused_approval: approval required
+  paused_approval --> ready: approved
+  paused_approval --> failed: rejected
+
+  running --> cancelled: stop / timeout / stall
+  pending --> cancelled: stop / timeout / stall
+  ready --> cancelled: stop / timeout / stall
+  cancelled --> [*]
+
+  running --> failed: unrecoverable error
+  failed --> [*]
+  completed --> [*]
+```
+
 ---
 
 ## Core Components

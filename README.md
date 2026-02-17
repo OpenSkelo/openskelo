@@ -151,6 +151,34 @@ Think of it like this:
 
 OpenSkelo runs blocks in dependency order, tracks each block's runtime metadata, and lets you inspect/replay runs safely.
 
+Quick architecture view:
+
+```text
+[DAG YAML]
+   ↓
+[Block Engine] → validate types/wiring/gates
+   ↓
+[DAG Executor] → run/order/retry/approval/stop
+   ↓
+[Provider Adapter] → OpenClaw (or other provider)
+   ↓
+[Runtime + DB] → run state, events, approvals
+   ↓
+[API + SSE + Dashboard]
+```
+
+```mermaid
+flowchart TD
+  A[DAG YAML] --> B[Block Engine]
+  B --> C[DAG Executor]
+  C --> D[Provider Adapter]
+  D --> E[Runtime State]
+  E --> F[(SQLite)]
+  E --> G[API + SSE]
+  G --> H[Dashboard]
+  F --> G
+```
+
 ### 4. Gates enforce quality — deterministically
 
 Gates are rules that **cannot be broken**. The API rejects transitions that fail gates.
