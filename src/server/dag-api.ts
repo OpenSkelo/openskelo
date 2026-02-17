@@ -44,6 +44,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     maxBlockDurationMs: Number(process.env.OPENSKELO_MAX_BLOCK_DURATION_MS ?? String(10 * 60 * 1000)),
     maxRetriesCap: Number(process.env.OPENSKELO_MAX_RETRIES_CAP ?? "2"),
     stallTimeoutMs: Number(process.env.OPENSKELO_STALL_TIMEOUT_MS ?? String(5 * 60 * 1000)),
+    orphanTimeoutMs: Number(process.env.OPENSKELO_ORPHAN_TIMEOUT_MS ?? String(2 * 60 * 1000)),
   };
 
   // Phase A durability: persist DAG runs/events/approvals
@@ -130,6 +131,46 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     );
   }
 
+  function reconcileOrphanedRun(runId: string): boolean {
+    if (activeRuns.has(runId)) return false;
+    const row = db.prepare("SELECT id, status, run_json, updated_at FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
+    if (!row) return false;
+    const status = String(row.status ?? "");
+    if (!["running", "paused_approval", "pending"].includes(status)) return false;
+
+    const updatedAt = new Date(String(row.updated_at ?? 0)).getTime();
+    if (!updatedAt || (Date.now() - updatedAt) < safety.orphanTimeoutMs) return false;
+
+    const run = JSON.parse(String(row.run_json ?? "{}"));
+    run.status = "failed";
+    if (run.blocks && typeof run.blocks === "object") {
+      for (const block of Object.values(run.blocks as Record<string, Record<string, unknown>>)) {
+        if (block.status === "running") block.status = "failed";
+      }
+    }
+
+    const now = new Date().toISOString();
+    db.prepare("UPDATE dag_runs SET status = ?, run_json = ?, updated_at = ? WHERE id = ?").run(
+      "failed",
+      JSON.stringify(run),
+      now,
+      runId
+    );
+    try {
+      insertDagEvent.run(
+        `dgev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        runId,
+        "run:fail",
+        null,
+        JSON.stringify({ status: "failed", error_code: "ORPHANED_RUN", reason: "No active execution heartbeat" }),
+        now
+      );
+    } catch {
+      // best effort
+    }
+    return true;
+  }
+
   function clearRunGuards(runId: string) {
     const t1 = runSafetyTimers.get(runId); if (t1) clearTimeout(t1);
     runSafetyTimers.delete(runId);
@@ -201,6 +242,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   }
 
   app.get("/api/dag/safety", (c) => c.json({ safety }));
+
+  // Startup orphan sweep (durable runs marked running with no active execution)
+  try {
+    const candidates = db.prepare("SELECT id FROM dag_runs WHERE status IN ('running','paused_approval','pending')").all() as Array<Record<string, unknown>>;
+    for (const c of candidates) reconcileOrphanedRun(String(c.id));
+  } catch {
+    // best effort
+  }
 
   // List available example DAGs
   app.get("/api/dag/examples", (c) => {
@@ -505,6 +554,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
 
     // Fallback to durable store (Phase A)
+    reconcileOrphanedRun(runId);
     const row = db.prepare("SELECT * FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
     if (!row) return c.json({ error: "Not found" }, 404);
     const events = db.prepare("SELECT rowid as seq, event_type, run_id, block_id, data_json, timestamp FROM dag_events WHERE run_id = ? ORDER BY rowid ASC").all(runId) as Array<Record<string, unknown>>;
@@ -841,7 +891,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       durable: false,
     }));
 
-    const durableRows = db.prepare("SELECT id, dag_name, status, run_json, created_at FROM dag_runs ORDER BY updated_at DESC LIMIT 200").all() as Array<Record<string, unknown>>;
+    let durableRows = db.prepare("SELECT id, dag_name, status, run_json, created_at FROM dag_runs ORDER BY updated_at DESC LIMIT 200").all() as Array<Record<string, unknown>>;
+    for (const row of durableRows) reconcileOrphanedRun(String(row.id));
+    durableRows = db.prepare("SELECT id, dag_name, status, run_json, created_at FROM dag_runs ORDER BY updated_at DESC LIMIT 200").all() as Array<Record<string, unknown>>;
     const activeIds = new Set(active.map((r) => r.id));
     const durableOnly = durableRows
       .filter((r) => !activeIds.has(String(r.id)))
