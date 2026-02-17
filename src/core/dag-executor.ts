@@ -393,6 +393,43 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const outputs = parseAgentOutputs(blockDef, dispatchResult.output ?? "");
     const durationMs = Date.now() - startTime;
 
+    // Enforce required output contract at core level
+    const missingRequired = Object.entries(blockDef.outputs)
+      .filter(([_, def]) => def.required !== false)
+      .filter(([key]) => {
+        const v = outputs[key];
+        return v === undefined || v === null || (typeof v === "string" && v.trim() === "");
+      })
+      .map(([key]) => key);
+
+    if (missingRequired.length > 0) {
+      const err = `Missing required outputs: ${missingRequired.join(", ")}`;
+      const execution: BlockExecution = {
+        agent_id: dispatchResult.actualAgentId ?? agent.id,
+        provider: agent.provider,
+        model: dispatchResult.actualModel ?? agent.model,
+        raw_output: dispatchResult.output ?? "",
+        tokens_in: dispatchResult.tokensUsed ?? 0,
+        tokens_out: 0,
+        duration_ms: durationMs,
+        error: err,
+      };
+      engine.failBlock(run, blockId, err, blockDef);
+      opts.onBlockFail?.(run, blockId, err);
+      trace.push({
+        block_id: blockId,
+        instance_id: run.blocks[blockId].instance_id,
+        status: "failed",
+        inputs,
+        outputs,
+        pre_gates: preGates,
+        post_gates: [],
+        execution,
+        duration_ms: durationMs,
+      });
+      return;
+    }
+
     // Update runtime assignee/model to actual dispatched worker when provider reports it
     if (dispatchResult.actualAgentId) run.blocks[blockId].active_agent_id = dispatchResult.actualAgentId;
     if (dispatchResult.actualModel) run.blocks[blockId].active_model = dispatchResult.actualModel;
