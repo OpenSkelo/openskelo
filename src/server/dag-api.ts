@@ -29,6 +29,7 @@ interface DAGEvent {
 const activeRuns = new Map<string, { dag: DAGDef; run: DAGRun; result?: ExecutorResult }>();
 const runAbortControllers = new Map<string, AbortController>();
 const runSafetyTimers = new Map<string, NodeJS.Timeout>();
+const runStallTimers = new Map<string, NodeJS.Timeout>();
 const runEvents = new Map<string, DAGEvent[]>();
 const sseClients = new Map<string, Set<(event: DAGEvent) => void>>();
 
@@ -42,6 +43,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     maxRunDurationMs: Number(process.env.OPENSKELO_MAX_RUN_DURATION_MS ?? String(30 * 60 * 1000)),
     maxBlockDurationMs: Number(process.env.OPENSKELO_MAX_BLOCK_DURATION_MS ?? String(10 * 60 * 1000)),
     maxRetriesCap: Number(process.env.OPENSKELO_MAX_RETRIES_CAP ?? "2"),
+    stallTimeoutMs: Number(process.env.OPENSKELO_STALL_TIMEOUT_MS ?? String(5 * 60 * 1000)),
   };
 
   // Phase A durability: persist DAG runs/events/approvals
@@ -128,6 +130,45 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     );
   }
 
+  function clearRunGuards(runId: string) {
+    const t1 = runSafetyTimers.get(runId); if (t1) clearTimeout(t1);
+    runSafetyTimers.delete(runId);
+    const t2 = runStallTimers.get(runId); if (t2) clearTimeout(t2);
+    runStallTimers.delete(runId);
+  }
+
+  function armStallTimer(runId: string) {
+    const prev = runStallTimers.get(runId);
+    if (prev) clearTimeout(prev);
+
+    const t = setTimeout(() => {
+      const live = activeRuns.get(runId);
+      if (!live) return;
+      if (live.run.status === "completed" || live.run.status === "failed" || live.run.status === "cancelled") return;
+
+      live.run.status = "cancelled";
+      for (const block of Object.values(live.run.blocks)) {
+        if (block.status === "running" || block.status === "pending" || block.status === "ready" || block.status === "retrying") {
+          block.status = "skipped";
+        }
+      }
+
+      const ctl = runAbortControllers.get(runId);
+      if (ctl && !ctl.signal.aborted) ctl.abort("run stalled");
+      runAbortControllers.delete(runId);
+      clearRunGuards(runId);
+      persistRunSnapshot(live);
+      broadcast(runId, {
+        type: "run:fail",
+        run_id: runId,
+        data: { status: "cancelled", reason: "stall_timeout_exceeded" },
+        timestamp: new Date().toISOString(),
+      });
+    }, safety.stallTimeoutMs);
+
+    runStallTimers.set(runId, t);
+  }
+
   // Broadcast event to all SSE clients for a run
   function broadcast(runId: string, event: DAGEvent) {
     const events = runEvents.get(runId) ?? [];
@@ -152,6 +193,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const clients = sseClients.get(runId);
     if (clients) {
       for (const cb of clients) cb(event);
+    }
+
+    if (["run:start", "block:start", "block:complete", "block:fail", "approval:requested", "approval:decided"].includes(event.type)) {
+      armStallTimer(runId);
     }
   }
 
@@ -309,8 +354,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
         runAbortControllers.delete(run.id);
-        const t = runSafetyTimers.get(run.id); if (t) clearTimeout(t);
-        runSafetyTimers.delete(run.id);
+        clearRunGuards(run.id);
         broadcast(run.id, {
           type: "run:complete",
           run_id: run.id,
@@ -322,8 +366,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
         runAbortControllers.delete(run.id);
-        const t = runSafetyTimers.get(run.id); if (t) clearTimeout(t);
-        runSafetyTimers.delete(run.id);
+        clearRunGuards(run.id);
         broadcast(run.id, {
           type: "run:fail",
           run_id: run.id,
@@ -403,6 +446,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       const ctl = runAbortControllers.get(initialRun.id);
       if (ctl && !ctl.signal.aborted) ctl.abort("run exceeded max duration");
       runAbortControllers.delete(initialRun.id);
+      clearRunGuards(initialRun.id);
       persistRunSnapshot(live);
       broadcast(initialRun.id, {
         type: "run:fail",
@@ -423,12 +467,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       if (initialRun.status === "cancelled") {
         runAbortControllers.delete(initialRun.id);
       }
-      const t = runSafetyTimers.get(initialRun.id); if (t) clearTimeout(t);
-      runSafetyTimers.delete(initialRun.id);
+      clearRunGuards(initialRun.id);
     }).catch((err) => {
       runAbortControllers.delete(initialRun.id);
-      const t = runSafetyTimers.get(initialRun.id); if (t) clearTimeout(t);
-      runSafetyTimers.delete(initialRun.id);
+      clearRunGuards(initialRun.id);
       console.error("[dag-api] Run failed:", err);
     });
 
@@ -661,9 +703,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       const ctl = runAbortControllers.get(runId);
       if (ctl && !ctl.signal.aborted) ctl.abort("emergency stop-all");
       runAbortControllers.delete(runId);
-
-      const t = runSafetyTimers.get(runId); if (t) clearTimeout(t);
-      runSafetyTimers.delete(runId);
+      clearRunGuards(runId);
 
       persistRunSnapshot(entry);
       broadcast(runId, {
@@ -688,8 +728,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       const ctl = runAbortControllers.get(runId);
       if (ctl && !ctl.signal.aborted) ctl.abort("run stopped by user");
       runAbortControllers.delete(runId);
-      const t = runSafetyTimers.get(runId); if (t) clearTimeout(t);
-      runSafetyTimers.delete(runId);
+      clearRunGuards(runId);
       for (const block of Object.values(entry.run.blocks)) {
         if (block.status === "running" || block.status === "pending" || block.status === "ready") {
           block.status = "skipped";
