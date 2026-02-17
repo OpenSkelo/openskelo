@@ -1,24 +1,21 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { getDB } from "../core/db.js";
-import { getDashboardHTML } from "./dashboard.js";
-import type { SkeloConfig, RunContext, RunStepInput } from "../types.js";
+import type { SkeloConfig } from "../types.js";
 import type { createTaskEngine } from "../core/task-engine.js";
 import type { createGateEngine } from "../core/gate-engine.js";
 import type { createRouter } from "../core/router.js";
-import type { createRunEngine } from "../core/run-engine.js";
 
 interface APIContext {
   config: SkeloConfig;
   taskEngine: ReturnType<typeof createTaskEngine>;
   gateEngine: ReturnType<typeof createGateEngine>;
   router: ReturnType<typeof createRouter>;
-  runEngine: ReturnType<typeof createRunEngine>;
 }
 
 export function createAPI(ctx: APIContext) {
   const app = new Hono();
-  const { config, taskEngine, gateEngine, runEngine } = ctx;
+  const { config, taskEngine, gateEngine } = ctx;
 
   app.use("*", cors());
 
@@ -161,156 +158,10 @@ export function createAPI(ctx: APIContext) {
     return c.json({ gateLogs: rows });
   });
 
-  // Legacy run-loop endpoints (deprecated; DAG API is canonical)
-  const withRunsDeprecation = (c: any) => {
-    c.header("Deprecation", "true");
-    c.header("Sunset", "2026-03-31");
-    c.header("Link", '</api/dag>; rel="successor-version"');
-    c.header("Warning", '299 - "Legacy /api/runs endpoints are deprecated; use /api/dag/*"');
-  };
-
-  app.post("/api/runs", async (c) => {
-    withRunsDeprecation(c);
-    const raw = await c.req.json();
-    const parsed = parseCreateRunBody(raw);
-    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-
-    const run = runEngine.createRun({
-      originalPrompt: parsed.value.original_prompt,
-      context: parsed.value.context,
-    });
-
-    return c.json({ run }, 201);
-  });
-
-  app.get("/api/runs/:id", (c) => {
-    withRunsDeprecation(c);
-    const run = runEngine.getRun(c.req.param("id"));
-    if (!run) return c.json({ error: "Not found" }, 404);
-    return c.json({ run, events: runEngine.getEvents(run.id), steps: runEngine.listSteps(run.id) });
-  });
-
-  app.get("/api/runs/:id/steps", (c) => {
-    withRunsDeprecation(c);
-    const run = runEngine.getRun(c.req.param("id"));
-    if (!run) return c.json({ error: "Not found" }, 404);
-    return c.json({ steps: runEngine.listSteps(run.id) });
-  });
-
-  app.post("/api/runs/:id/step", async (c) => {
-    withRunsDeprecation(c);
-    const raw = await c.req.json().catch(() => ({}));
-    const headerIdempotencyKey = c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key");
-    const parsed = parseStepInput(raw, headerIdempotencyKey);
-    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-
-    const result = runEngine.step(c.req.param("id"), parsed.value);
-    if (!result.ok) {
-      const errorStatus =
-        result.status === 404 ? 404 : result.status === 409 ? 409 : result.status === 500 ? 500 : 400;
-      return c.json({ error: result.error, code: result.code, gate: result.gate }, errorStatus);
-    }
-
-    return c.json({ run: result.run, events: result.events, deduplicated: result.deduplicated ?? false });
-  });
-
-  app.get("/api/runs/:id/context", (c) => {
-    withRunsDeprecation(c);
-    const run = runEngine.getRun(c.req.param("id"));
-    if (!run) return c.json({ error: "Not found" }, 404);
-    return c.json({ context: run.context });
-  });
-
-  app.post("/api/runs/:id/context", async (c) => {
-    withRunsDeprecation(c);
-    const raw = await c.req.json();
-    if (!isPlainObject(raw)) return c.json({ error: "context body must be an object" }, 400);
-
-    try {
-      const run = runEngine.setContext(c.req.param("id"), raw as RunContext);
-      return c.json({ context: run.context });
-    } catch (err) {
-      return c.json({ error: (err as Error).message }, 404);
-    }
-  });
-
-  app.get("/api/runs/:id/artifact", (c) => {
-    withRunsDeprecation(c);
-    const artifact = runEngine.getArtifact(c.req.param("id"));
-    if (!artifact) return c.json({ error: "Not found" }, 404);
-    return c.json(artifact);
-  });
-
-  app.get("/api/runs/:id/artifact/content", (c) => {
-    withRunsDeprecation(c);
-    const artifact = runEngine.getArtifactContent(c.req.param("id"));
-    if (!artifact) return c.json({ error: "Artifact not found" }, 404);
-    return c.text(artifact.content, 200, { "Content-Type": "text/html; charset=utf-8" });
-  });
-
   if (config.dashboard.enabled) {
-    app.get("/dashboard", (c) => c.html(getDashboardHTML(config.name, config.dashboard.port)));
-    app.get("/", (c) => c.redirect("/dashboard"));
+    app.get("/dashboard", (c) => c.redirect("/dag"));
+    app.get("/", (c) => c.redirect("/dag"));
   }
 
   return app;
-}
-
-function parseCreateRunBody(raw: unknown):
-  | { ok: true; value: { original_prompt: string; context?: RunContext } }
-  | { ok: false; error: string } {
-  if (!isPlainObject(raw)) return { ok: false, error: "Body must be an object" };
-
-  const prompt = raw.original_prompt;
-  if (typeof prompt !== "string" || prompt.trim().length === 0) {
-    return { ok: false, error: "original_prompt is required" };
-  }
-
-  if (raw.context !== undefined && !isPlainObject(raw.context)) {
-    return { ok: false, error: "context must be an object" };
-  }
-
-  return {
-    ok: true,
-    value: { original_prompt: prompt.trim(), context: raw.context as RunContext | undefined },
-  };
-}
-
-function parseStepInput(raw: unknown, headerIdempotencyKey?: string):
-  | { ok: true; value: RunStepInput }
-  | { ok: false; error: string } {
-  if (raw === null || raw === undefined) return { ok: true, value: {} };
-  if (!isPlainObject(raw)) return { ok: false, error: "Body must be an object" };
-
-  if (raw.reviewApproved !== undefined && typeof raw.reviewApproved !== "boolean") {
-    return { ok: false, error: "reviewApproved must be a boolean" };
-  }
-
-  if (raw.contextPatch !== undefined && !isPlainObject(raw.contextPatch)) {
-    return { ok: false, error: "contextPatch must be an object" };
-  }
-
-  if (raw.idempotencyKey !== undefined && typeof raw.idempotencyKey !== "string") {
-    return { ok: false, error: "idempotencyKey must be a string" };
-  }
-
-  const bodyIdempotencyKey = typeof raw.idempotencyKey === "string" ? raw.idempotencyKey.trim() : undefined;
-  const requestIdempotencyKey = headerIdempotencyKey?.trim();
-
-  if (requestIdempotencyKey && bodyIdempotencyKey && requestIdempotencyKey !== bodyIdempotencyKey) {
-    return { ok: false, error: "idempotency key mismatch between header and body" };
-  }
-
-  return {
-    ok: true,
-    value: {
-      reviewApproved: raw.reviewApproved as boolean | undefined,
-      contextPatch: raw.contextPatch as RunContext | undefined,
-      idempotencyKey: requestIdempotencyKey || bodyIdempotencyKey,
-    },
-  };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -317,79 +317,35 @@ Done
 | GET | `/api/logs` | Audit log |
 | GET | `/api/gate-log` | Gate execution log |
 
-## Block Core MVP
+## DAG Runtime Contracts (Canonical)
 
-OpenSkelo now includes a deterministic **run/block engine** for observer-mode dashboards.
+OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 
-### Block loop contract
+### Core endpoints
+- `POST /api/dag/run` — start a DAG run (example or inline DAG)
+- `GET /api/dag/runs` — list active + durable runs
+- `GET /api/dag/runs/:id` — run state (active or durable fallback)
+- `GET /api/dag/runs/:id/events` — SSE stream with replay support
+- `GET /api/dag/runs/:id/replay?since=<seq>` — deterministic replay cursor API
+- `POST /api/dag/runs/:id/stop` — hard stop one run
+- `POST /api/dag/runs/stop-all` — emergency hard stop all active runs
+- `GET /api/dag/safety` — effective safety policy
 
-`PLAN -> EXECUTE -> REVIEW -> DONE -> PLAN`
+### Determinism and durability
+- Events are persisted with sequence IDs (`seq`) for replay.
+- SSE supports `Last-Event-ID`/`since` resumption.
+- Run snapshots/events/approvals are durable in SQLite:
+  - `dag_runs`
+  - `dag_events`
+  - `dag_approvals`
 
-- Every `POST /api/runs/:id/step` advances exactly one transition.
-- `REVIEW -> DONE` is gate-protected and requires `reviewApproved: true` (in step body or run context).
-- Gate failures return `400` with gate details.
-- Invalid transition state returns `400`.
-
-#### Idempotency contract for step retries
-
-Step retries support idempotency keys through either:
-
-- request header: `Idempotency-Key` (or `X-Idempotency-Key`)
-- request body field: `idempotencyKey`
-
-Semantics:
-
-- same key + same payload => deduplicated replay (`200`, `deduplicated: true`)
-- same key + different payload => deterministic conflict (`409`, `code: IDEMPOTENCY_KEY_REUSED`)
-- mismatched header/body keys => `400`
-
-#### Transactional concurrency control
-
-Run mutation for `/step` is atomic in one SQLite transaction:
-
-1. conditional `runs` update (optimistic `run_version` compare-and-swap)
-2. `run_steps` insert
-3. `run_events` append
-4. optional idempotency response record insert
-
-Concurrent stale writers fail deterministically with `409` and `code: RUN_STEP_CONFLICT`.
-
-### Run model
-
-Each run stores:
-- `original_prompt`
-- `current_block`, `iteration`
-- shared `context`
-- `blocks` output history (backward-compatible aggregate)
-- latest `artifact_path` + `artifact_preview`
-
-Each executed transition is also persisted as a first-class `run_step` record with:
-- `step_index` (strictly increasing per run)
-- `transition` (`FROM->TO`)
-- `block`, `agent`, `output`
-- `context_snapshot`, `timestamp`
-- artifact metadata for that step
-
-Artifacts are now persisted to local disk under `.skelo/artifacts/...` (derived from `artifact_path`), making UI preview/read APIs observer-only against real local files.
-
-The `DONE` block output always includes:
-- `"what else can we improve on this?"`
-- the original prompt
-
-### Legacy endpoints (deprecated)
-
-> ` /api/runs/* ` is now legacy. Use ` /api/dag/* ` for the canonical runtime.
-
-- `POST /api/runs` — create run (legacy)
-- `GET /api/runs/:id` — run state/events/steps (legacy)
-- `GET /api/runs/:id/steps` — step records (legacy)
-- `POST /api/runs/:id/step` — single-step transition (legacy)
-- `GET /api/runs/:id/context` — get shared context (legacy)
-- `POST /api/runs/:id/context` — patch shared context (legacy)
-- `GET /api/runs/:id/artifact` — artifact metadata (legacy)
-- `GET /api/runs/:id/artifact/content` — artifact HTML (legacy)
-
-Preferred runtime endpoints live under ` /api/dag/* `.
+### Safety guarantees
+- Max concurrent run cap
+- Max run duration auto-cancel
+- Max block duration cap
+- Retry cap enforcement
+- Stall watchdog auto-cancel on no-progress
+- Stop actions abort active dispatches immediately
 
 ---
 
@@ -406,27 +362,9 @@ The demo at `localhost:4040` has:
 
 ---
 
-## Missing: Agent Execution
+## Runtime Execution Status
 
-The engine currently:
-- ✅ Manages task state
-- ✅ Validates transitions with gates
-- ✅ Routes to agents
-- ❌ Does NOT actually execute agents
-
-**What's needed:**
-- Provider adapter that spawns real agents (OpenClaw, Ollama, etc.)
-- `/api/dispatch` endpoint that:
-  1. Takes task + context + acceptance criteria
-  2. Spawns agent via provider
-  3. Captures output
-  4. Returns result for REVIEW
-
-**Dashboard should show:**
-- What was planned (context, acceptance criteria)
-- What is being executed (real-time output from assigned agent)
-- What was reviewed (gate results, feedback)
-- Live preview (artifact from agent output)
+The DAG runtime executes real provider dispatches (OpenClaw-native path enabled), streams live events, and persists run/event/approval state for replay and audit.
 
 ---
 
