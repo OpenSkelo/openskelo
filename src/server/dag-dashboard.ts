@@ -437,6 +437,18 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       </select>
       <input id="topicInput" placeholder="Enter pipeline input (e.g., research about cats vs dogs)" style="width:420px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px" />
       <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:6px"><input type="checkbox" id="devModeToggle" /> dev mode</label>
+      <label style="font-size:11px;color:var(--text-dim)">filter
+        <select id="viewFilter" style="margin-left:4px;padding:4px 6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:11px">
+          <option value="all">all</option>
+          <option value="active">active</option>
+          <option value="failed">failed</option>
+        </select>
+      </label>
+      <div style="display:flex;gap:4px;align-items:center">
+        <button id="zoomOutBtn" style="padding:4px 8px">−</button>
+        <button id="zoomResetBtn" style="padding:4px 8px">100%</button>
+        <button id="zoomInBtn" style="padding:4px 8px">＋</button>
+      </div>
       <button class="primary" id="runBtn" disabled>▶ Run DAG</button>
       <button id="stopBtn" style="display:none;background:var(--red);border-color:var(--red);color:white;font-weight:600">■ Stop</button>
     </div>
@@ -546,6 +558,8 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     let latestBlockErrors = {};
     let lastSseEventAt = 0;
     let sseWatchdog = null;
+    let dagZoom = 1;
+    let currentFilter = 'all';
 
     // Load examples
     async function loadDagByFile(file) {
@@ -594,6 +608,10 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     document.getElementById('approveBtn').addEventListener('click', () => decideApproval('approve'));
     document.getElementById('rejectBtn').addEventListener('click', () => decideApproval('reject'));
     document.getElementById('copyInspectorBtn').addEventListener('click', copyInspectorJson);
+    document.getElementById('viewFilter').addEventListener('change', (e) => { currentFilter = e.target.value; applyViewFilter(); });
+    document.getElementById('zoomInBtn').addEventListener('click', () => setDagZoom(dagZoom + 0.1));
+    document.getElementById('zoomOutBtn').addEventListener('click', () => setDagZoom(dagZoom - 0.1));
+    document.getElementById('zoomResetBtn').addEventListener('click', () => setDagZoom(1));
 
     // OpenClaw-only mode for now (no mock toggle)
 
@@ -898,6 +916,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
       // Update stats + fetch latest run JSON snapshot
       updateStats();
+      applyViewFilter();
       addEventLog(event);
       refreshRunData().then(() => { if (LIVE_MODE) focusActiveBlock(); });
     }
@@ -932,6 +951,27 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       document.getElementById('statDone').textContent = done;
       document.getElementById('statRunning').textContent = running;
       document.getElementById('statFailed').textContent = failed;
+    }
+
+    function setDagZoom(next) {
+      dagZoom = Math.max(0.6, Math.min(1.6, next));
+      const container = document.getElementById('dagContainer');
+      if (container) {
+        container.style.transformOrigin = 'top left';
+        container.style.transform = 'scale(' + dagZoom.toFixed(2) + ')';
+      }
+      const reset = document.getElementById('zoomResetBtn');
+      if (reset) reset.textContent = Math.round(dagZoom * 100) + '%';
+    }
+
+    function applyViewFilter() {
+      const nodes = document.querySelectorAll('.block-node');
+      nodes.forEach((n) => {
+        const isRunning = n.classList.contains('status-running');
+        const isFailed = n.classList.contains('status-failed');
+        const show = currentFilter === 'all' || (currentFilter === 'active' && isRunning) || (currentFilter === 'failed' && isFailed);
+        n.style.display = show ? 'block' : 'none';
+      });
     }
 
     function addEventLog(event) {
@@ -1200,6 +1240,9 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         path.dataset.to = edge.to;
         svg.appendChild(path);
       }
+
+      setDagZoom(dagZoom);
+      applyViewFilter();
     }
 
     function computeLayers(dag) {
