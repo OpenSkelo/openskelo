@@ -1,0 +1,149 @@
+# Example: Research pipeline — gather → analyze → synthesize → fact-check
+name: research-pipeline
+
+blocks:
+  - id: gather
+    name: Gather Sources
+    inputs:
+      query:
+        type: string
+        description: "Research question or topic"
+      max_sources:
+        type: number
+        description: "Maximum number of sources to gather"
+        required: false
+        default: 10
+    outputs:
+      sources:
+        type: json
+        description: "Array of {url, title, snippet, relevance_score}"
+      raw_content:
+        type: string
+        description: "Concatenated raw content from sources"
+    agent:
+      role: worker
+      capability: research
+    pre_gates:
+      - name: has-query
+        check: { type: port_not_empty, port: query }
+        error: "Research query is required"
+    post_gates:
+      - name: has-sources
+        check: { type: port_not_empty, port: sources }
+        error: "Must find at least one source"
+    retry:
+      max_attempts: 2
+      backoff: linear
+      delay_ms: 3000
+
+  - id: analyze
+    name: Analyze & Extract
+    inputs:
+      sources:
+        type: json
+        description: "Sources from gather step"
+      raw_content:
+        type: string
+        description: "Raw content to analyze"
+      query:
+        type: string
+        description: "Original query for relevance filtering"
+    outputs:
+      key_findings:
+        type: json
+        description: "Structured findings with citations"
+      themes:
+        type: json
+        description: "Identified themes and patterns"
+      contradictions:
+        type: json
+        description: "Conflicting claims across sources"
+    agent:
+      role: specialist
+      capability: analysis
+    pre_gates: []
+    post_gates:
+      - name: has-findings
+        check: { type: port_not_empty, port: key_findings }
+        error: "Analysis must produce findings"
+    retry:
+      max_attempts: 1
+      backoff: none
+      delay_ms: 0
+
+  - id: synthesize
+    name: Synthesize Report
+    inputs:
+      key_findings:
+        type: json
+        description: "Analyzed findings"
+      themes:
+        type: json
+        description: "Identified themes"
+      contradictions:
+        type: json
+        description: "Conflicting claims to address"
+      query:
+        type: string
+        description: "Original research question"
+    outputs:
+      report:
+        type: string
+        description: "Final synthesized research report"
+      confidence:
+        type: number
+        description: "Confidence score 0-100"
+      citations:
+        type: json
+        description: "Bibliography / citation list"
+    agent:
+      role: worker
+      capability: writing
+    pre_gates: []
+    post_gates:
+      - name: report-length
+        check: { type: port_min_length, port: report, min: 200 }
+        error: "Report must be at least 200 characters"
+    retry:
+      max_attempts: 1
+      backoff: none
+      delay_ms: 0
+
+  - id: fact-check
+    name: Fact Check
+    inputs:
+      report:
+        type: string
+        description: "Report to verify"
+      citations:
+        type: json
+        description: "Citations to verify"
+      sources:
+        type: json
+        description: "Original sources for cross-reference"
+    outputs:
+      verified:
+        type: boolean
+        description: "Whether report passes fact check"
+      issues:
+        type: json
+        description: "List of factual issues found"
+    agent:
+      role: reviewer
+      capability: research
+    pre_gates: []
+    post_gates: []
+    retry:
+      max_attempts: 0
+      backoff: none
+      delay_ms: 0
+
+edges:
+  - { from: gather, output: sources, to: analyze, input: sources }
+  - { from: gather, output: raw_content, to: analyze, input: raw_content }
+  - { from: analyze, output: key_findings, to: synthesize, input: key_findings }
+  - { from: analyze, output: themes, to: synthesize, input: themes }
+  - { from: analyze, output: contradictions, to: synthesize, input: contradictions }
+  - { from: synthesize, output: report, to: fact-check, input: report }
+  - { from: synthesize, output: citations, to: fact-check, input: citations }
+  - { from: gather, output: sources, to: fact-check, input: sources }

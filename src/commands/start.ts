@@ -5,6 +5,7 @@ import { createTaskEngine } from "../core/task-engine.js";
 import { createGateEngine } from "../core/gate-engine.js";
 import { createRouter } from "../core/router.js";
 import { createAPI } from "../server/api.js";
+import { createRunEngine } from "../core/run-engine.js";
 
 export async function startServer(opts: { port: number; dashboard: boolean }) {
   console.log(chalk.hex("#f97316")(`\n🦴 OpenSkelo starting...\n`));
@@ -45,17 +46,16 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   const taskEngine = createTaskEngine(config.pipelines);
   const gateEngine = createGateEngine(config.gates);
   const router = createRouter(config.agents, config.pipelines);
+  const runEngine = createRunEngine();
 
   const pipelineCount = Object.keys(config.pipelines).length;
   const gateCount = config.gates.length;
   console.log(chalk.green("  ✓ ") + `${pipelineCount} pipeline${pipelineCount !== 1 ? "s" : ""}, ${gateCount} gate${gateCount !== 1 ? "s" : ""}`);
 
   // Start server
-  const app = createAPI({ config, taskEngine, gateEngine, router });
+  const app = createAPI({ config, taskEngine, gateEngine, router, runEngine });
 
-  const server = Bun?.serve
-    ? undefined // Bun support later
-    : await startNodeServer(app, opts.port);
+  await startNodeServer(app, opts.port);
 
   console.log();
   console.log(chalk.hex("#f97316")("  🔥 OpenSkelo running"));

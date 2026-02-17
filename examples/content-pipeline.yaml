@@ -1,0 +1,111 @@
+# Example: Content pipeline — with parallel branches (outline + images run simultaneously)
+name: content-pipeline
+
+blocks:
+  - id: outline
+    name: Create Outline
+    inputs:
+      topic:
+        type: string
+        description: "Content topic"
+      audience:
+        type: string
+        description: "Target audience"
+        required: false
+        default: "general"
+      format:
+        type: string
+        description: "Output format (blog, docs, newsletter)"
+        required: false
+        default: "blog"
+    outputs:
+      outline:
+        type: json
+        description: "Structured outline with sections"
+      tone:
+        type: string
+        description: "Recommended tone/style"
+    agent:
+      role: manager
+    pre_gates:
+      - name: has-topic
+        check: { type: port_not_empty, port: topic }
+        error: "Topic is required"
+    post_gates: []
+    retry: { max_attempts: 1, backoff: none, delay_ms: 0 }
+
+  - id: draft
+    name: Write Draft
+    inputs:
+      outline:
+        type: json
+        description: "Content outline"
+      tone:
+        type: string
+        description: "Writing tone"
+    outputs:
+      draft:
+        type: string
+        description: "Full draft content"
+      word_count:
+        type: number
+        description: "Word count"
+    agent:
+      role: worker
+      capability: writing
+    pre_gates: []
+    post_gates:
+      - name: min-length
+        check: { type: port_min_length, port: draft, min: 500 }
+        error: "Draft must be at least 500 characters"
+    retry: { max_attempts: 1, backoff: none, delay_ms: 0 }
+
+  - id: images
+    name: Generate Images
+    inputs:
+      outline:
+        type: json
+        description: "Content outline for image context"
+    outputs:
+      image_urls:
+        type: json
+        description: "Generated image URLs"
+    agent:
+      role: specialist
+      capability: images
+    pre_gates: []
+    post_gates: []
+    retry: { max_attempts: 2, backoff: linear, delay_ms: 2000 }
+
+  - id: edit
+    name: Edit & Polish
+    inputs:
+      draft:
+        type: string
+        description: "Draft to edit"
+      image_urls:
+        type: json
+        description: "Images to integrate"
+        required: false
+    outputs:
+      final:
+        type: string
+        description: "Edited final content"
+      changelog:
+        type: string
+        description: "What was changed"
+    agent:
+      role: reviewer
+      capability: writing
+    pre_gates: []
+    post_gates: []
+    retry: { max_attempts: 0, backoff: none, delay_ms: 0 }
+
+edges:
+  # outline feeds both draft AND images (parallel branches)
+  - { from: outline, output: outline, to: draft, input: outline }
+  - { from: outline, output: tone, to: draft, input: tone }
+  - { from: outline, output: outline, to: images, input: outline }
+  # draft + images merge into edit
+  - { from: draft, output: draft, to: edit, input: draft }
+  - { from: images, output: image_urls, to: edit, input: image_urls }

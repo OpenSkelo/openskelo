@@ -21,7 +21,9 @@
     "start": "node dist/cli.js start",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:report": "npm run test:coverage && vitest run --reporter=json --outputFile=docs/reports/vitest-results.json && node scripts/generate-test-report.mjs"
   },
   "keywords": [
     "ai",
@@ -66,6 +68,7 @@
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^20.0.0",
     "@types/ws": "^8.5.0",
+    "@vitest/coverage-v8": "^1.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "^1.0.0",

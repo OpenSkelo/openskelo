@@ -40,7 +40,11 @@ export function createGateEngine(gates: Gate[]) {
 
 function runCheck(gate: Gate, task: Task, updates: Partial<Task>): GateResult {
   const check = gate.check;
-  const merged = { ...task, ...updates };
+  // Merge only defined update fields over the existing task
+  const merged = { ...task } as Record<string, unknown>;
+  for (const [k, v] of Object.entries(updates)) {
+    if (v !== undefined) merged[k] = v;
+  }
 
   try {
     switch (check.type) {

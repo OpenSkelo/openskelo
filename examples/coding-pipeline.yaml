@@ -1,0 +1,171 @@
+# Example: Coding pipeline — plan → build → test → review → deploy
+name: coding-pipeline
+
+blocks:
+  - id: plan
+    name: Plan Implementation
+    inputs:
+      prompt:
+        type: string
+        description: "What to build"
+      codebase_context:
+        type: string
+        description: "Relevant existing code"
+        required: false
+    outputs:
+      plan:
+        type: string
+        description: "Implementation plan with steps"
+      files_to_modify:
+        type: json
+        description: "List of files to create or modify"
+    agent:
+      role: manager
+    pre_gates: []
+    post_gates:
+      - name: plan-not-empty
+        check: { type: port_not_empty, port: plan }
+        error: "Plan must not be empty"
+    retry:
+      max_attempts: 1
+      backoff: none
+      delay_ms: 0
+
+  - id: build
+    name: Write Code
+    inputs:
+      plan:
+        type: string
+        description: "Implementation plan"
+      files_to_modify:
+        type: json
+        description: "Files to create or modify"
+    outputs:
+      code:
+        type: artifact
+        description: "Generated code files"
+      branch:
+        type: string
+        description: "Git branch name"
+    agent:
+      role: worker
+      capability: coding
+    pre_gates:
+      - name: has-plan
+        check: { type: port_not_empty, port: plan }
+        error: "Cannot build without a plan"
+    post_gates:
+      - name: has-code
+        check: { type: port_not_empty, port: code }
+        error: "Must produce code output"
+      - name: has-branch
+        check: { type: port_matches, port: branch, pattern: "^feature/" }
+        error: "Branch must follow feature/ naming convention"
+    retry:
+      max_attempts: 2
+      backoff: linear
+      delay_ms: 5000
+
+  - id: test
+    name: Run Tests
+    inputs:
+      code:
+        type: artifact
+        description: "Code to test"
+      branch:
+        type: string
+        description: "Branch to test"
+    outputs:
+      test_results:
+        type: json
+        description: "Test results with pass/fail counts"
+      coverage:
+        type: number
+        description: "Code coverage percentage"
+    agent:
+      role: worker
+      capability: testing
+    pre_gates:
+      - name: has-code
+        check: { type: port_not_empty, port: code }
+        error: "No code to test"
+    post_gates:
+      - name: tests-passed
+        check: { type: expr, expression: "outputs.test_results && outputs.test_results.failed === 0" }
+        error: "All tests must pass"
+    retry:
+      max_attempts: 0
+      backoff: none
+      delay_ms: 0
+
+  - id: review
+    name: Code Review
+    inputs:
+      code:
+        type: artifact
+        description: "Code to review"
+      test_results:
+        type: json
+        description: "Test results"
+      plan:
+        type: string
+        description: "Original plan for context"
+    outputs:
+      approved:
+        type: boolean
+        description: "Whether code passes review"
+      feedback:
+        type: string
+        description: "Review feedback"
+    agent:
+      role: reviewer
+    pre_gates: []
+    post_gates:
+      - name: has-verdict
+        check: { type: port_type, port: approved, expected: boolean }
+        error: "Review must produce a boolean approved verdict"
+    retry:
+      max_attempts: 0
+      backoff: none
+      delay_ms: 0
+
+  - id: deploy
+    name: Deploy to Staging
+    inputs:
+      branch:
+        type: string
+        description: "Branch to deploy"
+      approved:
+        type: boolean
+        description: "Review approval"
+    outputs:
+      deploy_url:
+        type: string
+        description: "Deployed staging URL"
+    agent:
+      role: worker
+      capability: devops
+    pre_gates:
+      - name: review-approved
+        check: { type: expr, expression: "inputs.approved === true" }
+        error: "Cannot deploy without review approval"
+    post_gates:
+      - name: has-url
+        check: { type: port_matches, port: deploy_url, pattern: "^https?://" }
+        error: "Must produce a valid deployment URL"
+    retry:
+      max_attempts: 3
+      backoff: exponential
+      delay_ms: 2000
+      max_delay_ms: 30000
+
+edges:
+  - { from: plan, output: plan, to: build, input: plan }
+  - { from: plan, output: files_to_modify, to: build, input: files_to_modify }
+  - { from: build, output: code, to: test, input: code }
+  - { from: build, output: branch, to: test, input: branch }
+  - { from: build, output: code, to: review, input: code }
+  - { from: build, output: branch, to: deploy, input: branch }
+  - { from: test, output: test_results, to: review, input: test_results }
+  - { from: plan, output: plan, to: review, input: plan }
+  - { from: review, output: approved, to: deploy, input: approved }
