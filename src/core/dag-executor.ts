@@ -390,20 +390,32 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     }
 
     // 5. Parse outputs from agent response
-    const outputs = parseAgentOutputs(blockDef, dispatchResult.output ?? "");
-    const durationMs = Date.now() - startTime;
+    let outputs = parseAgentOutputs(blockDef, dispatchResult.output ?? "");
+    let durationMs = Date.now() - startTime;
 
-    // Enforce required output contract at core level
-    const missingRequired = Object.entries(blockDef.outputs)
-      .filter(([_, def]) => def.required !== false)
-      .filter(([key]) => {
-        const v = outputs[key];
-        return v === undefined || v === null || (typeof v === "string" && v.trim() === "");
-      })
-      .map(([key]) => key);
+    // Enforce output contract at core level (+ one generic repair retry)
+    let contract = validateOutputContract(blockDef, outputs);
+    if (!contract.ok) {
+      const repairRequest: DispatchRequest = {
+        ...dispatchRequest,
+        description: buildRepairPrompt(blockDef, dispatchResult.output ?? "", contract.errors),
+      };
 
-    if (missingRequired.length > 0) {
-      const err = `Missing required outputs: ${missingRequired.join(", ")}`;
+      try {
+        const repairResult = await provider.dispatch(repairRequest);
+        if (repairResult.success) {
+          dispatchResult = repairResult;
+          outputs = parseAgentOutputs(blockDef, dispatchResult.output ?? "");
+          durationMs = Date.now() - startTime;
+          contract = validateOutputContract(blockDef, outputs);
+        }
+      } catch {
+        // ignore repair dispatch errors; fall through to contract failure
+      }
+    }
+
+    if (!contract.ok) {
+      const err = `Output contract failed: ${contract.errors.join("; ")}`;
       const execution: BlockExecution = {
         agent_id: dispatchResult.actualAgentId ?? agent.id,
         provider: agent.provider,
@@ -562,6 +574,51 @@ function buildBlockPrompt(blockDef: BlockDef, inputs: Record<string, unknown>): 
   }
 
   return lines.join("\n");
+}
+
+function validateOutputContract(blockDef: BlockDef, outputs: Record<string, unknown>): { ok: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  for (const [key, def] of Object.entries(blockDef.outputs)) {
+    const value = outputs[key];
+    const required = def.required !== false;
+
+    if (required && (value === undefined || value === null || (typeof value === "string" && value.trim() === ""))) {
+      errors.push(`missing required output '${key}'`);
+      continue;
+    }
+
+    if (value === undefined || value === null) continue;
+
+    const typeOk =
+      (def.type === "string" && typeof value === "string") ||
+      (def.type === "number" && typeof value === "number") ||
+      (def.type === "boolean" && typeof value === "boolean") ||
+      (def.type === "json" && (typeof value === "object" || Array.isArray(value))) ||
+      ((def.type === "file" || def.type === "artifact") && typeof value === "string");
+
+    if (!typeOk) {
+      errors.push(`output '${key}' expected type '${def.type}'`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+function buildRepairPrompt(blockDef: BlockDef, rawOutput: string, errors: string[]): string {
+  const required = Object.entries(blockDef.outputs)
+    .filter(([_, d]) => d.required !== false)
+    .map(([k, d]) => `${k}:${d.type}`)
+    .join(", ");
+
+  return [
+    `Your previous response failed output contract validation.`,
+    `Errors: ${errors.join("; ")}`,
+    `Return ONLY valid JSON (no markdown, no prose).`,
+    `Required outputs: ${required}`,
+    `Previous response:`,
+    rawOutput.slice(0, 2000),
+  ].join("\n");
 }
 
 function parseAgentOutputs(blockDef: BlockDef, rawOutput: string): Record<string, unknown> {
