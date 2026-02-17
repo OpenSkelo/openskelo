@@ -495,7 +495,10 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         <h3>Block Inspector</h3>
         <div id="inspectorEmpty" style="font-size:12px;color:var(--text-dim);padding:8px 0">Click any block node to inspect full JSON</div>
         <div id="inspector" style="display:none">
-          <div style="font-size:12px;margin-bottom:6px"><b id="inspectorTitle">—</b></div>
+          <div style="font-size:12px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <b id="inspectorTitle">—</b>
+            <button id="copyInspectorBtn" style="padding:4px 8px;font-size:11px">Copy JSON</button>
+          </div>
           <pre id="inspectorJson" style="max-height:240px;overflow:auto;background:var(--surface2);padding:8px;border-radius:6px;font-size:10px;line-height:1.4"></pre>
           <div style="font-size:11px;margin:8px 0 4px;color:var(--text-dim)">Final Output (terminal block)</div>
           <pre id="finalOutputJson" style="max-height:140px;overflow:auto;background:var(--surface2);padding:8px;border-radius:6px;font-size:10px;line-height:1.4"></pre>
@@ -575,6 +578,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     document.getElementById('stopBtn').addEventListener('click', stopDAG);
     document.getElementById('approveBtn').addEventListener('click', () => decideApproval('approve'));
     document.getElementById('rejectBtn').addEventListener('click', () => decideApproval('reject'));
+    document.getElementById('copyInspectorBtn').addEventListener('click', copyInspectorJson);
 
     // OpenClaw-only mode for now (no mock toggle)
 
@@ -624,6 +628,26 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       }
       entry.innerHTML = html;
       log.insertBefore(entry, log.firstChild);
+    }
+
+    async function copyInspectorJson() {
+      const text = document.getElementById('inspectorJson')?.textContent || '';
+      if (!text.trim()) return;
+      const btn = document.getElementById('copyInspectorBtn');
+      try {
+        await navigator.clipboard.writeText(text);
+        if (btn) {
+          const prev = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(() => { btn.textContent = prev || 'Copy JSON'; }, 1200);
+        }
+      } catch {
+        if (btn) {
+          const prev = btn.textContent;
+          btn.textContent = 'Copy failed';
+          setTimeout(() => { btn.textContent = prev || 'Copy JSON'; }, 1200);
+        }
+      }
     }
 
     function escapeHtml(s) {
