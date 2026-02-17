@@ -1,7 +1,7 @@
 {
   "name": "openskelo",
   "version": "0.1.0",
-  "description": "Give your AI agents a backbone. Deterministic pipeline runtime \u2014 local-first, config-driven, zero cost.",
+  "description": "Give your AI agents a backbone. Deterministic pipeline runtime — local-first, config-driven, zero cost.",
   "type": "module",
   "bin": {
     "skelo": "./dist/cli.js",
@@ -23,7 +23,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:report": "npm run test:coverage && vitest run --reporter=json --outputFile=docs/reports/vitest-results.json && node scripts/generate-test-report.mjs"
+    "test:report": "npm run test:coverage && vitest run --reporter=json --outputFile=docs/reports/vitest-results.json && node scripts/generate-test-report.mjs",
+    "check:genericity": "bash scripts/check-genericity.sh"
   },
   "keywords": [
     "ai",

@@ -15,13 +15,13 @@ import type {
 } from "../types.js";
 
 const TRANSITIONS: Record<BlockStep, BlockStep> = {
-  NORA_PLAN: "REI_BUILD",
-  REI_BUILD: "MARI_REVIEW",
-  MARI_REVIEW: "DONE",
-  DONE: "NORA_PLAN",
+  PLAN: "EXECUTE",
+  EXECUTE: "REVIEW",
+  REVIEW: "DONE",
+  DONE: "PLAN",
 };
 
-const VALID_BLOCKS: BlockStep[] = ["NORA_PLAN", "REI_BUILD", "MARI_REVIEW", "DONE"];
+const VALID_BLOCKS: BlockStep[] = ["PLAN", "EXECUTE", "REVIEW", "DONE"];
 
 export function createRunEngine(opts?: { baseDir?: string }) {
   const db = getDB();
@@ -81,7 +81,7 @@ export function createRunEngine(opts?: { baseDir?: string }) {
     const run: RunModel = {
       id: `RUN-${nanoid(8)}`,
       original_prompt: input.originalPrompt,
-      current_block: "NORA_PLAN",
+      current_block: "PLAN",
       iteration: 1,
       run_version: 0,
       status: "running",
@@ -395,7 +395,7 @@ function evaluateGate(
       return {
         name: "review-approval-required",
         pass: false,
-        reason: "MARI_REVIEW -> DONE requires reviewApproved=true",
+        reason: "REVIEW -> DONE requires reviewApproved=true",
         details: {
           expected: true,
           received: approved ?? null,
@@ -414,7 +414,7 @@ function buildOutput(run: RunModel, block: BlockStep, context: RunContext): Bloc
     timestamp: new Date().toISOString(),
   };
 
-  if (block === "REI_BUILD") {
+  if (block === "EXECUTE") {
     const artifactPath = `/artifacts/${run.id}/iteration-${run.iteration}/index.html`;
     const preview = `<div style=\"padding:16px;font-family:system-ui\"><h2>OpenSkelo Artifact</h2><p>${escapeHtml(
       run.original_prompt
@@ -422,7 +422,7 @@ function buildOutput(run: RunModel, block: BlockStep, context: RunContext): Bloc
 
     return {
       ...base,
-      agent: "rei",
+      agent: "executor",
       output: `Built artifact for: ${run.original_prompt}`,
       artifact_path: artifactPath,
       artifact_preview: preview,
@@ -433,7 +433,7 @@ function buildOutput(run: RunModel, block: BlockStep, context: RunContext): Bloc
   if (block === "DONE") {
     return {
       ...base,
-      agent: "nora",
+      agent: "planner",
       output: `what else can we improve on this?\n\noriginal prompt: ${run.original_prompt}`,
       artifact_path: run.artifact_path,
       artifact_preview: run.artifact_preview,
@@ -441,10 +441,10 @@ function buildOutput(run: RunModel, block: BlockStep, context: RunContext): Bloc
     };
   }
 
-  if (block === "NORA_PLAN") {
+  if (block === "PLAN") {
     return {
       ...base,
-      agent: "nora",
+      agent: "planner",
       output: `Plan iteration ${run.iteration} for prompt: ${run.original_prompt}`,
       artifact_path: run.artifact_path,
       artifact_preview: run.artifact_preview,
@@ -454,7 +454,7 @@ function buildOutput(run: RunModel, block: BlockStep, context: RunContext): Bloc
 
   return {
     ...base,
-    agent: "mari",
+    agent: "reviewer",
     output: `Review completed for iteration ${run.iteration}`,
     artifact_path: run.artifact_path,
     artifact_preview: run.artifact_preview,
@@ -499,7 +499,7 @@ function rowToStep(row: Record<string, unknown>): RunStepRecord {
     transition: row.transition as string,
     block: row.block as BlockStep,
     iteration: Number(row.iteration ?? 1),
-    agent: row.agent as "nora" | "rei" | "mari",
+    agent: String(row.agent ?? "unknown"),
     output: row.output as string,
     artifact_path: (row.artifact_path as string | null) ?? null,
     artifact_preview: (row.artifact_preview as string | null) ?? null,

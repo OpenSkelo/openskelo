@@ -4,7 +4,7 @@ exports[`response contracts (snapshot lock) > freezes GET /api/runs/:id response
 {
   "events": [
     {
-      "block": "NORA_PLAN",
+      "block": "PLAN",
       "created_at": "<timestamp>",
       "details": {
         "message": "Run created",
@@ -22,7 +22,7 @@ exports[`response contracts (snapshot lock) > freezes GET /api/runs/:id response
     "blocks": [],
     "context": {},
     "created_at": "<timestamp>",
-    "current_block": "NORA_PLAN",
+    "current_block": "PLAN",
     "id": "RUN-<id>",
     "iteration": 1,
     "original_prompt": "Contract run",
@@ -49,10 +49,10 @@ exports[`response contracts (snapshot lock) > freezes GET /api/runs/:id/steps re
 {
   "steps": [
     {
-      "agent": "rei",
+      "agent": "executor",
       "artifact_path": "/artifacts/RUN-<id>/iteration-1/index.html",
       "artifact_preview": "<div style="padding:16px;font-family:system-ui"><h2>OpenSkelo Artifact</h2><p>Contract steps</p></div>",
-      "block": "REI_BUILD",
+      "block": "EXECUTE",
       "context_snapshot": {},
       "id": "<id>",
       "iteration": 1,
@@ -60,7 +60,7 @@ exports[`response contracts (snapshot lock) > freezes GET /api/runs/:id/steps re
       "run_id": "RUN-<id>",
       "step_index": 1,
       "timestamp": "<timestamp>",
-      "transition": "NORA_PLAN->REI_BUILD",
+      "transition": "PLAN->EXECUTE",
     },
   ],
 }

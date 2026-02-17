@@ -142,16 +142,16 @@ export interface ProviderAdapter {
   cancel?(sessionId: string): Promise<void>;
 }
 
-// ── Block Core MVP types ──
+// ── Block Core MVP types (legacy run-loop, genericized) ──
 
-export type BlockStep = "NORA_PLAN" | "REI_BUILD" | "MARI_REVIEW" | "DONE";
+export type BlockStep = "PLAN" | "EXECUTE" | "REVIEW" | "DONE";
 
 export type RunContext = Record<string, unknown>;
 
 export interface BlockOutput {
   block: BlockStep;
   iteration: number;
-  agent: "nora" | "rei" | "mari";
+  agent: string;
   output: string;
   artifact_path: string | null;
   artifact_preview: string | null;

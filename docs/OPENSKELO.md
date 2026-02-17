@@ -321,10 +321,10 @@ OpenSkelo now includes a deterministic **run/block engine** for observer-mode da
 
 ### Block loop contract
 
-`NORA_PLAN -> REI_BUILD -> MARI_REVIEW -> DONE -> NORA_PLAN`
+`PLAN -> EXECUTE -> REVIEW -> DONE -> PLAN`
 
 - Every `POST /api/runs/:id/step` advances exactly one transition.
-- `MARI_REVIEW -> DONE` is gate-protected and requires `reviewApproved: true` (in step body or run context).
+- `REVIEW -> DONE` is gate-protected and requires `reviewApproved: true` (in step body or run context).
 - Gate failures return `400` with gate details.
 - Invalid transition state returns `400`.
 
@@ -432,11 +432,11 @@ OpenSkelo uses a deterministic Vitest suite focused on run-core behavior and con
 
 - Run creation and payload validation
 - Deterministic block transitions
-- Gate fail/pass behavior (`MARI_REVIEW -> DONE` approval contract)
+- Gate fail/pass behavior (`REVIEW -> DONE` approval contract)
 - Shared context read/write persistence
 - Artifact metadata + persisted content endpoints
 - `run_steps` ordering and integrity guarantees
-- Integration flow loop: `NORA_PLAN -> REI_BUILD -> MARI_REVIEW -> DONE -> NORA_PLAN`
+- Integration flow loop: `PLAN -> EXECUTE -> REVIEW -> DONE -> PLAN`
 - Reliability edge cases (repeated step calls, missing IDs, malformed payloads)
 
 ### Commands

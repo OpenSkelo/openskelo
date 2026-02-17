@@ -16,21 +16,21 @@ export function createTestConfig(): SkeloConfig {
     providers: [],
     dashboard: { enabled: false, port: 4040 },
     agents: {
-      nora: {
+      manager: {
         role: "manager",
         capabilities: ["planning"],
         provider: "local",
         model: "test",
         max_concurrent: 2,
       },
-      rei: {
+      worker: {
         role: "worker",
         capabilities: ["build"],
         provider: "local",
         model: "test",
         max_concurrent: 2,
       },
-      mari: {
+      reviewer: {
         role: "reviewer",
         capabilities: ["review"],
         provider: "local",

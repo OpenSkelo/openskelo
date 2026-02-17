@@ -36,7 +36,7 @@ async function createRun(app: ReturnType<typeof setupTestApp>["app"], prompt = "
 }
 
 describe("run creation + validation", () => {
-  it("creates a run at NORA_PLAN with iteration 1", async () => {
+  it("creates a run at PLAN with iteration 1", async () => {
     const ctx = setupTestApp();
     cleanups.push(ctx.cleanup);
 
@@ -48,7 +48,7 @@ describe("run creation + validation", () => {
       run: { current_block: string; iteration: number; context: Record<string, unknown>; run_version: number };
     };
 
-    expect(payload.run.current_block).toBe("NORA_PLAN");
+    expect(payload.run.current_block).toBe("PLAN");
     expect(payload.run.iteration).toBe(1);
     expect(payload.run.run_version).toBe(0);
     expect(payload.run.context).toEqual({});
@@ -72,7 +72,7 @@ describe("run creation + validation", () => {
 });
 
 describe("deterministic transitions + gates", () => {
-  it("enforces deterministic step transitions and MARI_REVIEW->DONE approval gate", async () => {
+  it("enforces deterministic step transitions and REVIEW->DONE approval gate", async () => {
     const ctx = setupTestApp();
     cleanups.push(ctx.cleanup);
     const runId = await createRun(ctx.app);
@@ -80,12 +80,12 @@ describe("deterministic transitions + gates", () => {
     const first = await ctx.app.request(`/api/runs/${runId}/step`, { method: "POST", body: "{}" });
     expect(first.status).toBe(200);
     const firstData = (await first.json()) as { run: { current_block: string } };
-    expect(firstData.run.current_block).toBe("REI_BUILD");
+    expect(firstData.run.current_block).toBe("EXECUTE");
 
     const second = await ctx.app.request(`/api/runs/${runId}/step`, { method: "POST", body: "{}" });
     expect(second.status).toBe(200);
     const secondData = (await second.json()) as { run: { current_block: string } };
-    expect(secondData.run.current_block).toBe("MARI_REVIEW");
+    expect(secondData.run.current_block).toBe("REVIEW");
 
     const failReview = await ctx.app.request(`/api/runs/${runId}/step`, { method: "POST", body: "{}" });
     expect(failReview.status).toBe(400);
@@ -118,7 +118,7 @@ describe("idempotency + conflict semantics", () => {
     expect(first.status).toBe(200);
     const firstBody = (await first.json()) as { deduplicated: boolean; run: { current_block: string } };
     expect(firstBody.deduplicated).toBe(false);
-    expect(firstBody.run.current_block).toBe("REI_BUILD");
+    expect(firstBody.run.current_block).toBe("EXECUTE");
 
     const retried = await ctx.app.request(`/api/runs/${runId}/step`, {
       method: "POST",
@@ -128,7 +128,7 @@ describe("idempotency + conflict semantics", () => {
     expect(retried.status).toBe(200);
     const retriedBody = (await retried.json()) as { deduplicated: boolean; run: { current_block: string } };
     expect(retriedBody.deduplicated).toBe(true);
-    expect(retriedBody.run.current_block).toBe("REI_BUILD");
+    expect(retriedBody.run.current_block).toBe("EXECUTE");
 
     const stepsRes = await ctx.app.request(`/api/runs/${runId}/steps`);
     const steps = ((await stepsRes.json()) as { steps: Array<{ step_index: number }> }).steps;
@@ -197,7 +197,7 @@ describe("shared context + artifacts + run_steps integrity", () => {
     expect(body.context).toEqual({ task_id: "TASK-777", scope: "core", build_status: "ok" });
   });
 
-  it("exposes artifact metadata and persisted content endpoint after REI_BUILD", async () => {
+  it("exposes artifact metadata and persisted content endpoint after EXECUTE", async () => {
     const ctx = setupTestApp();
     cleanups.push(ctx.cleanup);
     const runId = await createRun(ctx.app, "<script>unsafe</script>");
@@ -270,7 +270,7 @@ describe("response contracts (snapshot lock)", () => {
 });
 
 describe("integration flow and reliability edge cases", () => {
-  it("completes full loop NORA_PLAN -> REI_BUILD -> MARI_REVIEW -> DONE -> NORA_PLAN", async () => {
+  it("completes full loop PLAN -> EXECUTE -> REVIEW -> DONE -> PLAN", async () => {
     const ctx = setupTestApp();
     cleanups.push(ctx.cleanup);
     const runId = await createRun(ctx.app);
@@ -286,7 +286,7 @@ describe("integration flow and reliability edge cases", () => {
 
     expect(loopRes.status).toBe(200);
     const payload = (await loopRes.json()) as { run: { current_block: string; iteration: number } };
-    expect(payload.run.current_block).toBe("NORA_PLAN");
+    expect(payload.run.current_block).toBe("PLAN");
     expect(payload.run.iteration).toBe(2);
   });
 
