@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS runs (
   original_prompt TEXT NOT NULL,
   current_block TEXT NOT NULL,
   iteration INTEGER NOT NULL DEFAULT 1,
+  run_version INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'running',
   artifact_path TEXT,
   artifact_preview TEXT,
@@ -103,6 +104,17 @@ CREATE TABLE IF NOT EXISTS run_steps (
   UNIQUE(run_id, step_index)
 );
 
+CREATE TABLE IF NOT EXISTS run_step_idempotency (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  response_json TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(run_id, idempotency_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_pipeline ON tasks(pipeline);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned);
@@ -111,8 +123,8 @@ CREATE INDEX IF NOT EXISTS idx_gate_log_task ON gate_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_dispatch_status ON dispatch_queue(status);
 CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id);
 CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, step_index);
+CREATE INDEX IF NOT EXISTS idx_run_idempotency_lookup ON run_step_idempotency(run_id, idempotency_key);
 `;
-
 
 let db: Database.Database | null = null;
 
@@ -128,8 +140,20 @@ export function createDB(dir: string = process.cwd()): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
+  runMigrations(db);
 
   return db;
+}
+
+function runMigrations(database: Database.Database): void {
+  const columns = database
+    .prepare("PRAGMA table_info(runs)")
+    .all() as Array<{ name?: string }>;
+
+  const hasRunVersion = columns.some((column) => column.name === "run_version");
+  if (!hasRunVersion) {
+    database.exec("ALTER TABLE runs ADD COLUMN run_version INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 export function getDB(): Database.Database {

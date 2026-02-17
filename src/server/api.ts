@@ -118,7 +118,7 @@ export function createAPI(ctx: APIContext) {
     return c.json({ error: "No status change provided" }, 400);
   });
 
-  app.get("/api/tasks/counts", () => c.json(taskEngine.counts()));
+  app.get("/api/tasks/counts", (c) => c.json(taskEngine.counts()));
 
   app.get("/api/agents", (c) => {
     const agents = Object.entries(config.agents).map(([id, agent]) => ({ id, ...agent }));
@@ -189,15 +189,18 @@ export function createAPI(ctx: APIContext) {
 
   app.post("/api/runs/:id/step", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
-    const parsed = parseStepInput(raw);
+    const headerIdempotencyKey = c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key");
+    const parsed = parseStepInput(raw, headerIdempotencyKey);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 
     const result = runEngine.step(c.req.param("id"), parsed.value);
     if (!result.ok) {
-      return c.json({ error: result.error, gate: result.gate }, result.status);
+      const errorStatus =
+        result.status === 404 ? 404 : result.status === 409 ? 409 : result.status === 500 ? 500 : 400;
+      return c.json({ error: result.error, code: result.code, gate: result.gate }, errorStatus);
     }
 
-    return c.json({ run: result.run, events: runEngine.getEvents(result.run.id) });
+    return c.json({ run: result.run, events: result.events, deduplicated: result.deduplicated ?? false });
   });
 
   app.get("/api/runs/:id/context", (c) => {
@@ -258,7 +261,7 @@ function parseCreateRunBody(raw: unknown):
   };
 }
 
-function parseStepInput(raw: unknown):
+function parseStepInput(raw: unknown, headerIdempotencyKey?: string):
   | { ok: true; value: RunStepInput }
   | { ok: false; error: string } {
   if (raw === null || raw === undefined) return { ok: true, value: {} };
@@ -272,11 +275,23 @@ function parseStepInput(raw: unknown):
     return { ok: false, error: "contextPatch must be an object" };
   }
 
+  if (raw.idempotencyKey !== undefined && typeof raw.idempotencyKey !== "string") {
+    return { ok: false, error: "idempotencyKey must be a string" };
+  }
+
+  const bodyIdempotencyKey = typeof raw.idempotencyKey === "string" ? raw.idempotencyKey.trim() : undefined;
+  const requestIdempotencyKey = headerIdempotencyKey?.trim();
+
+  if (requestIdempotencyKey && bodyIdempotencyKey && requestIdempotencyKey !== bodyIdempotencyKey) {
+    return { ok: false, error: "idempotency key mismatch between header and body" };
+  }
+
   return {
     ok: true,
     value: {
       reviewApproved: raw.reviewApproved as boolean | undefined,
       contextPatch: raw.contextPatch as RunContext | undefined,
+      idempotencyKey: requestIdempotencyKey || bodyIdempotencyKey,
     },
   };
 }

@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { nanoid } from "nanoid";
 import { getDB } from "./db.js";
@@ -22,21 +23,22 @@ const TRANSITIONS: Record<BlockStep, BlockStep> = {
 
 const VALID_BLOCKS: BlockStep[] = ["NORA_PLAN", "REI_BUILD", "MARI_REVIEW", "DONE"];
 
-export function createRunEngine() {
+export function createRunEngine(opts?: { baseDir?: string }) {
   const db = getDB();
+  const baseDir = opts?.baseDir ?? process.cwd();
 
   const insertRun = db.prepare(`
     INSERT INTO runs (
-      id, original_prompt, current_block, iteration, status,
+      id, original_prompt, current_block, iteration, run_version, status,
       artifact_path, artifact_preview, context, blocks
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const getRunStmt = db.prepare("SELECT * FROM runs WHERE id = ?");
   const updateRunStmt = db.prepare(`
     UPDATE runs
-    SET current_block=?, iteration=?, status=?, artifact_path=?, artifact_preview=?, context=?, blocks=?, updated_at=datetime('now')
-    WHERE id=?
+    SET current_block=?, iteration=?, status=?, artifact_path=?, artifact_preview=?, context=?, blocks=?, run_version=run_version+1, updated_at=datetime('now')
+    WHERE id=? AND run_version=?
   `);
 
   const insertEventStmt = db.prepare(`
@@ -65,12 +67,23 @@ export function createRunEngine() {
     SELECT COUNT(1) as count FROM run_steps WHERE run_id = ?
   `);
 
+  const getIdempotencyStmt = db.prepare(`
+    SELECT * FROM run_step_idempotency
+    WHERE run_id = ? AND idempotency_key = ?
+  `);
+
+  const insertIdempotencyStmt = db.prepare(`
+    INSERT INTO run_step_idempotency (id, run_id, idempotency_key, request_hash, status_code, response_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
   function createRun(input: { originalPrompt: string; context?: RunContext }): RunModel {
     const run: RunModel = {
       id: `RUN-${nanoid(8)}`,
       original_prompt: input.originalPrompt,
       current_block: "NORA_PLAN",
       iteration: 1,
+      run_version: 0,
       status: "running",
       artifact_path: null,
       artifact_preview: null,
@@ -85,6 +98,7 @@ export function createRunEngine() {
       run.original_prompt,
       run.current_block,
       run.iteration,
+      run.run_version,
       run.status,
       run.artifact_path,
       run.artifact_preview,
@@ -128,27 +142,64 @@ export function createRunEngine() {
     return getRun(runId)!;
   }
 
-  function step(runId: string, input: RunStepInput): RunStepResult {
-    const run = getRun(runId);
-    if (!run) {
+  const stepTxn = db.transaction((runId: string, input: RunStepInput): RunStepResult => {
+    const runRow = getRunStmt.get(runId) as Record<string, unknown> | undefined;
+    if (!runRow) {
       return { ok: false, error: "Run not found", status: 404 };
     }
 
+    const run = rowToRun(runRow);
+    const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+    const requestHash = hashStepRequest({
+      reviewApproved: input.reviewApproved,
+      contextPatch: input.contextPatch,
+    });
+
+    if (idempotencyKey) {
+      const existing = getIdempotencyStmt.get(runId, idempotencyKey) as
+        | { request_hash: string; response_json: string }
+        | undefined;
+
+      if (existing) {
+        if (existing.request_hash !== requestHash) {
+          return {
+            ok: false,
+            error: "Idempotency key has already been used with a different payload",
+            status: 409,
+            code: "IDEMPOTENCY_KEY_REUSED",
+          };
+        }
+
+        const parsed = safeJson<RunStepResult>(existing.response_json, {
+          ok: false,
+          error: "Stored idempotent response is invalid",
+          status: 500,
+        });
+
+        if (parsed.ok) return { ...parsed, deduplicated: true };
+        return parsed;
+      }
+    }
+
     if (!VALID_BLOCKS.includes(run.current_block)) {
-      return {
+      const failure: RunStepResult = {
         ok: false,
         error: `Invalid transition source state: ${run.current_block}`,
         status: 400,
       };
+      persistIdempotency(run.id, idempotencyKey, requestHash, failure);
+      return failure;
     }
 
     const next = TRANSITIONS[run.current_block];
     if (!next) {
-      return {
+      const failure: RunStepResult = {
         ok: false,
         error: `Invalid transition: ${run.current_block} has no next block`,
         status: 400,
       };
+      persistIdempotency(run.id, idempotencyKey, requestHash, failure);
+      return failure;
     }
 
     const mergedContext = { ...run.context, ...(input.contextPatch ?? {}) };
@@ -158,16 +209,19 @@ export function createRunEngine() {
       logEvent(run.id, run.current_block, `${run.current_block}->${next}`, "fail", {
         gate,
       });
-      return {
+      const failure: RunStepResult = {
         ok: false,
         error: "Gate failure",
         status: 400,
         gate,
       };
+      persistIdempotency(run.id, idempotencyKey, requestHash, failure);
+      return failure;
     }
 
     const output = buildOutput(run, next, mergedContext);
-    persistArtifact(output.artifact_path, output.artifact_preview);
+    persistArtifact(baseDir, output.artifact_path, output.artifact_preview);
+
     const transition = `${run.current_block}->${next}`;
     const stepCountRow = getStepCountStmt.get(run.id) as { count?: number } | undefined;
     const stepIndex = Number(stepCountRow?.count ?? 0) + 1;
@@ -203,18 +257,66 @@ export function createRunEngine() {
       context: mergedContext,
       artifact_path: output.artifact_path ?? run.artifact_path,
       artifact_preview: output.artifact_preview ?? run.artifact_preview,
-      // keep backwards-compatible `blocks` for existing clients
       blocks: [...run.blocks, output],
+      run_version: run.run_version + 1,
     };
 
-    persist(updated);
+    const updateResult = updateRunStmt.run(
+      updated.current_block,
+      updated.iteration,
+      updated.status,
+      updated.artifact_path,
+      updated.artifact_preview,
+      JSON.stringify(updated.context),
+      JSON.stringify(updated.blocks),
+      updated.id,
+      run.run_version
+    );
+
+    if (Number(updateResult.changes) !== 1) {
+      return {
+        ok: false,
+        error: "Run state changed concurrently. Retry with an idempotency key.",
+        status: 409,
+        code: "RUN_STEP_CONFLICT",
+      };
+    }
 
     logEvent(run.id, updated.current_block, transition, "pass", {
       output,
       step_index: stepIndex,
     });
 
-    return { ok: true, run: getRun(runId)! };
+    const finalRun = rowToRun(getRunStmt.get(run.id) as Record<string, unknown>);
+    const result: RunStepResult = {
+      ok: true,
+      run: finalRun,
+      events: getEvents(run.id),
+    };
+
+    persistIdempotency(run.id, idempotencyKey, requestHash, result);
+    return result;
+  });
+
+  function step(runId: string, input: RunStepInput): RunStepResult {
+    return stepTxn(runId, input);
+  }
+
+  function persistIdempotency(
+    runId: string,
+    idempotencyKey: string | undefined,
+    requestHash: string,
+    response: RunStepResult
+  ): void {
+    if (!idempotencyKey) return;
+    insertIdempotencyStmt.run(
+      nanoid(),
+      runId,
+      idempotencyKey,
+      requestHash,
+      response.ok ? 200 : response.status,
+      JSON.stringify(response)
+    );
   }
 
   function getArtifact(runId: string): {
@@ -225,7 +327,7 @@ export function createRunEngine() {
   } | null {
     const run = getRun(runId);
     if (!run) return null;
-    const filePath = run.artifact_path ? resolve(process.cwd(), ".skelo", trimLeadingSlash(run.artifact_path)) : null;
+    const filePath = run.artifact_path ? resolve(baseDir, ".skelo", trimLeadingSlash(run.artifact_path)) : null;
     return {
       artifact_path: run.artifact_path,
       preview: run.artifact_preview,
@@ -252,7 +354,8 @@ export function createRunEngine() {
       run.artifact_preview,
       JSON.stringify(run.context),
       JSON.stringify(run.blocks),
-      run.id
+      run.id,
+      run.run_version
     );
   }
 
@@ -269,9 +372,9 @@ export function createRunEngine() {
   return { createRun, getRun, step, getArtifact, getArtifactContent, setContext, getEvents, listSteps };
 }
 
-function persistArtifact(artifactPath: string | null, preview: string | null): void {
+function persistArtifact(baseDir: string, artifactPath: string | null, preview: string | null): void {
   if (!artifactPath || !preview) return;
-  const diskPath = resolve(process.cwd(), ".skelo", trimLeadingSlash(artifactPath));
+  const diskPath = resolve(baseDir, ".skelo", trimLeadingSlash(artifactPath));
   mkdirSync(dirname(diskPath), { recursive: true });
   writeFileSync(diskPath, preview, "utf8");
 }
@@ -365,6 +468,7 @@ function rowToRun(row: Record<string, unknown>): RunModel {
     original_prompt: row.original_prompt as string,
     current_block: row.current_block as BlockStep,
     iteration: Number(row.iteration ?? 1),
+    run_version: Number(row.run_version ?? 0),
     status: (row.status as "running" | "done") ?? "running",
     artifact_path: (row.artifact_path as string | null) ?? null,
     artifact_preview: (row.artifact_preview as string | null) ?? null,
@@ -411,6 +515,16 @@ function safeJson<T>(value: string | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function hashStepRequest(input: { reviewApproved?: boolean; contextPatch?: RunContext }): string {
+  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+function normalizeIdempotencyKey(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function escapeHtml(input: string): string {

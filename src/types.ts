@@ -167,6 +167,7 @@ export interface RunModel {
   original_prompt: string;
   current_block: BlockStep;
   iteration: number;
+  run_version: number;
   status: "running" | "done";
   artifact_path: string | null;
   artifact_preview: string | null;
@@ -189,17 +190,21 @@ export interface RunEvent {
 export interface RunStepInput {
   reviewApproved?: boolean;
   contextPatch?: RunContext;
+  idempotencyKey?: string;
 }
 
 export type RunStepResult =
   | {
       ok: true;
       run: RunModel;
+      events: RunEvent[];
+      deduplicated?: boolean;
     }
   | {
       ok: false;
       error: string;
       status: number;
+      code?: "IDEMPOTENCY_KEY_REUSED" | "RUN_STEP_CONFLICT";
       gate?: {
         name: string;
         pass: boolean;
