@@ -86,9 +86,17 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
           const usage = agentMeta?.usage as Record<string, number> | undefined;
 
           if (text) {
+            const normalized = await normalizeStructuredOutput(
+              text,
+              request.outputSchema,
+              agentId,
+              timeout,
+              opts,
+              request.abortSignal
+            );
             return {
               success: true,
-              output: text,
+              output: normalized,
               sessionId: (agentMeta?.sessionId as string) ?? runId ?? `oc_${Date.now()}`,
               tokensUsed: (usage?.input ?? 0) + (usage?.output ?? 0),
               actualAgentId: agentId,
@@ -98,9 +106,17 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
 
           // Fallback: try .reply (older format)
           if (parsed.reply) {
+            const normalized = await normalizeStructuredOutput(
+              parsed.reply as string,
+              request.outputSchema,
+              agentId,
+              timeout,
+              opts,
+              request.abortSignal
+            );
             return {
               success: true,
-              output: parsed.reply as string,
+              output: normalized,
               sessionId: `oc_${Date.now()}`,
               tokensUsed: 0,
               actualAgentId: agentId,
@@ -110,9 +126,17 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
         }
 
         // Last fallback: use raw stdout
+        const normalized = await normalizeStructuredOutput(
+          result.stdout.trim(),
+          request.outputSchema,
+          agentId,
+          timeout,
+          opts,
+          request.abortSignal
+        );
         return {
           success: true,
-          output: result.stdout.trim(),
+          output: normalized,
           sessionId: `oc_${Date.now()}`,
           tokensUsed: 0,
           actualAgentId: agentId,
@@ -290,6 +314,72 @@ function buildAgentPrompt(request: DispatchRequest): string {
   }
 
   return lines.join("\n");
+}
+
+async function normalizeStructuredOutput(
+  text: string,
+  schema: Record<string, unknown> | undefined,
+  agentId: string,
+  timeoutSec: number,
+  opts: OpenClawProviderOpts,
+  abortSignal?: AbortSignal
+): Promise<string> {
+  if (!schema) return text;
+
+  const parsed = tryParseJSON(text);
+  if (parsed && matchesSchema(parsed, schema)) {
+    return JSON.stringify(parsed);
+  }
+
+  // Adapter-level schema repair pass (generic, one-shot)
+  const repairPrompt = [
+    "Convert the following content into valid JSON that matches the schema.",
+    "Return ONLY JSON.",
+    "Schema:",
+    JSON.stringify(schema, null, 2),
+    "Content:",
+    text.slice(0, 3000),
+  ].join("\n");
+
+  try {
+    const repaired = await runOpenClawAgent(agentId, repairPrompt, Math.max(20, Math.floor(timeoutSec / 2)), opts, abortSignal);
+    if (repaired.exitCode === 0) {
+      const parsedRepair = tryParseJSON(repaired.stdout);
+      if (parsedRepair && matchesSchema(parsedRepair, schema)) {
+        return JSON.stringify(parsedRepair);
+      }
+    }
+  } catch {
+    // best effort only; caller core contract validation still applies
+  }
+
+  return text;
+}
+
+function matchesSchema(value: Record<string, unknown>, schema: Record<string, unknown>): boolean {
+  if (!schema || schema.type !== "object") return true;
+  const required = Array.isArray(schema.required) ? schema.required as string[] : [];
+  const properties = (schema.properties as Record<string, Record<string, unknown>> | undefined) ?? {};
+
+  for (const key of required) {
+    if (!(key in value)) return false;
+    const expectedType = properties[key]?.type as string | undefined;
+    if (!expectedType) continue;
+    const actual = value[key];
+    if (expectedType === "object" && (typeof actual !== "object" || actual === null)) return false;
+    if (expectedType === "string" && typeof actual !== "string") return false;
+    if (expectedType === "number" && typeof actual !== "number") return false;
+    if (expectedType === "boolean" && typeof actual !== "boolean") return false;
+  }
+
+  if (schema.additionalProperties === false) {
+    const allowed = new Set(Object.keys(properties));
+    for (const key of Object.keys(value)) {
+      if (!allowed.has(key)) return false;
+    }
+  }
+
+  return true;
 }
 
 function tryParseJSON(str: string): Record<string, unknown> | null {
