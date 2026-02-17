@@ -712,6 +712,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     shared2.cycle = cycle;
     shared2.max_cycles = maxCycles;
     nextContext.__shared_memory = shared2;
+    nextContext.__iteration_parent_run_id = entry.run.id;
+    nextContext.__iteration_root_run_id = String(nextContext.__iteration_root_run_id ?? entry.run.id);
 
     if (cycle > maxCycles) {
       return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status, iteration_stopped: "max_cycles_reached" } };
@@ -729,6 +731,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status, iteration_error: (started as { error: string }).error } };
     }
 
+    const childRunId = (started as { run_id: string }).run_id;
+    entry.run.context.__latest_iterated_run_id = childRunId;
+    persistRunSnapshot(entry);
+
     return {
       status: 200 as const,
       payload: {
@@ -737,7 +743,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         feedback,
         restart_mode: restartMode,
         run_status: entry.run.status,
-        iterated_run_id: (started as { run_id: string }).run_id,
+        iterated_run_id: childRunId,
       },
     };
   }

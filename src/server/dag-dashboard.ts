@@ -548,6 +548,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           <div><span class="label">Status:</span> <span id="runStatus">—</span></div>
           <div><span class="label">Elapsed:</span> <span id="runElapsed">—</span></div>
           <div><span class="label">Cycle:</span> <span id="runCycle">1/—</span></div>
+          <div style="margin-top:4px"><label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:4px"><input type="checkbox" id="followLatestIterated" checked /> follow latest iterated run</label></div>
         </div>
         <div id="iterationHistory" style="margin-top:8px;font-size:11px;color:var(--text-dim);max-height:120px;overflow:auto;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
           No iteration history yet
@@ -625,6 +626,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     let sseWatchdog = null;
     let dagZoom = 1;
     let currentFilter = 'all';
+    let followSwitchInFlight = false;
 
     // Load examples
     async function loadDagByFile(file) {
@@ -1333,6 +1335,18 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           updateIterationUI(run);
 
           if (run.status === 'failed' || run.status === 'completed' || run.status === 'cancelled') {
+            const follow = document.getElementById('followLatestIterated')?.checked === true;
+            const latestIterated = run?.context?.__latest_iterated_run_id;
+            if (follow && latestIterated && latestIterated !== currentRunId && !followSwitchInFlight) {
+              followSwitchInFlight = true;
+              currentRunId = latestIterated;
+              document.getElementById('runId').textContent = currentRunId;
+              setupSSE(currentRunId);
+              addEventLog({ type: 'run:start', run_id: currentRunId, data: { status: 'Followed latest iterated run' }, timestamp: new Date().toISOString() });
+              setTimeout(() => { followSwitchInFlight = false; }, 400);
+              return;
+            }
+
             const btn = document.getElementById('runBtn');
             btn.disabled = false;
             btn.textContent = '▶ Run DAG';
