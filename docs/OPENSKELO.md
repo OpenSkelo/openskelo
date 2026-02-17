@@ -4,7 +4,7 @@
 
 OpenSkelo is a **deterministic pipeline runtime for AI agents**. Think of it like CI/CD for AI agents — instead of just prompting an LLM and hoping for the best, you define a pipeline with gates that must pass before work can move forward.
 
-**Core concept:** The pipeline is the backbone. Agents are interchangeable workers that execute within stages.
+**Core concept:** A pipeline is made of **blocks** connected as a DAG. Each block has typed inputs/outputs, optional gates, and runs on an assigned agent/provider.
 
 ---
 
@@ -39,6 +39,34 @@ OpenSkelo is a **deterministic pipeline runtime for AI agents**. Think of it lik
 │  └─────────┘ └─────────┘ └──────────┘ └────────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Blocks (Plain English)
+
+A **block** is one unit of work in a workflow.
+
+Each block defines:
+- **Inputs** (what it needs)
+- **Outputs** (what it must produce)
+- **Agent routing** (who should run it)
+- **Gates** (rules to pass before/after execution)
+- **Retry policy** (what happens on failure)
+- **Optional approval** (human approval before continuing)
+
+Blocks are connected by **edges** in a DAG:
+- Upstream block outputs become downstream block inputs
+- OpenSkelo executes blocks in dependency order
+- Independent blocks can run in parallel
+
+Why this matters:
+- Easier debugging (you can inspect each block)
+- Better reliability (gates/retries/approval per block)
+- Safer operations (stop/replay/audit at run + block level)
+
+Example (conceptual):
+
+`spec -> build -> qa -> release`
 
 ---
 

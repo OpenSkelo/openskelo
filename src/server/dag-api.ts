@@ -28,6 +28,7 @@ interface DAGEvent {
 // In-memory store for active runs + events
 const activeRuns = new Map<string, { dag: DAGDef; run: DAGRun; result?: ExecutorResult }>();
 const runAbortControllers = new Map<string, AbortController>();
+const runSafetyTimers = new Map<string, NodeJS.Timeout>();
 const runEvents = new Map<string, DAGEvent[]>();
 const sseClients = new Map<string, Set<(event: DAGEvent) => void>>();
 
@@ -35,6 +36,13 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   const app = new Hono();
   const engine = createBlockEngine();
   const examplesBaseDir = opts?.examplesDir ?? resolve(process.cwd(), "examples");
+
+  const safety = {
+    maxConcurrentRuns: Number(process.env.OPENSKELO_MAX_CONCURRENT_RUNS ?? "2"),
+    maxRunDurationMs: Number(process.env.OPENSKELO_MAX_RUN_DURATION_MS ?? String(30 * 60 * 1000)),
+    maxBlockDurationMs: Number(process.env.OPENSKELO_MAX_BLOCK_DURATION_MS ?? String(10 * 60 * 1000)),
+    maxRetriesCap: Number(process.env.OPENSKELO_MAX_RETRIES_CAP ?? "2"),
+  };
 
   // Phase A durability: persist DAG runs/events/approvals
   createDB();
@@ -147,6 +155,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
   }
 
+  app.get("/api/dag/safety", (c) => c.json({ safety }));
+
   // List available example DAGs
   app.get("/api/dag/examples", (c) => {
     const examples: { name: string; file: string }[] = [];
@@ -212,6 +222,16 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       return c.json({ error: (err as Error).message }, 400);
     }
 
+    // Enforce DAG safety caps
+    dag.blocks = dag.blocks.map((b) => ({
+      ...b,
+      retry: {
+        ...b.retry,
+        max_attempts: Math.min(Number(b.retry?.max_attempts ?? 0), safety.maxRetriesCap),
+      },
+      timeout_ms: Math.min(Number(b.timeout_ms ?? safety.maxBlockDurationMs), safety.maxBlockDurationMs),
+    }));
+
     // Build agents map from config
     const agents: Record<string, { role: string; capabilities: string[]; provider: string; model: string }> = {};
     for (const [id, agent] of Object.entries(config.agents)) {
@@ -232,7 +252,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     const provider = createOpenClawProvider({
       agentMapping: body.agentMapping as Record<string, string> | undefined,
-      timeoutSeconds: (body.timeoutSeconds as number) ?? 300,
+      timeoutSeconds: Math.min((body.timeoutSeconds as number) ?? 300, Math.ceil(safety.maxBlockDurationMs / 1000)),
       model: (body.model as string | undefined) ?? "openai-codex/gpt-5.3-codex",
       thinking: body.thinking as string | undefined,
     });
@@ -289,6 +309,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
         runAbortControllers.delete(run.id);
+        const t = runSafetyTimers.get(run.id); if (t) clearTimeout(t);
+        runSafetyTimers.delete(run.id);
         broadcast(run.id, {
           type: "run:complete",
           run_id: run.id,
@@ -300,6 +322,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
         runAbortControllers.delete(run.id);
+        const t = runSafetyTimers.get(run.id); if (t) clearTimeout(t);
+        runSafetyTimers.delete(run.id);
         broadcast(run.id, {
           type: "run:fail",
           run_id: run.id,
@@ -339,6 +363,15 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       },
     });
 
+    const activeRunningCount = Array.from(activeRuns.values()).filter((e) => e.run.status === "running" || e.run.status === "paused_approval" || e.run.status === "pending").length;
+    if (activeRunningCount >= safety.maxConcurrentRuns) {
+      return c.json({
+        error: "Concurrency limit reached",
+        limit: safety.maxConcurrentRuns,
+        active: activeRunningCount,
+      }, 429);
+    }
+
     // Create initial run state for immediate response
     const initialRun = engine.createRun(dag, context);
     runIdRef = initialRun.id;
@@ -353,9 +386,32 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     broadcast(initialRun.id, {
       type: "run:start",
       run_id: initialRun.id,
-      data: { dag_name: dag.name, blocks: dag.blocks.map(b => b.id) },
+      data: { dag_name: dag.name, blocks: dag.blocks.map(b => b.id), safety },
       timestamp: new Date().toISOString(),
     });
+
+    const safetyTimer = setTimeout(() => {
+      const live = activeRuns.get(initialRun.id);
+      if (!live) return;
+      if (live.run.status === "completed" || live.run.status === "failed" || live.run.status === "cancelled") return;
+      live.run.status = "cancelled";
+      for (const block of Object.values(live.run.blocks)) {
+        if (block.status === "running" || block.status === "pending" || block.status === "ready" || block.status === "retrying") {
+          block.status = "skipped";
+        }
+      }
+      const ctl = runAbortControllers.get(initialRun.id);
+      if (ctl && !ctl.signal.aborted) ctl.abort("run exceeded max duration");
+      runAbortControllers.delete(initialRun.id);
+      persistRunSnapshot(live);
+      broadcast(initialRun.id, {
+        type: "run:fail",
+        run_id: initialRun.id,
+        data: { status: "cancelled", reason: "max_run_duration_exceeded" },
+        timestamp: new Date().toISOString(),
+      });
+    }, safety.maxRunDurationMs);
+    runSafetyTimers.set(initialRun.id, safetyTimer);
 
     // Execute asynchronously — pass the stored run reference so mutations are visible
     executor.execute(dag, context, initialRun).then((result) => {
@@ -367,8 +423,12 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       if (initialRun.status === "cancelled") {
         runAbortControllers.delete(initialRun.id);
       }
+      const t = runSafetyTimers.get(initialRun.id); if (t) clearTimeout(t);
+      runSafetyTimers.delete(initialRun.id);
     }).catch((err) => {
       runAbortControllers.delete(initialRun.id);
+      const t = runSafetyTimers.get(initialRun.id); if (t) clearTimeout(t);
+      runSafetyTimers.delete(initialRun.id);
       console.error("[dag-api] Run failed:", err);
     });
 
@@ -592,6 +652,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       const ctl = runAbortControllers.get(runId);
       if (ctl && !ctl.signal.aborted) ctl.abort("run stopped by user");
       runAbortControllers.delete(runId);
+      const t = runSafetyTimers.get(runId); if (t) clearTimeout(t);
+      runSafetyTimers.delete(runId);
       for (const block of Object.values(entry.run.blocks)) {
         if (block.status === "running" || block.status === "pending" || block.status === "ready") {
           block.status = "skipped";

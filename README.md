@@ -134,7 +134,24 @@ skelo task update TASK-001 --status IN_PROGRESS \
 # ✓ TASK-001: REVIEW → IN_PROGRESS
 ```
 
-### 3. Gates enforce quality — deterministically
+### 3. Blocks are the core building unit
+
+A **block** is a single step in your workflow DAG.
+
+Each block has:
+- typed **inputs** and **outputs**
+- an **agent/provider** assignment
+- optional **pre/post gates**
+- optional **retry policy**
+- optional **human approval**
+
+Think of it like this:
+
+`spec -> build -> qa -> release`
+
+OpenSkelo runs blocks in dependency order, tracks each block's runtime metadata, and lets you inspect/replay runs safely.
+
+### 4. Gates enforce quality — deterministically
 
 Gates are rules that **cannot be broken**. The API rejects transitions that fail gates.
 
