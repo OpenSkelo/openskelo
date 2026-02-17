@@ -1,0 +1,67 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`response contracts (snapshot lock) > freezes GET /api/runs/:id response shape 1`] = `
+{
+  "events": [
+    {
+      "block": "NORA_PLAN",
+      "created_at": "<timestamp>",
+      "details": {
+        "message": "Run created",
+        "original_prompt": "Contract run",
+      },
+      "id": "<id>",
+      "result": "pass",
+      "run_id": "RUN-<id>",
+      "transition": "create",
+    },
+  ],
+  "run": {
+    "artifact_path": null,
+    "artifact_preview": null,
+    "blocks": [],
+    "context": {},
+    "created_at": "<timestamp>",
+    "current_block": "NORA_PLAN",
+    "id": "RUN-<id>",
+    "iteration": 1,
+    "original_prompt": "Contract run",
+    "run_version": 0,
+    "status": "running",
+    "updated_at": "<timestamp>",
+  },
+  "steps": [],
+}
+`;
+
+exports[`response contracts (snapshot lock) > freezes GET /api/runs/:id/artifact response shape 1`] = `
+{
+  "artifact_path": "/artifacts/RUN-<id>/iteration-1/index.html",
+  "file_path": "/var/folders/0_/kg7183gs4y5gyrqgtf864l4w0000gn/T/openskelo-test-<tmp>/.skelo/artifacts/RUN-<id>/iteration-1/index.html",
+  "persisted": true,
+  "preview": "<div style="padding:16px;font-family:system-ui"><h2>OpenSkelo Artifact</h2><p>Contract artifact</p></div>",
+}
+`;
+
+exports[`response contracts (snapshot lock) > freezes GET /api/runs/:id/artifact/content response body 1`] = `"<div style="padding:16px;font-family:system-ui"><h2>OpenSkelo Artifact</h2><p>Contract artifact content</p></div>"`;
+
+exports[`response contracts (snapshot lock) > freezes GET /api/runs/:id/steps response shape 1`] = `
+{
+  "steps": [
+    {
+      "agent": "rei",
+      "artifact_path": "/artifacts/RUN-<id>/iteration-1/index.html",
+      "artifact_preview": "<div style="padding:16px;font-family:system-ui"><h2>OpenSkelo Artifact</h2><p>Contract steps</p></div>",
+      "block": "REI_BUILD",
+      "context_snapshot": {},
+      "id": "<id>",
+      "iteration": 1,
+      "output": "Built artifact for: Contract steps",
+      "run_id": "RUN-<id>",
+      "step_index": 1,
+      "timestamp": "<timestamp>",
+      "transition": "NORA_PLAN->REI_BUILD",
+    },
+  ],
+}
+`;
