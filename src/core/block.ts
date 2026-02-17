@@ -438,7 +438,13 @@ export function createBlockEngine() {
     const inputs: Record<string, unknown> = {};
 
     for (const [portName, portDef] of Object.entries(blockDef.inputs)) {
-      // Priority: upstream edge > run context > default
+      // Priority: explicit per-block input override > upstream edge > run context > default
+      const overrideKey = `__override_input_${blockId}_${portName}`;
+      if (run.context[overrideKey] !== undefined) {
+        inputs[portName] = run.context[overrideKey];
+        continue;
+      }
+
       const edge = dag.edges.find(e => e.to === blockId && e.input === portName);
 
       if (edge) {

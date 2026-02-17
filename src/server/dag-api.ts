@@ -674,6 +674,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     if (decision === "approve") {
       entry.run.context[`__approval_${blockId}`] = true;
+      // Bridge approval decision into block input when needed (e.g., release gate on `approved`)
+      entry.run.context[`__override_input_${blockId}_approved`] = true;
       entry.run.status = "running";
       persistRunSnapshot(entry);
 
@@ -681,7 +683,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         type: "approval:decided",
         run_id: entry.run.id,
         block_id: blockId,
-        data: { decision, notes, feedback, restart_mode: restartMode },
+        data: { decision, notes, feedback, restart_mode: restartMode, input_overrides: { approved: true } },
         timestamp: new Date().toISOString(),
       });
 
