@@ -75,9 +75,10 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
   /**
    * Execute a full DAG run. Returns when all blocks are done or failed.
+   * If an existing run is provided, mutates it in place (for API state sharing).
    */
-  async function execute(dag: DAGDef, context: Record<string, unknown> = {}): Promise<ExecutorResult> {
-    const run = engine.createRun(dag, context);
+  async function execute(dag: DAGDef, context: Record<string, unknown> = {}, existingRun?: DAGRun): Promise<ExecutorResult> {
+    const run = existingRun ?? engine.createRun(dag, context);
     const trace: TraceEntry[] = [];
     const order = engine.executionOrder(dag);
 
@@ -140,9 +141,12 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       );
 
       // Check for catastrophic failures
-      for (const result of results) {
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
         if (result.status === "rejected") {
-          console.error("[dag-executor] Unexpected error:", result.reason);
+          console.error(`[dag-executor] Block '${batch[i]}' crashed:`, result.reason);
+        } else if (result.status === "fulfilled") {
+          // Log successful block execution
         }
       }
     }
@@ -175,6 +179,45 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     const failedPreGate = preGates.find(g => !g.passed);
     if (failedPreGate) {
+      // Generic gate-failure reroute/bounce policy
+      const rule = (blockDef.on_gate_fail ?? []).find((r) => r.when_gate === failedPreGate.name);
+      if (rule) {
+        const key = `__bounce_${blockId}_${rule.when_gate}`;
+        const bounce = Number((run.context[key] as number) ?? 0) + 1;
+        run.context[key] = bounce;
+
+        if (bounce <= rule.max_bounces) {
+          const toReset = new Set<string>([blockId, ...(rule.reset_blocks ?? []), rule.route_to]);
+          for (const retryBlock of toReset) {
+            const inst = run.blocks[retryBlock];
+            if (!inst) continue;
+            inst.status = "pending";
+            inst.outputs = {};
+            inst.execution = null;
+            inst.started_at = null;
+            inst.completed_at = null;
+          }
+
+          opts.onBlockFail?.(
+            run,
+            blockId,
+            `${rule.reason ?? "Gate failure reroute"} Bounce ${bounce}/${rule.max_bounces} → rerouting to ${rule.route_to}.`
+          );
+          trace.push({
+            block_id: blockId,
+            instance_id: run.blocks[blockId].instance_id,
+            status: "failed",
+            inputs,
+            outputs: {},
+            pre_gates: preGates,
+            post_gates: [],
+            execution: null,
+            duration_ms: Date.now() - startTime,
+          });
+          return;
+        }
+      }
+
       engine.failBlock(run, blockId, `Pre-gate failed: ${failedPreGate.name} — ${failedPreGate.reason}`, blockDef);
       opts.onBlockFail?.(run, blockId, failedPreGate.reason ?? "Pre-gate failed");
       trace.push({
@@ -310,6 +353,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     // 7. Complete block
     engine.completeBlock(run, blockId, outputs, execution);
+    // successful completion; bounce counters can remain for audit context
     opts.onBlockComplete?.(run, blockId);
 
     trace.push({

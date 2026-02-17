@@ -44,6 +44,9 @@ export interface BlockDef {
   /** Post-execution gates — all must pass after block runs (before outputs propagate) */
   post_gates: BlockGate[];
 
+  /** Generic gate-failure routing/bounce rules */
+  on_gate_fail?: GateFailRule[];
+
   /** Retry policy on failure */
   retry: RetryPolicy;
 
@@ -110,6 +113,19 @@ export interface RetryPolicy {
 
   /** Max delay cap in ms */
   max_delay_ms?: number;
+}
+
+export interface GateFailRule {
+  /** Gate name to match (e.g., "review-approved") */
+  when_gate: string;
+  /** Reroute target block id to resume from */
+  route_to: string;
+  /** Additional blocks to reset to pending (besides current block) */
+  reset_blocks?: string[];
+  /** Max bounce count before hard fail */
+  max_bounces: number;
+  /** Message shown in logs/events */
+  reason?: string;
 }
 
 // ── DAG Definition (from YAML config) ──
@@ -595,6 +611,7 @@ function parseBlockDef(raw: Record<string, unknown>): BlockDef {
     agent: parseAgentRef(raw.agent as Record<string, unknown> | undefined),
     pre_gates: parseBlockGates(raw.pre_gates),
     post_gates: parseBlockGates(raw.post_gates),
+    on_gate_fail: parseGateFailRules(raw.on_gate_fail),
     retry: parseRetryPolicy(raw.retry),
     timeout_ms: raw.timeout_ms as number | undefined,
     metadata: raw.metadata as Record<string, unknown> | undefined,
@@ -636,6 +653,19 @@ function parseBlockGates(raw: unknown): BlockGate[] {
     check: g.check as BlockGateCheck,
     error: (g.error as string) ?? "Gate failed",
   }));
+}
+
+function parseGateFailRules(raw: unknown): GateFailRule[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r: Record<string, unknown>) => ({
+      when_gate: r.when_gate as string,
+      route_to: r.route_to as string,
+      reset_blocks: Array.isArray(r.reset_blocks) ? (r.reset_blocks as string[]) : undefined,
+      max_bounces: Number(r.max_bounces ?? 0),
+      reason: r.reason as string | undefined,
+    }))
+    .filter((r) => r.when_gate && r.route_to && r.max_bounces > 0);
 }
 
 function parseRetryPolicy(raw: unknown): RetryPolicy {

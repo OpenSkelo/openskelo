@@ -66,7 +66,8 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   const dagAPI = createDAGAPI(config, { examplesDir });
   app.route("/", dagAPI);
 
-  app.get("/dag", (c) => c.html(getDAGDashboardHTML(config.name, opts.port)));
+  app.get("/dag", (c) => c.html(getDAGDashboardHTML(config.name, opts.port, { liveMode: false })));
+  app.get("/dag/live", (c) => c.html(getDAGDashboardHTML(config.name, opts.port, { liveMode: true })));
 
   await startNodeServer(app, opts.port);
 
@@ -78,6 +79,7 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
     console.log(chalk.dim("  Dashboard: ") + `http://localhost:${opts.port}/dashboard`);
   }
   console.log(chalk.dim("  DAG Runner:") + `http://localhost:${opts.port}/dag`);
+  console.log(chalk.dim("  Live View: ") + `http://localhost:${opts.port}/dag/live`);
   console.log(chalk.dim("  API:       ") + `http://localhost:${opts.port}/api`);
   console.log();
 

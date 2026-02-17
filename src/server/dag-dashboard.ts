@@ -3,7 +3,8 @@
  * Pure HTML/CSS/JS, no build step, served inline.
  */
 
-export function getDAGDashboardHTML(projectName: string, port: number): string {
+export function getDAGDashboardHTML(projectName: string, port: number, opts?: { liveMode?: boolean }): string {
+  const liveMode = opts?.liveMode === true;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -103,13 +104,33 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
     .dag-canvas {
       position: relative;
       overflow: auto;
-      padding: 40px;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: ${liveMode ? "380px 1fr" : "1fr"};
+      gap: 20px;
+      align-items: start;
     }
 
     .dag-container {
       position: relative;
       min-width: 100%;
       min-height: 100%;
+    }
+
+    .center-preview {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      min-height: 620px;
+      padding: 10px;
+      display: ${liveMode ? "block" : "none"};
+    }
+    .center-preview h3 {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
 
     svg.edges {
@@ -387,21 +408,19 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
   <div class="header">
     <div style="display:flex;align-items:baseline">
       <h1>⚡ ${projectName}</h1>
-      <span class="subtitle">DAG Runner</span>
+      <span class="subtitle">${liveMode ? "DAG Live View" : "DAG Runner"}</span>
     </div>
     <div class="controls">
       <select id="dagSelect">
         <option value="">Select a DAG...</option>
+        <option value="coding-pipeline.yaml">coding-pipeline</option>
+        <option value="research-pipeline.yaml">research-pipeline</option>
+        <option value="content-pipeline.yaml">content-pipeline</option>
       </select>
-      <select id="providerSelect">
-        <option value="mock">🔮 Mock (simulated)</option>
+      <select id="providerSelect" disabled>
         <option value="openclaw">🦞 OpenClaw (real agents)</option>
       </select>
-      <div class="speed-control" id="speedGroup">
-        <span>Speed:</span>
-        <input type="range" id="speedSlider" min="1" max="10" value="5">
-        <span id="speedLabel">1x</span>
-      </div>
+      <input id="topicInput" placeholder="Enter pipeline input (e.g., research about cats vs dogs)" style="width:420px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px" />
       <button class="primary" id="runBtn" disabled>▶ Run DAG</button>
       <button id="stopBtn" style="display:none;background:var(--red);border-color:var(--red);color:white;font-weight:600">■ Stop</button>
     </div>
@@ -425,6 +444,15 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
             </marker>
           </defs>
         </svg>
+      </div>
+
+      <div class="center-preview" id="centerPreviewPane">
+        <h3>Live Product Preview</h3>
+        <div id="previewHint" style="font-size:12px;color:var(--text-dim);padding:6px 0">Waiting for visual artifact...</div>
+        <iframe id="livePreviewFrame" style="display:none;width:100%;height:560px;border:1px solid var(--border);border-radius:6px;background:white"></iframe>
+        <img id="livePreviewImage" style="display:none;width:100%;max-height:560px;object-fit:contain;border:1px solid var(--border);border-radius:6px;background:#111" />
+        <pre id="livePreviewText" style="display:none;max-height:520px;overflow:auto;background:var(--surface2);padding:8px;border-radius:6px;font-size:11px;line-height:1.4"></pre>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:6px">Source: <span id="livePreviewSource">—</span></div>
       </div>
     </div>
 
@@ -455,6 +483,17 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
       </div>
 
       <div class="panel-section">
+        <h3>Block Inspector</h3>
+        <div id="inspectorEmpty" style="font-size:12px;color:var(--text-dim);padding:8px 0">Click any block node to inspect full JSON</div>
+        <div id="inspector" style="display:none">
+          <div style="font-size:12px;margin-bottom:6px"><b id="inspectorTitle">—</b></div>
+          <pre id="inspectorJson" style="max-height:240px;overflow:auto;background:var(--surface2);padding:8px;border-radius:6px;font-size:10px;line-height:1.4"></pre>
+          <div style="font-size:11px;margin:8px 0 4px;color:var(--text-dim)">Final Output (terminal block)</div>
+          <pre id="finalOutputJson" style="max-height:140px;overflow:auto;background:var(--surface2);padding:8px;border-radius:6px;font-size:10px;line-height:1.4"></pre>
+        </div>
+      </div>
+
+      <div class="panel-section">
         <h3>Network Log</h3>
         <div class="event-log" id="networkLog">
           <div style="font-size:12px;color:var(--text-dim);text-align:center;padding:20px">
@@ -467,18 +506,23 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
 
   <script>
     const API = '';
+    const LIVE_MODE = ${liveMode ? "true" : "false"};
     let currentDag = null;
     let currentRunId = null;
+    let currentRunData = null;
     let eventSource = null;
     let runStartTime = null;
     let elapsedInterval = null;
+    let livePoll = null;
 
     // Load examples
     async function loadExamples() {
       const res = await apiFetch(API + '/api/dag/examples');
       const { examples } = await res.json();
       const sel = document.getElementById('dagSelect');
+      const existing = new Set(Array.from(sel.options).map(o => o.value));
       for (const ex of examples) {
+        if (existing.has(ex.file)) continue;
         const opt = document.createElement('option');
         opt.value = ex.file;
         opt.textContent = ex.name;
@@ -503,16 +547,8 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
     document.getElementById('runBtn').addEventListener('click', runDAG);
     document.getElementById('stopBtn').addEventListener('click', stopDAG);
 
-    document.getElementById('providerSelect').addEventListener('change', (e) => {
-      const isReal = e.target.value === 'openclaw';
-      document.getElementById('speedGroup').style.display = isReal ? 'none' : 'flex';
-    });
+    // OpenClaw-only mode for now (no mock toggle)
 
-    document.getElementById('speedSlider').addEventListener('input', (e) => {
-      const val = parseInt(e.target.value);
-      const speed = val <= 5 ? (val / 5).toFixed(1) : ((val - 4) * 1).toFixed(0);
-      document.getElementById('speedLabel').textContent = speed + 'x';
-    });
 
     // Wrapped fetch that logs to network panel
     async function apiFetch(url, options = {}) {
@@ -572,26 +608,32 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
       // Reset UI
       document.getElementById('eventLog').innerHTML = '';
       document.getElementById('networkLog').innerHTML = '';
+      if (LIVE_MODE) {
+        const hint = document.getElementById('previewHint');
+        const frame = document.getElementById('livePreviewFrame');
+        const img = document.getElementById('livePreviewImage');
+        const txt = document.getElementById('livePreviewText');
+        const src = document.getElementById('livePreviewSource');
+        if (hint) { hint.style.display = 'block'; hint.textContent = 'Waiting for visual artifact...'; }
+        if (frame) { frame.style.display = 'none'; frame.src = 'about:blank'; frame.srcdoc = ''; }
+        if (img) { img.style.display = 'none'; img.src = ''; }
+        if (txt) { txt.style.display = 'none'; txt.textContent = ''; }
+        if (src) src.textContent = '—';
+      }
       runStartTime = Date.now();
       updateElapsed();
       elapsedInterval = setInterval(updateElapsed, 100);
 
-      const providerMode = document.getElementById('providerSelect').value;
+      const providerMode = 'openclaw';
+      const userTopic = (document.getElementById('topicInput').value || '').trim();
 
-      // Build request body
+      // Build request body (OpenClaw real-agent mode only)
       const reqBody = {
         example: currentDag.file,
-        context: getDefaultContext(currentDag.name),
+        context: buildContext(currentDag.name, userTopic),
         provider: providerMode,
+        timeoutSeconds: 300,
       };
-
-      if (providerMode === 'mock') {
-        const speedVal = parseInt(document.getElementById('speedSlider').value);
-        reqBody.minDelay = speedVal <= 5 ? (6 - speedVal) * 1000 : Math.max(200, 1000 / (speedVal - 4));
-        reqBody.maxDelay = reqBody.minDelay * 2.5;
-      } else {
-        reqBody.timeoutSeconds = 120;
-      }
 
       const res = await apiFetch(API + '/api/dag/run', {
         method: 'POST',
@@ -601,6 +643,15 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
 
       const data = await res.json();
       currentRunId = data.run_id;
+      currentRunData = null;
+
+      if (LIVE_MODE) {
+        if (livePoll) clearInterval(livePoll);
+        livePoll = setInterval(async () => {
+          await refreshRunData();
+          focusActiveBlock();
+        }, 1500);
+      }
       document.getElementById('runId').textContent = data.run_id.slice(0, 16);
       document.getElementById('runDag').textContent = data.dag_name;
       document.getElementById('runStatus').textContent = 'running';
@@ -649,9 +700,10 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
         }
       }
 
-      // Update stats
+      // Update stats + fetch latest run JSON snapshot
       updateStats();
       addEventLog(event);
+      refreshRunData().then(() => { if (LIVE_MODE) focusActiveBlock(); });
     }
 
     function handleRunEnd(event) {
@@ -662,6 +714,11 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
       btn.disabled = false;
       btn.textContent = '▶ Run DAG';
       document.getElementById('stopBtn').style.display = 'none';
+      refreshRunData().then(() => {
+        const terminal = findTerminalBlockId();
+        if (terminal) showInspector(terminal);
+      });
+      if (livePoll) { clearInterval(livePoll); livePoll = null; }
       if (eventSource) { eventSource.close(); eventSource = null; }
     }
 
@@ -704,6 +761,138 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
       const ms = Date.now() - runStartTime;
       const s = (ms / 1000).toFixed(1);
       document.getElementById('runElapsed').textContent = s + 's';
+    }
+
+    function showInspector(blockId) {
+      if (!currentRunData || !currentRunData.run || !currentRunData.run.blocks) return;
+      const block = currentRunData.run.blocks[blockId];
+      if (!block) return;
+
+      document.getElementById('inspectorEmpty').style.display = 'none';
+      document.getElementById('inspector').style.display = 'block';
+      document.getElementById('inspectorTitle').textContent = blockId + ' (' + block.status + ')';
+
+      const details = {
+        blockId,
+        status: block.status,
+        inputs: block.inputs,
+        outputs: block.outputs,
+        execution: block.execution,
+        pre_gates: block.pre_gate_results,
+        post_gates: block.post_gate_results,
+      };
+      document.getElementById('inspectorJson').textContent = JSON.stringify(details, null, 2);
+
+      // Terminal block output
+      const terminalId = findTerminalBlockId();
+      const terminal = terminalId ? currentRunData.run.blocks[terminalId] : null;
+      document.getElementById('finalOutputJson').textContent = JSON.stringify({
+        terminal_block: terminalId,
+        outputs: terminal?.outputs ?? null,
+        execution: terminal?.execution ?? null,
+      }, null, 2);
+    }
+
+    function findTerminalBlockId() {
+      if (!currentDag) return null;
+      const fromSet = new Set((currentDag.edges || []).map(e => e.from));
+      const terminals = (currentDag.blocks || []).map(b => b.id).filter(id => !fromSet.has(id));
+      return terminals.length ? terminals[0] : null;
+    }
+
+    function extractVisualArtifact(blockId, outputs) {
+      if (!outputs || typeof outputs !== 'object') return null;
+
+      // URL-based artifact
+      const url = outputs.artifact_url || outputs.preview_url || outputs.url || outputs.deploy_url;
+      if (typeof url === 'string' && /^https?:\\/\\//.test(url)) {
+        return { kind: 'url', value: url, source: blockId + '.url' };
+      }
+
+      // Inline HTML artifact
+      const html = outputs.artifact_html || outputs.html || outputs.preview_html;
+      if (typeof html === 'string' && /<\\/?(html|div|canvas|script|body)/i.test(html)) {
+        return { kind: 'html', value: html, source: blockId + '.html' };
+      }
+
+      // Image artifact
+      const image = outputs.image_url || outputs.image || outputs.screenshot;
+      if (typeof image === 'string' && (image.startsWith('data:image/') || /^https?:\\/\\//.test(image))) {
+        return { kind: 'image', value: image, source: blockId + '.image' };
+      }
+
+      // Generic fallback: show text/json output from this block
+      const keys = Object.keys(outputs);
+      if (keys.length) return { kind: 'text', value: JSON.stringify(outputs, null, 2), source: blockId + '.outputs' };
+      return null;
+    }
+
+    function updateLivePreview() {
+      if (!LIVE_MODE || !currentRunData?.run?.blocks) return;
+
+      const frame = document.getElementById('livePreviewFrame');
+      const img = document.getElementById('livePreviewImage');
+      const txt = document.getElementById('livePreviewText');
+      const hint = document.getElementById('previewHint');
+      const source = document.getElementById('livePreviewSource');
+
+      // Find latest completed block with visual-ish output
+      const completed = Object.entries(currentRunData.run.blocks)
+        .filter(([_, b]) => b.status === 'completed')
+        .sort((a, b) => new Date(a[1].completed_at || 0).getTime() - new Date(b[1].completed_at || 0).getTime());
+
+      let artifact = null;
+      for (let i = completed.length - 1; i >= 0; i--) {
+        const [blockId, block] = completed[i];
+        artifact = extractVisualArtifact(blockId, block.outputs);
+        if (artifact) break;
+      }
+
+      frame.style.display = 'none';
+      img.style.display = 'none';
+      txt.style.display = 'none';
+
+      if (!artifact) {
+        hint.style.display = 'block';
+        hint.textContent = 'Waiting for visual artifact...';
+        source.textContent = '—';
+        return;
+      }
+
+      hint.style.display = 'none';
+      source.textContent = artifact.source;
+
+      if (artifact.kind === 'url') {
+        frame.style.display = 'block';
+        frame.src = artifact.value;
+      } else if (artifact.kind === 'html') {
+        frame.style.display = 'block';
+        frame.srcdoc = artifact.value;
+      } else if (artifact.kind === 'image') {
+        img.style.display = 'block';
+        img.src = artifact.value;
+      } else {
+        txt.style.display = 'block';
+        txt.textContent = artifact.value;
+      }
+    }
+
+    async function refreshRunData() {
+      if (!currentRunId) return;
+      try {
+        const res = await apiFetch(API + '/api/dag/runs/' + currentRunId);
+        currentRunData = await res.json();
+        if (LIVE_MODE) updateLivePreview();
+      } catch (_) {}
+    }
+
+    function focusActiveBlock() {
+      if (!currentRunData?.run?.blocks) return;
+      const entries = Object.entries(currentRunData.run.blocks);
+      const running = entries.find(([_, b]) => b.status === 'running');
+      if (running) return showInspector(running[0]);
+      const completed = entries.filter(([_, b]) => b.status === 'completed');
+      if (completed.length) return showInspector(completed[completed.length - 1][0]);
     }
 
     // ── DAG Layout & Rendering ──
@@ -753,6 +942,7 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
               '<div class="port-group">' + outputs.map(p => '<div class="port out">' + p + ' →</div>').join('') + '</div>' +
             '</div>';
 
+          node.addEventListener('click', () => showInspector(blockId));
           container.appendChild(node);
         });
       });
@@ -821,16 +1011,17 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
       return layers;
     }
 
-    function getDefaultContext(dagName) {
+    function buildContext(dagName, userText) {
+      const text = userText && userText.length ? userText : null;
       switch (dagName) {
         case 'coding-pipeline':
-          return { prompt: 'Build a real-time chat widget with WebSocket support' };
+          return { prompt: text || 'Build a real-time chat widget with WebSocket support' };
         case 'research-pipeline':
-          return { query: 'What are the emerging trends in AI agent frameworks in 2026?' };
+          return { query: text || 'What are the emerging trends in AI agent frameworks in 2026?' };
         case 'content-pipeline':
-          return { topic: 'The SaaSpocalypse: How AI Agents Are Replacing Traditional Software' };
+          return { topic: text || 'The SaaSpocalypse: How AI Agents Are Replacing Traditional Software' };
         default:
-          return {};
+          return text ? { input: text } : {};
       }
     }
 

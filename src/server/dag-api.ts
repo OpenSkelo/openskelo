@@ -9,7 +9,6 @@ import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
-import { createMockProvider } from "../core/mock-provider.js";
 import { createOpenClawProvider } from "../core/openclaw-provider.js";
 import type { DAGDef, DAGRun, BlockInstance } from "../core/block.js";
 import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
@@ -111,20 +110,18 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
 
     // Choose provider: "openclaw" for real agents, "mock" for simulation
-    const providerMode = (body.provider as string) ?? "mock";
+    const providerMode = (body.provider as string) ?? "openclaw";
 
-    const provider = providerMode === "openclaw"
-      ? createOpenClawProvider({
-          agentMapping: body.agentMapping as Record<string, string> | undefined,
-          timeoutSeconds: (body.timeoutSeconds as number) ?? 120,
-          model: body.model as string | undefined,
-          thinking: body.thinking as string | undefined,
-        })
-      : createMockProvider({
-          minDelay: (body.minDelay as number) ?? 2000,
-          maxDelay: (body.maxDelay as number) ?? 5000,
-          failureRate: (body.failureRate as number) ?? 0,
-        });
+    if (providerMode !== "openclaw") {
+      return c.json({ error: "Only provider=openclaw is enabled in this build" }, 400);
+    }
+
+    const provider = createOpenClawProvider({
+      agentMapping: body.agentMapping as Record<string, string> | undefined,
+      timeoutSeconds: (body.timeoutSeconds as number) ?? 300,
+      model: body.model as string | undefined,
+      thinking: body.thinking as string | undefined,
+    });
 
     const providers: Record<string, typeof provider> = {};
     for (const p of config.providers) {
@@ -193,11 +190,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       timestamp: new Date().toISOString(),
     });
 
-    // Execute asynchronously (don't await — SSE will stream updates)
-    executor.execute(dag, context).then((result) => {
+    // Execute asynchronously — pass the stored run reference so mutations are visible
+    executor.execute(dag, context, initialRun).then((result) => {
       const entry = activeRuns.get(initialRun.id);
       if (entry) {
-        entry.run = result.run;
         entry.result = result;
       }
     }).catch((err) => {
