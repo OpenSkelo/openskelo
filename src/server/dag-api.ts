@@ -27,6 +27,7 @@ interface DAGEvent {
 
 // In-memory store for active runs + events
 const activeRuns = new Map<string, { dag: DAGDef; run: DAGRun; result?: ExecutorResult }>();
+const runAbortControllers = new Map<string, AbortController>();
 const runEvents = new Map<string, DAGEvent[]>();
 const sseClients = new Map<string, Set<(event: DAGEvent) => void>>();
 
@@ -241,11 +242,16 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       providers[p.name] = provider;
     }
 
+    const runAbortController = new AbortController();
+    let runIdRef = "";
+
     // Create executor with event hooks
     const executor = createDAGExecutor({
       providers,
       agents,
       maxParallel: 4,
+      abortSignal: runAbortController.signal,
+      isCancelled: () => (runIdRef ? activeRuns.get(runIdRef)?.run.status === "cancelled" : false),
       onBlockStart: (run, blockId) => {
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
@@ -282,6 +288,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       onRunComplete: (run) => {
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
+        runAbortControllers.delete(run.id);
         broadcast(run.id, {
           type: "run:complete",
           run_id: run.id,
@@ -292,6 +299,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       onRunFail: (run) => {
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
+        runAbortControllers.delete(run.id);
         broadcast(run.id, {
           type: "run:fail",
           run_id: run.id,
@@ -333,6 +341,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     // Create initial run state for immediate response
     const initialRun = engine.createRun(dag, context);
+    runIdRef = initialRun.id;
+    runAbortControllers.set(initialRun.id, runAbortController);
     activeRuns.set(initialRun.id, { dag, run: initialRun });
     runEvents.set(initialRun.id, []);
     {
@@ -354,7 +364,11 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         entry.result = result;
         persistRunSnapshot(entry);
       }
+      if (initialRun.status === "cancelled") {
+        runAbortControllers.delete(initialRun.id);
+      }
     }).catch((err) => {
+      runAbortControllers.delete(initialRun.id);
       console.error("[dag-api] Run failed:", err);
     });
 
@@ -570,26 +584,69 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
   // Stop/cancel a run
   app.post("/api/dag/runs/:id/stop", (c) => {
-    const entry = activeRuns.get(c.req.param("id"));
-    if (!entry) return c.json({ error: "Not found" }, 404);
+    const runId = c.req.param("id");
+    const entry = activeRuns.get(runId);
 
-    entry.run.status = "cancelled";
-    for (const block of Object.values(entry.run.blocks)) {
-      if (block.status === "running" || block.status === "pending" || block.status === "ready") {
-        block.status = "skipped";
+    if (entry) {
+      entry.run.status = "cancelled";
+      const ctl = runAbortControllers.get(runId);
+      if (ctl && !ctl.signal.aborted) ctl.abort("run stopped by user");
+      runAbortControllers.delete(runId);
+      for (const block of Object.values(entry.run.blocks)) {
+        if (block.status === "running" || block.status === "pending" || block.status === "ready") {
+          block.status = "skipped";
+        }
       }
+
+      persistRunSnapshot(entry);
+
+      broadcast(runId, {
+        type: "run:fail",
+        run_id: entry.run.id,
+        data: { status: "cancelled" },
+        timestamp: new Date().toISOString(),
+      });
+
+      return c.json({ status: "cancelled", mode: "active" });
     }
 
-    persistRunSnapshot(entry);
+    // Durable-only fallback: mark persisted run as cancelled even if not active in memory
+    const row = db.prepare("SELECT id, run_json, trace_json, created_at, updated_at FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
+    if (!row) return c.json({ error: "Not found" }, 404);
 
-    broadcast(c.req.param("id"), {
-      type: "run:fail",
-      run_id: entry.run.id,
-      data: { status: "cancelled" },
-      timestamp: new Date().toISOString(),
-    });
+    const run = JSON.parse(String(row.run_json ?? "{}"));
+    run.status = "cancelled";
+    if (run.blocks && typeof run.blocks === "object") {
+      for (const block of Object.values(run.blocks as Record<string, Record<string, unknown>>)) {
+        if (block.status === "running" || block.status === "pending" || block.status === "ready") {
+          block.status = "skipped";
+        }
+      }
+    }
+    const now = new Date().toISOString();
+    db.prepare("UPDATE dag_runs SET status = ?, run_json = ?, updated_at = ? WHERE id = ?").run(
+      "cancelled",
+      JSON.stringify(run),
+      now,
+      runId
+    );
 
-    return c.json({ status: "cancelled" });
+    try {
+      const info = insertDagEvent.run(
+        `dgev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        runId,
+        "run:fail",
+        null,
+        JSON.stringify({ status: "cancelled", durable_only: true }),
+        now
+      );
+      // no live broadcast here because run is not active
+      void info;
+    } catch (err) {
+      console.error("[dag-api] failed to persist durable stop event:", err instanceof Error ? err.message : err);
+    }
+
+    return c.json({ status: "cancelled", mode: "durable" });
   });
 
   function getLatestPendingApproval() {

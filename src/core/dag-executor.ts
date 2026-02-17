@@ -52,6 +52,12 @@ export interface ExecutorOpts {
 
   /** Max parallel blocks executing simultaneously (default: 4) */
   maxParallel?: number;
+
+  /** Optional cancellation signal for hard stop */
+  abortSignal?: AbortSignal;
+
+  /** Optional run cancellation predicate */
+  isCancelled?: () => boolean;
 }
 
 export interface ExecutorResult {
@@ -89,6 +95,11 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     // Main execution loop
     while (true) {
+      if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) {
+        run.status = "cancelled";
+        break;
+      }
+
       // Pause loop when waiting for human approval
       if (run.status === "paused_approval") {
         await sleep(250);
@@ -175,6 +186,8 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const blockDef = dag.blocks.find(b => b.id === blockId);
     if (!blockDef) throw new Error(`Unknown block: ${blockId}`);
 
+    if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) return;
+
     const startTime = Date.now();
 
     // 1. Wire inputs
@@ -218,7 +231,8 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     // Resolve agent early so UI can show who is working while running
     const agent = resolveAgent(blockDef);
     if (agent) {
-      run.blocks[blockId].active_agent_id = agent.id;
+      const provider = opts.providers[agent.provider];
+      run.blocks[blockId].active_agent_id = inferDisplayAgentId(agent.id, agent.role, provider?.type);
       run.blocks[blockId].active_model = agent.model;
       run.blocks[blockId].active_provider = agent.provider;
     }
@@ -320,6 +334,8 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       context: inputs,
       acceptanceCriteria: blockDef.post_gates.map(g => g.error),
       bounceCount: run.blocks[blockId].retry_state.attempt - 1,
+      abortSignal: opts.abortSignal,
+      isCancelled: opts.isCancelled,
       agent: {
         id: agent.id,
         role: agent.role,
@@ -332,6 +348,10 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       dispatchResult = await provider.dispatch(dispatchRequest);
     } catch (err) {
       const error = err instanceof Error ? err.message : "Unknown dispatch error";
+      if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) {
+        run.blocks[blockId].status = "skipped";
+        return;
+      }
       engine.failBlock(run, blockId, error, blockDef);
       opts.onBlockFail?.(run, blockId, error);
       trace.push({
@@ -349,6 +369,10 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     }
 
     if (!dispatchResult.success) {
+      if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) {
+        run.blocks[blockId].status = "skipped";
+        return;
+      }
       engine.failBlock(run, blockId, dispatchResult.error ?? "Dispatch failed", blockDef);
       opts.onBlockFail?.(run, blockId, dispatchResult.error ?? "Dispatch failed");
       trace.push({
@@ -546,6 +570,28 @@ function parseAgentOutputs(blockDef: BlockDef, rawOutput: string): Record<string
   }
 
   return outputs;
+}
+
+function inferDisplayAgentId(agentId: string, role: string, providerType?: string): string {
+  // In OpenClaw-native mode, show the likely OpenClaw worker identity while block is running.
+  if (providerType === "openclaw") {
+    const byId: Record<string, string> = {
+      coder: "rei",
+      reviewer: "mari",
+      manager: "main",
+      specialist: "rei",
+    };
+    if (byId[agentId]) return byId[agentId];
+
+    const byRole: Record<string, string> = {
+      worker: "rei",
+      reviewer: "mari",
+      manager: "main",
+      specialist: "rei",
+    };
+    if (byRole[role]) return byRole[role];
+  }
+  return agentId;
 }
 
 function sleep(ms: number): Promise<void> {

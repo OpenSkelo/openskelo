@@ -45,7 +45,7 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
       console.log(`[openclaw-provider] Dispatching block "${request.title}" to agent '${agentId}'...`);
 
       try {
-        const result = await runOpenClawAgent(agentId, prompt, timeout, opts);
+        const result = await runOpenClawAgent(agentId, prompt, timeout, opts, request.abortSignal);
 
         console.log(`[openclaw-provider] Agent '${agentId}' finished (exit: ${result.exitCode}, stdout: ${result.stdout.length} bytes, stderr: ${result.stderr.length} bytes)`);
 
@@ -130,7 +130,8 @@ function runOpenClawAgent(
   agentId: string,
   prompt: string,
   timeoutSec: number,
-  opts: OpenClawProviderOpts
+  opts: OpenClawProviderOpts,
+  abortSignal?: AbortSignal
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const args = [
     "agent",
@@ -144,7 +145,7 @@ function runOpenClawAgent(
     args.push("--thinking", opts.thinking);
   }
 
-  return runCommand("openclaw", args, timeoutSec + 10);
+  return runCommand("openclaw", args, timeoutSec + 10, abortSignal);
 }
 
 /**
@@ -153,7 +154,8 @@ function runOpenClawAgent(
 function runCommand(
   cmd: string,
   args: string[],
-  timeoutSec: number
+  timeoutSec: number,
+  abortSignal?: AbortSignal
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
@@ -163,27 +165,51 @@ function runCommand(
 
     let stdout = "";
     let stderr = "";
-    let killed = false;
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+
+    const finishReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
+      reject(err);
+    };
+
+    const finishResolve = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
+      resolve({ stdout, stderr, exitCode: code ?? 1 });
+    };
+
+    const onAbort = () => {
+      try { child.kill("SIGKILL"); } catch { /* ignore */ }
+      finishReject(new Error("Dispatch aborted by run stop"));
+    };
+
+    if (abortSignal?.aborted) {
+      onAbort();
+      return;
+    }
 
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
     child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
 
-    const timer = setTimeout(() => {
-      killed = true;
-      child.kill("SIGKILL");
-      reject(new Error(`Command timed out after ${timeoutSec}s`));
+    timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* ignore */ }
+      finishReject(new Error(`Command timed out after ${timeoutSec}s`));
     }, timeoutSec * 1000);
 
+    if (abortSignal) abortSignal.addEventListener("abort", onAbort, { once: true });
+
     child.on("close", (code: number | null) => {
-      clearTimeout(timer);
-      if (!killed) {
-        resolve({ stdout, stderr, exitCode: code ?? 1 });
-      }
+      finishResolve(code);
     });
 
     child.on("error", (err: Error) => {
-      clearTimeout(timer);
-      reject(err);
+      finishReject(err);
     });
   });
 }
