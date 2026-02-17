@@ -189,6 +189,30 @@ OpenSkelo now includes a deterministic **run/block engine** for observer-mode da
 - Gate failures return `400` with gate details.
 - Invalid transition state returns `400`.
 
+#### Idempotency contract for step retries
+
+Step retries support idempotency keys through either:
+
+- request header: `Idempotency-Key` (or `X-Idempotency-Key`)
+- request body field: `idempotencyKey`
+
+Semantics:
+
+- same key + same payload => deduplicated replay (`200`, `deduplicated: true`)
+- same key + different payload => deterministic conflict (`409`, `code: IDEMPOTENCY_KEY_REUSED`)
+- mismatched header/body keys => `400`
+
+#### Transactional concurrency control
+
+Run mutation for `/step` is atomic in one SQLite transaction:
+
+1. conditional `runs` update (optimistic `run_version` compare-and-swap)
+2. `run_steps` insert
+3. `run_events` append
+4. optional idempotency response record insert
+
+Concurrent stale writers fail deterministically with `409` and `code: RUN_STEP_CONFLICT`.
+
 ### Run model
 
 Each run stores:
@@ -260,6 +284,38 @@ The engine currently:
 - Live preview (artifact from agent output)
 
 ---
+
+## Test Strategy
+
+OpenSkelo uses a deterministic Vitest suite focused on run-core behavior and contract safety.
+
+### Scope
+
+- Run creation and payload validation
+- Deterministic block transitions
+- Gate fail/pass behavior (`MARI_REVIEW -> DONE` approval contract)
+- Shared context read/write persistence
+- Artifact metadata + persisted content endpoints
+- `run_steps` ordering and integrity guarantees
+- Integration flow loop: `NORA_PLAN -> REI_BUILD -> MARI_REVIEW -> DONE -> NORA_PLAN`
+- Reliability edge cases (repeated step calls, missing IDs, malformed payloads)
+
+### Commands
+
+```bash
+npm run test            # deterministic test run
+npm run test:coverage   # run + coverage output
+npm run test:report     # coverage + machine/human summary artifacts
+```
+
+### Reporting outputs
+
+Generated under `docs/reports/`:
+
+- `vitest-results.json` — raw machine output from Vitest
+- `coverage/coverage-summary.json` — machine-readable coverage totals
+- `test-summary.json` — normalized machine summary (counts + risk/gap matrix)
+- `test-summary.md` — human-readable report for architecture review
 
 ## CLI Commands
 

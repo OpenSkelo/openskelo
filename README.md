@@ -196,6 +196,59 @@ GET    /api/logs            — Audit log (?task=, ?limit=)
 GET    /api/gate-log        — Gate evaluation log
 ```
 
+## Block Run API Reliability Contracts
+
+OpenSkelo's run loop endpoint now supports **safe retries** and deterministic mutation semantics.
+
+### Idempotent step retries
+
+`POST /api/runs/:id/step` accepts an idempotency key via either:
+
+- header: `Idempotency-Key` (or `X-Idempotency-Key`)
+- body: `idempotencyKey`
+
+Behavior:
+
+- Same key + same payload => request is deduplicated and returns the original response (`deduplicated: true`)
+- Same key + different payload => `409` with `code: "IDEMPOTENCY_KEY_REUSED"`
+- If both header and body key are provided and differ => `400`
+
+### Transactional run mutation
+
+A step mutation now runs atomically in one DB transaction:
+
+1. run state transition update
+2. `run_steps` insert
+3. `run_events` append
+
+Optimistic version checks are enforced with `run_version` to prevent stale concurrent writes. Conflicts return deterministic `409` responses with `code: "RUN_STEP_CONFLICT"`.
+
+### Contract snapshot coverage
+
+API response contracts are snapshot-locked for:
+
+- `GET /api/runs/:id`
+- `GET /api/runs/:id/steps`
+- `GET /api/runs/:id/artifact`
+- `GET /api/runs/:id/artifact/content`
+
+
+## Testing & Reports
+
+```bash
+npm run test
+npm run test:coverage
+npm run test:report
+```
+
+`npm run test:report` generates architecture-review artifacts under `docs/reports/`:
+
+- `vitest-results.json`
+- `coverage/coverage-summary.json`
+- `test-summary.json`
+- `test-summary.md`
+
+
 ## The Skeleton Metaphor
 
 ```

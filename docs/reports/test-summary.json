@@ -1,0 +1,98 @@
+{
+  "generated_at": "2026-02-17T06:42:12.252Z",
+  "totals": {
+    "test_files": 7,
+    "tests": 17,
+    "passed": 17,
+    "failed": 0,
+    "pending": 0
+  },
+  "categories": {
+    "creation_validation": {
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "pending": 0
+    },
+    "transitions_gates": {
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pending": 0
+    },
+    "context_artifacts_integrity": {
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "pending": 0
+    },
+    "integration_reliability": {
+      "total": 5,
+      "passed": 5,
+      "failed": 0,
+      "pending": 0
+    }
+  },
+  "coverage": {
+    "lines": {
+      "total": 2419,
+      "covered": 960,
+      "skipped": 0,
+      "pct": 39.68
+    },
+    "statements": {
+      "total": 2419,
+      "covered": 960,
+      "skipped": 0,
+      "pct": 39.68
+    },
+    "functions": {
+      "total": 56,
+      "covered": 35,
+      "skipped": 0,
+      "pct": 62.5
+    },
+    "branches": {
+      "total": 167,
+      "covered": 119,
+      "skipped": 0,
+      "pct": 71.25
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": 100
+    }
+  },
+  "known_gaps": [
+    "No concurrency race-condition tests around simultaneous /step requests",
+    "No filesystem fault injection tests for artifact persistence failures",
+    "Task-engine gate matrix has baseline coverage but lacks fuzz-style payload exploration"
+  ],
+  "risks": [
+    {
+      "area": "Concurrent step mutations",
+      "severity": "medium",
+      "probability": "medium",
+      "mitigation": "Add lock/transaction + concurrent integration tests"
+    },
+    {
+      "area": "Artifact write failure handling",
+      "severity": "medium",
+      "probability": "low",
+      "mitigation": "Add explicit recoverable error path and tests"
+    },
+    {
+      "area": "Backward compatibility drift in run payloads",
+      "severity": "high",
+      "probability": "low",
+      "mitigation": "Add contract snapshots for /api/runs and /api/runs/:id/steps"
+    }
+  ],
+  "recommendations_next_iteration": [
+    "Introduce explicit idempotency keys for /api/runs/:id/step and verify duplicate-request semantics",
+    "Wrap run state+step writes in a single transactional boundary with optimistic concurrency fields",
+    "Add API contract snapshot tests to enforce backward-compatible response schemas"
+  ]
+}
