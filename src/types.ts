@@ -137,3 +137,73 @@ export interface ProviderAdapter {
   healthCheck?(): Promise<boolean>;
   cancel?(sessionId: string): Promise<void>;
 }
+
+// ── Block Core MVP types ──
+
+export type BlockStep = "NORA_PLAN" | "REI_BUILD" | "MARI_REVIEW" | "DONE";
+
+export type RunContext = Record<string, unknown>;
+
+export interface BlockOutput {
+  block: BlockStep;
+  iteration: number;
+  agent: "nora" | "rei" | "mari";
+  output: string;
+  artifact_path: string | null;
+  artifact_preview: string | null;
+  context_snapshot: RunContext;
+  timestamp: string;
+}
+
+export interface RunStepRecord extends BlockOutput {
+  id: string;
+  run_id: string;
+  step_index: number;
+  transition: string;
+}
+
+export interface RunModel {
+  id: string;
+  original_prompt: string;
+  current_block: BlockStep;
+  iteration: number;
+  status: "running" | "done";
+  artifact_path: string | null;
+  artifact_preview: string | null;
+  context: RunContext;
+  blocks: BlockOutput[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RunEvent {
+  id: string;
+  run_id: string;
+  block: BlockStep;
+  transition: string;
+  result: "pass" | "fail";
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface RunStepInput {
+  reviewApproved?: boolean;
+  contextPatch?: RunContext;
+}
+
+export type RunStepResult =
+  | {
+      ok: true;
+      run: RunModel;
+    }
+  | {
+      ok: false;
+      error: string;
+      status: number;
+      gate?: {
+        name: string;
+        pass: boolean;
+        reason?: string;
+        details?: Record<string, unknown>;
+      };
+    };

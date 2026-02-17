@@ -1,24 +1,27 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { SkeloConfig } from "../types.js";
+import { getDB } from "../core/db.js";
+import { getDashboardHTML } from "./dashboard.js";
+import type { SkeloConfig, RunContext, RunStepInput } from "../types.js";
 import type { createTaskEngine } from "../core/task-engine.js";
 import type { createGateEngine } from "../core/gate-engine.js";
 import type { createRouter } from "../core/router.js";
+import type { createRunEngine } from "../core/run-engine.js";
 
 interface APIContext {
   config: SkeloConfig;
   taskEngine: ReturnType<typeof createTaskEngine>;
   gateEngine: ReturnType<typeof createGateEngine>;
   router: ReturnType<typeof createRouter>;
+  runEngine: ReturnType<typeof createRunEngine>;
 }
 
 export function createAPI(ctx: APIContext) {
   const app = new Hono();
-  const { config, taskEngine, gateEngine, router } = ctx;
+  const { config, taskEngine, gateEngine, runEngine } = ctx;
 
   app.use("*", cors());
 
-  // ── Health ──
   app.get("/api/health", (c) => {
     return c.json({
       status: "ok",
@@ -29,7 +32,6 @@ export function createAPI(ctx: APIContext) {
     });
   });
 
-  // ── Config ──
   app.get("/api/config", (c) => {
     return c.json({
       name: config.name,
@@ -44,7 +46,6 @@ export function createAPI(ctx: APIContext) {
     });
   });
 
-  // ── Tasks ──
   app.get("/api/tasks", (c) => {
     const status = c.req.query("status");
     const pipeline = c.req.query("pipeline");
@@ -60,7 +61,6 @@ export function createAPI(ctx: APIContext) {
 
   app.post("/api/tasks", async (c) => {
     const body = await c.req.json();
-
     if (!body.pipeline) return c.json({ error: "pipeline is required" }, 400);
     if (!body.title) return c.json({ error: "title is required" }, 400);
 
@@ -86,9 +86,7 @@ export function createAPI(ctx: APIContext) {
     const task = taskEngine.getById(id);
     if (!task) return c.json({ error: "Not found" }, 404);
 
-    // Status transition
     if (body.status && body.status !== task.status) {
-      // Run gates
       const results = gateEngine.evaluate(
         task,
         task.status,
@@ -99,14 +97,7 @@ export function createAPI(ctx: APIContext) {
 
       const failed = gateEngine.hasFailed(results);
       if (failed) {
-        return c.json(
-          {
-            error: failed.reason,
-            gate: failed.name,
-            results: results,
-          },
-          400
-        );
+        return c.json({ error: failed.reason, gate: failed.name, results }, 400);
       }
 
       try {
@@ -127,31 +118,19 @@ export function createAPI(ctx: APIContext) {
     return c.json({ error: "No status change provided" }, 400);
   });
 
-  // ── Task Counts ──
-  app.get("/api/tasks/counts", (c) => {
-    return c.json(taskEngine.counts());
-  });
+  app.get("/api/tasks/counts", () => c.json(taskEngine.counts()));
 
-  // ── Agents ──
   app.get("/api/agents", (c) => {
-    const agents = Object.entries(config.agents).map(([id, agent]) => ({
-      id,
-      ...agent,
-    }));
+    const agents = Object.entries(config.agents).map(([id, agent]) => ({ id, ...agent }));
     return c.json({ agents });
   });
 
-  // ── Gates ──
-  app.get("/api/gates", (c) => {
-    return c.json({ gates: config.gates });
-  });
+  app.get("/api/gates", (c) => c.json({ gates: config.gates }));
 
-  // ── Audit Log ──
   app.get("/api/logs", (c) => {
-    const { getDB } = require("../core/db.js");
     const db = getDB();
     const taskId = c.req.query("task");
-    const limit = parseInt(c.req.query("limit") ?? "50");
+    const limit = parseInt(c.req.query("limit") ?? "50", 10);
 
     let rows;
     if (taskId) {
@@ -159,20 +138,16 @@ export function createAPI(ctx: APIContext) {
         .prepare("SELECT * FROM audit_log WHERE task_id = ? ORDER BY created_at DESC LIMIT ?")
         .all(taskId, limit);
     } else {
-      rows = db
-        .prepare("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?")
-        .all(limit);
+      rows = db.prepare("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?").all(limit);
     }
 
     return c.json({ logs: rows });
   });
 
-  // ── Gate Log ──
   app.get("/api/gate-log", (c) => {
-    const { getDB } = require("../core/db.js");
     const db = getDB();
     const taskId = c.req.query("task");
-    const limit = parseInt(c.req.query("limit") ?? "50");
+    const limit = parseInt(c.req.query("limit") ?? "50", 10);
 
     let rows;
     if (taskId) {
@@ -180,37 +155,126 @@ export function createAPI(ctx: APIContext) {
         .prepare("SELECT * FROM gate_log WHERE task_id = ? ORDER BY created_at DESC LIMIT ?")
         .all(taskId, limit);
     } else {
-      rows = db
-        .prepare("SELECT * FROM gate_log ORDER BY created_at DESC LIMIT ?")
-        .all(limit);
+      rows = db.prepare("SELECT * FROM gate_log ORDER BY created_at DESC LIMIT ?").all(limit);
     }
 
     return c.json({ gateLogs: rows });
   });
 
-  // ── Dashboard (placeholder) ──
-  if (config.dashboard.enabled) {
-    app.get("/dashboard", (c) => {
-      return c.html(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>${config.name} — OpenSkelo Dashboard</title>
-          <style>
-            body { background: #0a0a0f; color: #e0e0e0; font-family: system-ui; padding: 40px; }
-            h1 { color: #f97316; }
-            .status { color: #22c55e; }
-          </style>
-        </head>
-        <body>
-          <h1>🦴 ${config.name}</h1>
-          <p class="status">OpenSkelo is running</p>
-          <p>Dashboard UI coming soon. API available at <a href="/api/health" style="color:#f97316">/api/health</a></p>
-        </body>
-        </html>
-      `);
+  // Block Core MVP endpoints
+  app.post("/api/runs", async (c) => {
+    const raw = await c.req.json();
+    const parsed = parseCreateRunBody(raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+    const run = runEngine.createRun({
+      originalPrompt: parsed.value.original_prompt,
+      context: parsed.value.context,
     });
+
+    return c.json({ run }, 201);
+  });
+
+  app.get("/api/runs/:id", (c) => {
+    const run = runEngine.getRun(c.req.param("id"));
+    if (!run) return c.json({ error: "Not found" }, 404);
+    return c.json({ run, events: runEngine.getEvents(run.id), steps: runEngine.listSteps(run.id) });
+  });
+
+  app.get("/api/runs/:id/steps", (c) => {
+    const run = runEngine.getRun(c.req.param("id"));
+    if (!run) return c.json({ error: "Not found" }, 404);
+    return c.json({ steps: runEngine.listSteps(run.id) });
+  });
+
+  app.post("/api/runs/:id/step", async (c) => {
+    const raw = await c.req.json().catch(() => ({}));
+    const parsed = parseStepInput(raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+    const result = runEngine.step(c.req.param("id"), parsed.value);
+    if (!result.ok) {
+      return c.json({ error: result.error, gate: result.gate }, result.status);
+    }
+
+    return c.json({ run: result.run, events: runEngine.getEvents(result.run.id) });
+  });
+
+  app.get("/api/runs/:id/context", (c) => {
+    const run = runEngine.getRun(c.req.param("id"));
+    if (!run) return c.json({ error: "Not found" }, 404);
+    return c.json({ context: run.context });
+  });
+
+  app.post("/api/runs/:id/context", async (c) => {
+    const raw = await c.req.json();
+    if (!isPlainObject(raw)) return c.json({ error: "context body must be an object" }, 400);
+
+    try {
+      const run = runEngine.setContext(c.req.param("id"), raw as RunContext);
+      return c.json({ context: run.context });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 404);
+    }
+  });
+
+  app.get("/api/runs/:id/artifact", (c) => {
+    const artifact = runEngine.getArtifact(c.req.param("id"));
+    if (!artifact) return c.json({ error: "Not found" }, 404);
+    return c.json(artifact);
+  });
+
+  if (config.dashboard.enabled) {
+    app.get("/dashboard", (c) => c.html(getDashboardHTML(config.name, config.dashboard.port)));
+    app.get("/", (c) => c.redirect("/dashboard"));
   }
 
   return app;
+}
+
+function parseCreateRunBody(raw: unknown):
+  | { ok: true; value: { original_prompt: string; context?: RunContext } }
+  | { ok: false; error: string } {
+  if (!isPlainObject(raw)) return { ok: false, error: "Body must be an object" };
+
+  const prompt = raw.original_prompt;
+  if (typeof prompt !== "string" || prompt.trim().length === 0) {
+    return { ok: false, error: "original_prompt is required" };
+  }
+
+  if (raw.context !== undefined && !isPlainObject(raw.context)) {
+    return { ok: false, error: "context must be an object" };
+  }
+
+  return {
+    ok: true,
+    value: { original_prompt: prompt.trim(), context: raw.context as RunContext | undefined },
+  };
+}
+
+function parseStepInput(raw: unknown):
+  | { ok: true; value: RunStepInput }
+  | { ok: false; error: string } {
+  if (raw === null || raw === undefined) return { ok: true, value: {} };
+  if (!isPlainObject(raw)) return { ok: false, error: "Body must be an object" };
+
+  if (raw.reviewApproved !== undefined && typeof raw.reviewApproved !== "boolean") {
+    return { ok: false, error: "reviewApproved must be a boolean" };
+  }
+
+  if (raw.contextPatch !== undefined && !isPlainObject(raw.contextPatch)) {
+    return { ok: false, error: "contextPatch must be an object" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      reviewApproved: raw.reviewApproved as boolean | undefined,
+      contextPatch: raw.contextPatch as RunContext | undefined,
+    },
+  };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

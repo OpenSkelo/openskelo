@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { resolve } from "path";
+import { mkdirSync } from "fs";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -61,13 +62,57 @@ CREATE TABLE IF NOT EXISTS dispatch_queue (
   completed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS runs (
+  id TEXT PRIMARY KEY,
+  original_prompt TEXT NOT NULL,
+  current_block TEXT NOT NULL,
+  iteration INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'running',
+  artifact_path TEXT,
+  artifact_preview TEXT,
+  context TEXT DEFAULT '{}',
+  blocks TEXT DEFAULT '[]',
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS run_events (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  block TEXT NOT NULL,
+  transition TEXT NOT NULL,
+  result TEXT NOT NULL,
+  details TEXT DEFAULT '{}',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS run_steps (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  step_index INTEGER NOT NULL,
+  transition TEXT NOT NULL,
+  block TEXT NOT NULL,
+  iteration INTEGER NOT NULL,
+  agent TEXT NOT NULL,
+  output TEXT NOT NULL,
+  artifact_path TEXT,
+  artifact_preview TEXT,
+  context_snapshot TEXT DEFAULT '{}',
+  timestamp TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(run_id, step_index)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_pipeline ON tasks(pipeline);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned);
 CREATE INDEX IF NOT EXISTS idx_audit_task ON audit_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_gate_log_task ON gate_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_dispatch_status ON dispatch_queue(status);
+CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, step_index);
 `;
+
 
 let db: Database.Database | null = null;
 
@@ -77,7 +122,6 @@ export function createDB(dir: string = process.cwd()): Database.Database {
   const dbPath = resolve(dir, ".skelo", "skelo.db");
 
   // Ensure .skelo directory exists
-  const { mkdirSync } = require("fs");
   mkdirSync(resolve(dir, ".skelo"), { recursive: true });
 
   db = new Database(dbPath);
