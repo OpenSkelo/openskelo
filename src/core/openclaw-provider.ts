@@ -86,7 +86,7 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
           const usage = agentMeta?.usage as Record<string, number> | undefined;
 
           if (text) {
-            const normalized = await normalizeStructuredOutput(
+            const norm = await normalizeStructuredOutput(
               text,
               request.outputSchema,
               agentId,
@@ -96,17 +96,19 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
             );
             return {
               success: true,
-              output: normalized,
+              output: norm.output,
               sessionId: (agentMeta?.sessionId as string) ?? runId ?? `oc_${Date.now()}`,
               tokensUsed: (usage?.input ?? 0) + (usage?.output ?? 0),
               actualAgentId: agentId,
               actualModel: opts.model ?? request.agent.model,
+              repairAttempted: norm.repairAttempted,
+              repairSucceeded: norm.repairSucceeded,
             };
           }
 
           // Fallback: try .reply (older format)
           if (parsed.reply) {
-            const normalized = await normalizeStructuredOutput(
+            const norm = await normalizeStructuredOutput(
               parsed.reply as string,
               request.outputSchema,
               agentId,
@@ -116,17 +118,19 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
             );
             return {
               success: true,
-              output: normalized,
+              output: norm.output,
               sessionId: `oc_${Date.now()}`,
               tokensUsed: 0,
               actualAgentId: agentId,
               actualModel: opts.model ?? request.agent.model,
+              repairAttempted: norm.repairAttempted,
+              repairSucceeded: norm.repairSucceeded,
             };
           }
         }
 
         // Last fallback: use raw stdout
-        const normalized = await normalizeStructuredOutput(
+        const norm = await normalizeStructuredOutput(
           result.stdout.trim(),
           request.outputSchema,
           agentId,
@@ -136,11 +140,13 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
         );
         return {
           success: true,
-          output: normalized,
+          output: norm.output,
           sessionId: `oc_${Date.now()}`,
           tokensUsed: 0,
           actualAgentId: agentId,
           actualModel: opts.model ?? request.agent.model,
+          repairAttempted: norm.repairAttempted,
+          repairSucceeded: norm.repairSucceeded,
         };
 
       } catch (err) {
@@ -323,12 +329,12 @@ async function normalizeStructuredOutput(
   timeoutSec: number,
   opts: OpenClawProviderOpts,
   abortSignal?: AbortSignal
-): Promise<string> {
-  if (!schema) return text;
+): Promise<{ output: string; repairAttempted: boolean; repairSucceeded: boolean }> {
+  if (!schema) return { output: text, repairAttempted: false, repairSucceeded: false };
 
   const parsed = tryParseJSON(text);
   if (parsed && matchesSchema(parsed, schema)) {
-    return JSON.stringify(parsed);
+    return { output: JSON.stringify(parsed), repairAttempted: false, repairSucceeded: false };
   }
 
   // Adapter-level schema repair pass (generic, one-shot)
@@ -346,14 +352,14 @@ async function normalizeStructuredOutput(
     if (repaired.exitCode === 0) {
       const parsedRepair = tryParseJSON(repaired.stdout);
       if (parsedRepair && matchesSchema(parsedRepair, schema)) {
-        return JSON.stringify(parsedRepair);
+        return { output: JSON.stringify(parsedRepair), repairAttempted: true, repairSucceeded: true };
       }
     }
   } catch {
     // best effort only; caller core contract validation still applies
   }
 
-  return text;
+  return { output: text, repairAttempted: true, repairSucceeded: false };
 }
 
 function matchesSchema(value: Record<string, unknown>, schema: Record<string, unknown>): boolean {

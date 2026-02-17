@@ -131,6 +131,8 @@ export interface DispatchResult {
   tokensUsed?: number;
   actualAgentId?: string;
   actualModel?: string;
+  repairAttempted?: boolean;
+  repairSucceeded?: boolean;
 }
 
 // ── Provider adapter interface ──

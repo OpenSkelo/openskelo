@@ -459,6 +459,13 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       duration_ms: durationMs,
     };
 
+    if (typeof dispatchResult.repairAttempted === "boolean" || typeof dispatchResult.repairSucceeded === "boolean") {
+      (execution as unknown as Record<string, unknown>).structured_repair = {
+        attempted: dispatchResult.repairAttempted ?? false,
+        succeeded: dispatchResult.repairSucceeded ?? false,
+      };
+    }
+
     // 6. Evaluate post-gates
     const postGates = engine.evaluatePostGates(blockDef, inputs, outputs);
     run.blocks[blockId].post_gate_results = postGates;
