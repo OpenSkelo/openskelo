@@ -1,12 +1,9 @@
 /**
- * OpenClaw Provider — dispatches blocks to real OpenClaw agents
+ * OpenClaw Provider — dispatches blocks to OpenClaw agents
  * via the openclaw agent CLI (async, non-blocking).
  *
- * Maps block agent roles to OpenClaw agent IDs:
- * - manager → main (Nora)
- * - worker → rei (Tech Lead)  
- * - reviewer → mari (QA)
- * - specialist → rei (fallback)
+ * Role mapping is configurable (agentMapping).
+ * Defaults are generic role-name mappings.
  */
 
 import { spawn } from "node:child_process";
@@ -24,10 +21,10 @@ export interface OpenClawProviderOpts {
 }
 
 const DEFAULT_AGENT_MAP: Record<string, string> = {
-  manager: "main",
-  worker: "rei",
-  reviewer: "mari",
-  specialist: "rei",
+  manager: "manager",
+  worker: "worker",
+  reviewer: "reviewer",
+  specialist: "specialist",
 };
 
 export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): ProviderAdapter {
@@ -221,7 +218,7 @@ function resolveAgent(request: DispatchRequest, agentMap: Record<string, string>
   if (request.agent?.role && agentMap[request.agent.role]) {
     return agentMap[request.agent.role];
   }
-  return agentMap.worker ?? "rei";
+  return agentMap.worker ?? "worker";
 }
 
 function buildAgentPrompt(request: DispatchRequest): string {

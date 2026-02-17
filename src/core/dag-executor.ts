@@ -232,7 +232,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const agent = resolveAgent(blockDef);
     if (agent) {
       const provider = opts.providers[agent.provider];
-      run.blocks[blockId].active_agent_id = inferDisplayAgentId(agent.id, agent.role, provider?.type);
+      run.blocks[blockId].active_agent_id = agent.id;
       run.blocks[blockId].active_model = agent.model;
       run.blocks[blockId].active_provider = agent.provider;
     }
@@ -570,28 +570,6 @@ function parseAgentOutputs(blockDef: BlockDef, rawOutput: string): Record<string
   }
 
   return outputs;
-}
-
-function inferDisplayAgentId(agentId: string, role: string, providerType?: string): string {
-  // In OpenClaw-native mode, show the likely OpenClaw worker identity while block is running.
-  if (providerType === "openclaw") {
-    const byId: Record<string, string> = {
-      coder: "rei",
-      reviewer: "mari",
-      manager: "main",
-      specialist: "rei",
-    };
-    if (byId[agentId]) return byId[agentId];
-
-    const byRole: Record<string, string> = {
-      worker: "rei",
-      reviewer: "mari",
-      manager: "main",
-      specialist: "rei",
-    };
-    if (byRole[role]) return byRole[role];
-  }
-  return agentId;
 }
 
 function sleep(ms: number): Promise<void> {

@@ -75,7 +75,7 @@ Example (conceptual):
 │ Block: build                                │
 ├──────────────────────────────────────────────┤
 │ Inputs   : game_spec, dev_plan              │
-│ Agent    : role=worker (mapped to rei)      │
+│ Agent    : route by role/capability         │
 │ Pre-gates: required inputs present          │
 │ Execute  : provider dispatch (OpenClaw)     │
 │ Post-gates: artifact_html must exist        │
