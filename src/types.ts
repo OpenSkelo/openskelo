@@ -126,6 +126,8 @@ export interface DispatchResult {
   output?: string;
   error?: string;
   tokensUsed?: number;
+  actualAgentId?: string;
+  actualModel?: string;
 }
 
 // ── Provider adapter interface ──

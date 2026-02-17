@@ -184,31 +184,45 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const needsApproval = blockDef.approval?.required === true;
     const approvalKey = `__approval_${blockId}`;
     const approved = run.context[approvalKey] === true;
+    const devAutoApprove = run.context.__dev_auto_approve === true;
     if (needsApproval && !approved) {
-      const existing = run.context.__approval_request as Record<string, unknown> | undefined;
-      const isSamePending = existing?.status === "pending" && existing?.block_id === blockId;
-      if (!isSamePending) {
-        const token = `apr_${run.id}_${blockId}_${Date.now().toString(36)}`;
-        const request = {
-          token,
-          run_id: run.id,
-          block_id: blockId,
-          dag_name: dag.name,
-          status: "pending",
-          requested_at: new Date().toISOString(),
-          prompt: blockDef.approval?.prompt ?? `Approve block ${blockDef.name}?`,
-          approver: blockDef.approval?.approver ?? "owner",
-          timeout_sec: blockDef.approval?.timeout_sec ?? 1800,
-          context_preview: inputs,
-        };
-        run.context.__approval_request = request;
-        run.status = "paused_approval";
-        opts.onApprovalRequired?.(run, blockId, request);
+      if (devAutoApprove) {
+        run.context[approvalKey] = true;
+      } else {
+        const existing = run.context.__approval_request as Record<string, unknown> | undefined;
+        const isSamePending = existing?.status === "pending" && existing?.block_id === blockId;
+        if (!isSamePending) {
+          const token = `apr_${run.id}_${blockId}_${Date.now().toString(36)}`;
+          const request = {
+            token,
+            run_id: run.id,
+            block_id: blockId,
+            dag_name: dag.name,
+            status: "pending",
+            requested_at: new Date().toISOString(),
+            prompt: blockDef.approval?.prompt ?? `Approve block ${blockDef.name}?`,
+            approver: blockDef.approval?.approver ?? "owner",
+            timeout_sec: blockDef.approval?.timeout_sec ?? 1800,
+            context_preview: inputs,
+          };
+          run.context.__approval_request = request;
+          run.status = "paused_approval";
+          opts.onApprovalRequired?.(run, blockId, request);
+        }
+        return;
       }
-      return;
     }
 
     engine.startBlock(run, blockId, inputs);
+
+    // Resolve agent early so UI can show who is working while running
+    const agent = resolveAgent(blockDef);
+    if (agent) {
+      run.blocks[blockId].active_agent_id = agent.id;
+      run.blocks[blockId].active_model = agent.model;
+      run.blocks[blockId].active_provider = agent.provider;
+    }
+
     opts.onBlockStart?.(run, blockId);
 
     // 2. Evaluate pre-gates
@@ -272,8 +286,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       return;
     }
 
-    // 3. Resolve agent
-    const agent = resolveAgent(blockDef);
+    // 3. Ensure agent exists
     if (!agent) {
       engine.failBlock(run, blockId, `No agent found for block ${blockId}`, blockDef);
       opts.onBlockFail?.(run, blockId, "No agent found");
@@ -356,10 +369,14 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const outputs = parseAgentOutputs(blockDef, dispatchResult.output ?? "");
     const durationMs = Date.now() - startTime;
 
+    // Update runtime assignee/model to actual dispatched worker when provider reports it
+    if (dispatchResult.actualAgentId) run.blocks[blockId].active_agent_id = dispatchResult.actualAgentId;
+    if (dispatchResult.actualModel) run.blocks[blockId].active_model = dispatchResult.actualModel;
+
     const execution: BlockExecution = {
-      agent_id: agent.id,
+      agent_id: dispatchResult.actualAgentId ?? agent.id,
       provider: agent.provider,
-      model: agent.model,
+      model: dispatchResult.actualModel ?? agent.model,
       raw_output: dispatchResult.output ?? "",
       tokens_in: dispatchResult.tokensUsed ?? 0,
       tokens_out: 0,

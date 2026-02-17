@@ -12,14 +12,14 @@ agents:
     role: worker
     capabilities: [coding]
     provider: local
-    model: codellama:13b
+    model: openai-codex/gpt-5.3-codex
     max_concurrent: 1
 
   reviewer:
     role: reviewer
     capabilities: [coding]
     provider: local
-    model: llama3:8b
+    model: openai-codex/gpt-5.3-codex
     max_concurrent: 1
 
 pipelines:

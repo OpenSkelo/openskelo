@@ -11,6 +11,7 @@ import { parse as parseYaml } from "yaml";
 import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
 import { createOpenClawProvider } from "../core/openclaw-provider.js";
+import { createDB, getDB } from "../core/db.js";
 import type { DAGDef, DAGRun, BlockInstance } from "../core/block.js";
 import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
 import type { SkeloConfig } from "../types.js";
@@ -21,6 +22,7 @@ interface DAGEvent {
   block_id?: string;
   data: Record<string, unknown>;
   timestamp: string;
+  seq?: number;
 }
 
 // In-memory store for active runs + events
@@ -32,6 +34,38 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   const app = new Hono();
   const engine = createBlockEngine();
   const examplesBaseDir = opts?.examplesDir ?? resolve(process.cwd(), "examples");
+
+  // Phase A durability: persist DAG runs/events/approvals
+  createDB();
+  const db = getDB();
+  const upsertDagRun = db.prepare(`
+    INSERT INTO dag_runs (id, dag_name, status, dag_json, run_json, trace_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      status=excluded.status,
+      run_json=excluded.run_json,
+      trace_json=excluded.trace_json,
+      updated_at=excluded.updated_at
+  `);
+  const insertDagEvent = db.prepare(`
+    INSERT INTO dag_events (id, run_id, event_type, block_id, data_json, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const selectDagEventsSince = db.prepare(`
+    SELECT rowid as seq, run_id, event_type, block_id, data_json, timestamp
+    FROM dag_events
+    WHERE run_id = ? AND rowid > ?
+    ORDER BY rowid ASC
+  `);
+  const upsertDagApproval = db.prepare(`
+    INSERT INTO dag_approvals (token, run_id, block_id, status, prompt, approver, requested_at, decided_at, notes, payload_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(token) DO UPDATE SET
+      status=excluded.status,
+      decided_at=excluded.decided_at,
+      notes=excluded.notes,
+      payload_json=excluded.payload_json
+  `);
 
   async function notifyApprovalViaTelegram(run: DAGRun, approval: Record<string, unknown>): Promise<void> {
     const target = process.env.OPENSKELO_APPROVAL_TELEGRAM_TARGET || "5830373538";
@@ -56,8 +90,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       "Context snapshot:",
       previewText,
       "",
-      `Reply with: APPROVE ${run.id}`,
-      `or: REJECT ${run.id} <reason>`
+      "Reply with: APPROVE",
+      "or: REJECT <reason>",
+      `(You can also specify run id: APPROVE ${run.id})`
     ].join("\n");
 
     await runCommand("openclaw", [
@@ -71,11 +106,39 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     });
   }
 
+  function persistRunSnapshot(entry: { dag: DAGDef; run: DAGRun; result?: ExecutorResult }) {
+    upsertDagRun.run(
+      entry.run.id,
+      entry.dag.name,
+      entry.run.status,
+      JSON.stringify(entry.dag),
+      JSON.stringify(entry.run),
+      JSON.stringify(entry.result?.trace ?? []),
+      entry.run.created_at,
+      new Date().toISOString()
+    );
+  }
+
   // Broadcast event to all SSE clients for a run
   function broadcast(runId: string, event: DAGEvent) {
     const events = runEvents.get(runId) ?? [];
     events.push(event);
     runEvents.set(runId, events);
+
+    // Durable event write (best-effort)
+    try {
+      const info = insertDagEvent.run(
+        `dgev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        runId,
+        event.type,
+        event.block_id ?? null,
+        JSON.stringify(event.data ?? {}),
+        event.timestamp
+      );
+      event.seq = Number(info.lastInsertRowid);
+    } catch (err) {
+      console.error("[dag-api] failed to persist dag event:", err instanceof Error ? err.message : err);
+    }
 
     const clients = sseClients.get(runId);
     if (clients) {
@@ -129,6 +192,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const body = await c.req.json();
     const file = body.example as string | undefined;
     const context = (body.context as Record<string, unknown>) ?? {};
+    const devMode = body.devMode === true || process.env.OPENSKELO_DEV_MODE === "1";
+    if (devMode) context.__dev_auto_approve = true;
 
     let dag: DAGDef;
     try {
@@ -167,7 +232,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const provider = createOpenClawProvider({
       agentMapping: body.agentMapping as Record<string, string> | undefined,
       timeoutSeconds: (body.timeoutSeconds as number) ?? 300,
-      model: body.model as string | undefined,
+      model: (body.model as string | undefined) ?? "openai-codex/gpt-5.3-codex",
       thinking: body.thinking as string | undefined,
     });
 
@@ -182,6 +247,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       agents,
       maxParallel: 4,
       onBlockStart: (run, blockId) => {
+        const entry = activeRuns.get(run.id);
+        if (entry) persistRunSnapshot(entry);
         broadcast(run.id, {
           type: "block:start",
           run_id: run.id,
@@ -191,6 +258,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         });
       },
       onBlockComplete: (run, blockId) => {
+        const entry = activeRuns.get(run.id);
+        if (entry) persistRunSnapshot(entry);
         broadcast(run.id, {
           type: "block:complete",
           run_id: run.id,
@@ -200,6 +269,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         });
       },
       onBlockFail: (run, blockId, error) => {
+        const entry = activeRuns.get(run.id);
+        if (entry) persistRunSnapshot(entry);
         broadcast(run.id, {
           type: "block:fail",
           run_id: run.id,
@@ -209,6 +280,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         });
       },
       onRunComplete: (run) => {
+        const entry = activeRuns.get(run.id);
+        if (entry) persistRunSnapshot(entry);
         broadcast(run.id, {
           type: "run:complete",
           run_id: run.id,
@@ -217,6 +290,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         });
       },
       onRunFail: (run) => {
+        const entry = activeRuns.get(run.id);
+        if (entry) persistRunSnapshot(entry);
         broadcast(run.id, {
           type: "run:fail",
           run_id: run.id,
@@ -225,6 +300,26 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         });
       },
       onApprovalRequired: (run, blockId, approval) => {
+        const entry = activeRuns.get(run.id);
+        if (entry) persistRunSnapshot(entry);
+        try {
+          const ap = approval as Record<string, unknown>;
+          upsertDagApproval.run(
+            String(ap.token ?? `apr_${run.id}_${blockId}`),
+            run.id,
+            blockId,
+            String(ap.status ?? "pending"),
+            String(ap.prompt ?? "Approval required"),
+            String(ap.approver ?? "owner"),
+            String(ap.requested_at ?? new Date().toISOString()),
+            null,
+            null,
+            JSON.stringify(ap)
+          );
+        } catch (err) {
+          console.error("[dag-api] failed to persist approval request:", err instanceof Error ? err.message : err);
+        }
+
         broadcast(run.id, {
           type: "approval:requested",
           run_id: run.id,
@@ -240,6 +335,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const initialRun = engine.createRun(dag, context);
     activeRuns.set(initialRun.id, { dag, run: initialRun });
     runEvents.set(initialRun.id, []);
+    {
+      const entry = activeRuns.get(initialRun.id);
+      if (entry) persistRunSnapshot(entry);
+    }
 
     broadcast(initialRun.id, {
       type: "run:start",
@@ -253,6 +352,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       const entry = activeRuns.get(initialRun.id);
       if (entry) {
         entry.result = result;
+        persistRunSnapshot(entry);
       }
     }).catch((err) => {
       console.error("[dag-api] Run failed:", err);
@@ -269,37 +369,82 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
   // Get run status
   app.get("/api/dag/runs/:id", (c) => {
-    const entry = activeRuns.get(c.req.param("id"));
-    if (!entry) return c.json({ error: "Not found" }, 404);
+    const runId = c.req.param("id");
+    const entry = activeRuns.get(runId);
+    if (entry) {
+      return c.json({
+        run: entry.run,
+        dag: entry.dag,
+        approval: entry.run.context.__approval_request ?? null,
+        events: runEvents.get(entry.run.id) ?? [],
+        trace: entry.result?.trace ?? [],
+      });
+    }
+
+    // Fallback to durable store (Phase A)
+    const row = db.prepare("SELECT * FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
+    if (!row) return c.json({ error: "Not found" }, 404);
+    const events = db.prepare("SELECT rowid as seq, event_type, run_id, block_id, data_json, timestamp FROM dag_events WHERE run_id = ? ORDER BY rowid ASC").all(runId) as Array<Record<string, unknown>>;
+    const approval = db.prepare("SELECT * FROM dag_approvals WHERE run_id = ? AND status = 'pending' ORDER BY requested_at DESC LIMIT 1").get(runId) as Record<string, unknown> | undefined;
+
+    const run = JSON.parse(String(row.run_json ?? "{}"));
+    const dag = JSON.parse(String(row.dag_json ?? "{}"));
+    const trace = JSON.parse(String(row.trace_json ?? "[]"));
+
     return c.json({
-      run: entry.run,
-      dag: entry.dag,
-      approval: entry.run.context.__approval_request ?? null,
-      events: runEvents.get(entry.run.id) ?? [],
-      trace: entry.result?.trace ?? [],
+      run,
+      dag,
+      approval: approval ? JSON.parse(String(approval.payload_json ?? "{}")) : null,
+      events: events.map((e) => ({
+        type: e.event_type,
+        run_id: e.run_id,
+        block_id: e.block_id ?? undefined,
+        data: JSON.parse(String(e.data_json ?? "{}")),
+        timestamp: e.timestamp,
+        seq: Number(e.seq ?? 0),
+      })),
+      trace,
+      durable: true,
     });
   });
 
-  // Approve/reject pending human approval gate
-  app.post("/api/dag/runs/:id/approvals/:token", async (c) => {
-    const entry = activeRuns.get(c.req.param("id"));
-    if (!entry) return c.json({ error: "Not found" }, 404);
+  async function resolveApproval(runId: string, token: string | null, body: Record<string, unknown>) {
+    const entry = activeRuns.get(runId);
+    if (!entry) return { status: 404 as const, payload: { error: "Not found" } };
 
     const request = entry.run.context.__approval_request as Record<string, unknown> | undefined;
     if (!request || request.status !== "pending") {
-      return c.json({ error: "No pending approval" }, 400);
-    }
-    if (request.token !== c.req.param("token")) {
-      return c.json({ error: "Invalid approval token" }, 403);
+      return { status: 400 as const, payload: { error: "No pending approval" } };
     }
 
-    const body = await c.req.json().catch(() => ({}));
+    // token optional for UX: allow tokenless approvals when runId matches and request is pending
+    if (token && token !== "latest" && request.token !== token) {
+      return { status: 403 as const, payload: { error: "Invalid approval token" } };
+    }
+
     const decision = (body.decision as string) ?? "reject";
     const notes = (body.notes as string) ?? "";
 
     request.status = decision;
     request.decided_at = new Date().toISOString();
     request.notes = notes;
+
+    try {
+      upsertDagApproval.run(
+        String(request.token ?? token ?? `apr_${entry.run.id}_${String(request.block_id ?? "unknown")}`),
+        entry.run.id,
+        String(request.block_id ?? "unknown"),
+        String(request.status ?? decision),
+        String(request.prompt ?? "Approval required"),
+        String(request.approver ?? "owner"),
+        String(request.requested_at ?? entry.run.created_at),
+        String(request.decided_at ?? new Date().toISOString()),
+        notes,
+        JSON.stringify(request)
+      );
+    } catch (err) {
+      console.error("[dag-api] failed to persist approval decision:", err instanceof Error ? err.message : err);
+    }
 
     const blockId = String(request.block_id);
     if (decision === "approve") {
@@ -309,6 +454,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       entry.run.status = "failed";
     }
 
+    persistRunSnapshot(entry);
+
     broadcast(entry.run.id, {
       type: "approval:decided",
       run_id: entry.run.id,
@@ -317,29 +464,88 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       timestamp: new Date().toISOString(),
     });
 
-    return c.json({ ok: true, decision, run_status: entry.run.status });
+    return { status: 200 as const, payload: { ok: true, decision, run_status: entry.run.status } };
+  }
+
+  // Approve/reject pending human approval gate (tokened)
+  app.post("/api/dag/runs/:id/approvals/:token", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const result = await resolveApproval(c.req.param("id"), c.req.param("token"), body as Record<string, unknown>);
+    return c.json(result.payload, result.status);
   });
 
-  // SSE stream for real-time events
+  // Approve/reject pending human approval gate (tokenless UX path)
+  app.post("/api/dag/runs/:id/approvals", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const result = await resolveApproval(c.req.param("id"), null, body as Record<string, unknown>);
+    return c.json(result.payload, result.status);
+  });
+
+  // Durable replay endpoint (checkpoint 2)
+  app.get("/api/dag/runs/:id/replay", (c) => {
+    const runId = c.req.param("id");
+    const since = Number(c.req.query("since") ?? "0") || 0;
+
+    const row = db.prepare("SELECT id, status, updated_at FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
+    if (!row) return c.json({ error: "Not found" }, 404);
+
+    const events = selectDagEventsSince.all(runId, since) as Array<Record<string, unknown>>;
+    return c.json({
+      run_id: runId,
+      status: row.status,
+      updated_at: row.updated_at,
+      since,
+      events: events.map((e) => ({
+        type: String(e.event_type),
+        run_id: String(e.run_id),
+        block_id: e.block_id ? String(e.block_id) : undefined,
+        data: JSON.parse(String(e.data_json ?? "{}")),
+        timestamp: String(e.timestamp),
+        seq: Number(e.seq ?? 0),
+      })),
+      next_since: events.length ? Number(events[events.length - 1].seq ?? since) : since,
+    });
+  });
+
+  // SSE stream for real-time events (supports replay via Last-Event-ID)
   app.get("/api/dag/runs/:id/events", (c) => {
     const runId = c.req.param("id");
-    if (!activeRuns.has(runId)) return c.json({ error: "Not found" }, 404);
+
+    const hasActive = activeRuns.has(runId);
+    const existsDurable = db.prepare("SELECT 1 FROM dag_runs WHERE id = ? LIMIT 1").get(runId);
+    if (!hasActive && !existsDurable) return c.json({ error: "Not found" }, 404);
+
+    const lastEventIdRaw = c.req.header("last-event-id") ?? c.req.query("since") ?? "0";
+    const sinceSeq = Number(lastEventIdRaw) || 0;
 
     return streamSSE(c, async (stream) => {
-      // Send existing events first (replay)
-      const existing = runEvents.get(runId) ?? [];
-      for (const event of existing) {
+      // Replay from durable store first (sequence-aware)
+      const prior = selectDagEventsSince.all(runId, sinceSeq) as Array<Record<string, unknown>>;
+      for (const e of prior) {
+        const payload: DAGEvent = {
+          type: String(e.event_type) as DAGEvent["type"],
+          run_id: String(e.run_id),
+          block_id: e.block_id ? String(e.block_id) : undefined,
+          data: JSON.parse(String(e.data_json ?? "{}")),
+          timestamp: String(e.timestamp),
+          seq: Number(e.seq ?? 0),
+        };
         await stream.writeSSE({
-          event: event.type,
-          data: JSON.stringify(event),
+          id: String(payload.seq ?? ""),
+          event: payload.type,
+          data: JSON.stringify(payload),
         });
       }
+
+      // If run is no longer active, replay-only mode (close)
+      if (!activeRuns.has(runId)) return;
 
       // Register for new events
       const clients = sseClients.get(runId) ?? new Set();
       const handler = async (event: DAGEvent) => {
         try {
           await stream.writeSSE({
+            id: String(event.seq ?? ""),
             event: event.type,
             data: JSON.stringify(event),
           });
@@ -374,6 +580,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       }
     }
 
+    persistRunSnapshot(entry);
+
     broadcast(c.req.param("id"), {
       type: "run:fail",
       run_id: entry.run.id,
@@ -384,9 +592,44 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     return c.json({ status: "cancelled" });
   });
 
-  // List all runs
+  function getLatestPendingApproval() {
+    const candidates = Array.from(activeRuns.values())
+      .map((entry) => ({ run: entry.run, approval: entry.run.context.__approval_request as Record<string, unknown> | undefined }))
+      .filter((x) => x.approval && x.approval.status === "pending")
+      .sort((a, b) => {
+        const at = String(a.approval?.requested_at ?? a.run.updated_at);
+        const bt = String(b.approval?.requested_at ?? b.run.updated_at);
+        return at.localeCompare(bt);
+      });
+    return candidates[candidates.length - 1] ?? null;
+  }
+
+  // Inspect latest pending approval (for conversational approval loops)
+  app.get("/api/dag/approvals/latest", (c) => {
+    const latest = getLatestPendingApproval();
+    if (!latest) return c.json({ pending: null });
+
+    return c.json({
+      pending: {
+        run_id: latest.run.id,
+        dag_name: latest.run.dag_name,
+        approval: latest.approval,
+      },
+    });
+  });
+
+  // Decide latest pending approval without run/token (chat UX)
+  app.post("/api/dag/approvals/latest", async (c) => {
+    const latest = getLatestPendingApproval();
+    if (!latest) return c.json({ error: "No pending approval" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const result = await resolveApproval(latest.run.id, null, body as Record<string, unknown>);
+    return c.json(result.payload, result.status);
+  });
+
+  // List runs (active + durable)
   app.get("/api/dag/runs", (c) => {
-    const runs = Array.from(activeRuns.entries()).map(([id, entry]) => ({
+    const active = Array.from(activeRuns.entries()).map(([id, entry]) => ({
       id,
       dag_name: entry.dag.name,
       status: entry.run.status,
@@ -394,8 +637,29 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         Object.entries(entry.run.blocks).map(([k, v]) => [k, v.status])
       ),
       created_at: entry.run.created_at,
+      durable: false,
     }));
-    return c.json({ runs });
+
+    const durableRows = db.prepare("SELECT id, dag_name, status, run_json, created_at FROM dag_runs ORDER BY updated_at DESC LIMIT 200").all() as Array<Record<string, unknown>>;
+    const activeIds = new Set(active.map((r) => r.id));
+    const durableOnly = durableRows
+      .filter((r) => !activeIds.has(String(r.id)))
+      .map((r) => {
+        const run = JSON.parse(String(r.run_json ?? "{}"));
+        const blocks = run?.blocks && typeof run.blocks === "object"
+          ? Object.fromEntries(Object.entries(run.blocks as Record<string, Record<string, unknown>>).map(([k, v]) => [k, String(v.status ?? "unknown")]))
+          : {};
+        return {
+          id: String(r.id),
+          dag_name: String(r.dag_name ?? run?.dag_name ?? "unknown"),
+          status: String(r.status ?? run?.status ?? "unknown"),
+          blocks,
+          created_at: String(r.created_at ?? run?.created_at ?? ""),
+          durable: true,
+        };
+      });
+
+    return c.json({ runs: [...active, ...durableOnly] });
   });
 
   return app;

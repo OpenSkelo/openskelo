@@ -115,6 +115,41 @@ CREATE TABLE IF NOT EXISTS run_step_idempotency (
   UNIQUE(run_id, idempotency_key)
 );
 
+-- Durable DAG runtime tables (Phase A)
+CREATE TABLE IF NOT EXISTS dag_runs (
+  id TEXT PRIMARY KEY,
+  dag_name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  dag_json TEXT NOT NULL,
+  run_json TEXT NOT NULL,
+  trace_json TEXT DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dag_events (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  block_id TEXT,
+  data_json TEXT DEFAULT '{}',
+  timestamp TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS dag_approvals (
+  token TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  block_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  prompt TEXT,
+  approver TEXT,
+  requested_at TEXT,
+  decided_at TEXT,
+  notes TEXT,
+  payload_json TEXT DEFAULT '{}'
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_pipeline ON tasks(pipeline);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned);
@@ -124,6 +159,9 @@ CREATE INDEX IF NOT EXISTS idx_dispatch_status ON dispatch_queue(status);
 CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id);
 CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, step_index);
 CREATE INDEX IF NOT EXISTS idx_run_idempotency_lookup ON run_step_idempotency(run_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_dag_runs_status ON dag_runs(status);
+CREATE INDEX IF NOT EXISTS idx_dag_events_run ON dag_events(run_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_dag_approvals_run ON dag_approvals(run_id, status);
 `;
 
 let db: Database.Database | null = null;

@@ -523,8 +523,25 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     let elapsedInterval = null;
     let livePoll = null;
     let pendingApproval = null;
+    let staleRunDetected = false;
+    let lastSseEventAt = 0;
+    let sseWatchdog = null;
 
     // Load examples
+    async function loadDagByFile(file) {
+      if (!file) {
+        document.getElementById('runBtn').disabled = true;
+        currentDag = null;
+        return;
+      }
+      const res = await apiFetch(API + '/api/dag/examples/' + file);
+      if (!res.ok) throw new Error('Failed to load DAG: ' + file);
+      const { dag, order } = await res.json();
+      currentDag = { ...dag, order, file };
+      document.getElementById('runBtn').disabled = false;
+      renderDAG(dag);
+    }
+
     async function loadExamples() {
       const res = await apiFetch(API + '/api/dag/examples');
       const { examples } = await res.json();
@@ -537,20 +554,19 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         opt.textContent = ex.name;
         sel.appendChild(opt);
       }
+
+      // Auto-load currently selected DAG (important when browser restores select state)
+      if (sel.value) {
+        await loadDagByFile(sel.value).catch((err) => {
+          addEventLog({ type: 'run:fail', run_id: 'ui', data: { status: err.message }, timestamp: new Date().toISOString() });
+        });
+      }
     }
 
     document.getElementById('dagSelect').addEventListener('change', async (e) => {
-      const file = e.target.value;
-      if (!file) {
-        document.getElementById('runBtn').disabled = true;
-        currentDag = null;
-        return;
-      }
-      const res = await apiFetch(API + '/api/dag/examples/' + file);
-      const { dag, order } = await res.json();
-      currentDag = { ...dag, order, file };
-      document.getElementById('runBtn').disabled = false;
-      renderDAG(dag);
+      await loadDagByFile(e.target.value).catch((err) => {
+        addEventLog({ type: 'run:fail', run_id: 'ui', data: { status: err.message }, timestamp: new Date().toISOString() });
+      });
     });
 
     document.getElementById('runBtn').addEventListener('click', runDAG);
@@ -565,13 +581,25 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     async function apiFetch(url, options = {}) {
       const method = options.method || 'GET';
       const startMs = Date.now();
-      logNetwork(method, url, 'pending');
+      const noisyRunPoll = method === 'GET' && url.includes('/api/dag/runs/');
+      if (!noisyRunPoll) logNetwork(method, url, 'pending');
 
       try {
         const res = await fetch(url, options);
         const elapsed = Date.now() - startMs;
         const body = await res.clone().text();
-        logNetwork(method, url, res.status + ' (' + elapsed + 'ms)', body.slice(0, 200));
+
+        // Suppress repetitive poll spam in network log
+        if (!noisyRunPoll) {
+          logNetwork(method, url, res.status + ' (' + elapsed + 'ms)', body.slice(0, 200));
+        }
+
+        // If run disappeared (stale id), stop live polling/stream cleanly (once)
+        if (noisyRunPoll && res.status === 404 && !staleRunDetected) {
+          staleRunDetected = true;
+          handleStaleRun();
+        }
+
         return res;
       } catch (err) {
         logNetwork(method, url, 'FAILED: ' + err.message);
@@ -600,6 +628,27 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
+    function handleStaleRun() {
+      if (livePoll) { clearInterval(livePoll); livePoll = null; }
+      if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
+      if (eventSource) { eventSource.close(); eventSource = null; }
+      currentRunId = null;
+      pendingApproval = null;
+      document.getElementById('runStatus').textContent = 'stale-run';
+      document.getElementById('runBtn').disabled = false;
+      document.getElementById('runBtn').textContent = '▶ Run DAG';
+      document.getElementById('stopBtn').style.display = 'none';
+      const panel = document.getElementById('approvalPanel');
+      if (panel) panel.style.display = 'none';
+      clearInterval(elapsedInterval);
+      addEventLog({
+        type: 'run:fail',
+        run_id: 'stale',
+        data: { status: 'Run not found (likely server restart). Start a new run.' },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     async function stopDAG() {
       if (!currentRunId) return;
       await apiFetch(API + '/api/dag/runs/' + currentRunId + '/stop', { method: 'POST' });
@@ -610,8 +659,8 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     }
 
     async function decideApproval(decision) {
-      if (!currentRunId || !pendingApproval?.token) return;
-      await apiFetch(API + '/api/dag/runs/' + currentRunId + '/approvals/' + pendingApproval.token, {
+      if (!currentRunId) return;
+      await apiFetch(API + '/api/dag/runs/' + currentRunId + '/approvals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision })
@@ -621,8 +670,15 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     }
 
     async function runDAG() {
+      if (!currentDag) {
+        const sel = document.getElementById('dagSelect');
+        if (sel && sel.value) {
+          await loadDagByFile(sel.value).catch(() => {});
+        }
+      }
       if (!currentDag) return;
       const btn = document.getElementById('runBtn');
+      staleRunDetected = false;
       btn.disabled = true;
       btn.textContent = '⏳ Running...';
       document.getElementById('stopBtn').style.display = 'inline-block';
@@ -655,6 +711,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         context: buildContext(currentDag.name, userTopic),
         provider: providerMode,
         timeoutSeconds: 300,
+        devMode: true,
       };
 
       const res = await apiFetch(API + '/api/dag/run', {
@@ -667,13 +724,8 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       currentRunId = data.run_id;
       currentRunData = null;
 
-      if (LIVE_MODE) {
-        if (livePoll) clearInterval(livePoll);
-        livePoll = setInterval(async () => {
-          await refreshRunData();
-          focusActiveBlock();
-        }, 1500);
-      }
+      // SSE-first mode: no default polling. Poll only as fallback via watchdog.
+      if (livePoll) { clearInterval(livePoll); livePoll = null; }
       document.getElementById('runId').textContent = data.run_id.slice(0, 16);
       document.getElementById('runDag').textContent = data.dag_name;
       document.getElementById('runStatus').textContent = 'running';
@@ -681,19 +733,45 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
       // Connect SSE
       if (eventSource) eventSource.close();
+      if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
       const sseUrl = API + '/api/dag/runs/' + data.run_id + '/events';
       logNetwork('SSE', sseUrl, 'connecting');
       eventSource = new EventSource(sseUrl);
-      eventSource.onopen = () => logNetwork('SSE', sseUrl, 'connected');
+      eventSource.onopen = () => {
+        lastSseEventAt = Date.now();
+        logNetwork('SSE', sseUrl, 'connected');
+        // If SSE is healthy, disable fallback polling
+        if (livePoll) { clearInterval(livePoll); livePoll = null; }
+      };
+      eventSource.onerror = () => {
+        // SSE had trouble; watchdog will activate fallback polling if needed
+      };
 
-      eventSource.addEventListener('block:start', (e) => handleEvent(JSON.parse(e.data)));
-      eventSource.addEventListener('block:complete', (e) => handleEvent(JSON.parse(e.data)));
-      eventSource.addEventListener('block:fail', (e) => handleEvent(JSON.parse(e.data)));
-      eventSource.addEventListener('approval:requested', (e) => handleEvent(JSON.parse(e.data)));
-      eventSource.addEventListener('approval:decided', (e) => handleEvent(JSON.parse(e.data)));
-      eventSource.addEventListener('run:start', (e) => handleEvent(JSON.parse(e.data)));
-      eventSource.addEventListener('run:complete', (e) => handleRunEnd(JSON.parse(e.data)));
-      eventSource.addEventListener('run:fail', (e) => handleRunEnd(JSON.parse(e.data)));
+      // Watchdog: if no SSE event for >5s, enable temporary fallback polling
+      sseWatchdog = setInterval(async () => {
+        if (!currentRunId) return;
+        const staleFor = Date.now() - lastSseEventAt;
+        if (staleFor > 5000 && !livePoll) {
+          livePoll = setInterval(async () => {
+            await refreshRunData();
+            if (LIVE_MODE) focusActiveBlock();
+          }, 2000);
+          addEventLog({ type: 'run:fail', run_id: currentRunId, data: { status: 'SSE stale, fallback polling enabled' }, timestamp: new Date().toISOString() });
+        }
+      }, 1500);
+
+      const onSseEvent = (handler) => (e) => {
+        lastSseEventAt = Date.now();
+        handler(JSON.parse(e.data));
+      };
+      eventSource.addEventListener('block:start', onSseEvent(handleEvent));
+      eventSource.addEventListener('block:complete', onSseEvent(handleEvent));
+      eventSource.addEventListener('block:fail', onSseEvent(handleEvent));
+      eventSource.addEventListener('approval:requested', onSseEvent(handleEvent));
+      eventSource.addEventListener('approval:decided', onSseEvent(handleEvent));
+      eventSource.addEventListener('run:start', onSseEvent(handleEvent));
+      eventSource.addEventListener('run:complete', onSseEvent(handleRunEnd));
+      eventSource.addEventListener('run:fail', onSseEvent(handleRunEnd));
     }
 
     function handleEvent(event) {
@@ -717,6 +795,15 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           if (statusEl) {
             statusEl.innerHTML = '<span class="status-dot"></span>' + status;
           }
+          // Update assignee/model
+          const assignEl = node.querySelector('.block-assignee');
+          if (assignEl) {
+            // Prefer provider-reported execution identity over planned assignment
+            const aid = event.data?.instance?.execution?.agent_id || event.data?.instance?.active_agent_id;
+            const mdl = event.data?.instance?.execution?.model || event.data?.instance?.active_model;
+            assignEl.textContent = 'agent: ' + (aid || '—') + (mdl ? ' · ' + mdl : '');
+          }
+
           // Update meta
           const metaEl = node.querySelector('.block-meta');
           if (metaEl && event.data?.instance?.execution) {
@@ -753,6 +840,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         if (terminal) showInspector(terminal);
       });
       if (livePoll) { clearInterval(livePoll); livePoll = null; }
+      if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
       if (eventSource) { eventSource.close(); eventSource = null; }
     }
 
@@ -809,6 +897,9 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       const details = {
         blockId,
         status: block.status,
+        active_agent_id: block.active_agent_id,
+        active_model: block.active_model,
+        active_provider: block.active_provider,
         inputs: block.inputs,
         outputs: block.outputs,
         execution: block.execution,
@@ -834,7 +925,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       return terminals.length ? terminals[0] : null;
     }
 
-    function extractVisualArtifact(blockId, outputs) {
+    function extractVisualArtifact(blockId, outputs, allowTextFallback = false) {
       if (!outputs || typeof outputs !== 'object') return null;
 
       // URL-based artifact
@@ -844,7 +935,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       }
 
       // Inline HTML artifact
-      const html = outputs.artifact_html || outputs.html || outputs.preview_html;
+      const html = outputs.artifact_html || outputs.html || outputs.preview_html || outputs.code;
       if (typeof html === 'string' && /<\\/?(html|div|canvas|script|body)/i.test(html)) {
         return { kind: 'html', value: html, source: blockId + '.html' };
       }
@@ -855,9 +946,11 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         return { kind: 'image', value: image, source: blockId + '.image' };
       }
 
-      // Generic fallback: show text/json output from this block
-      const keys = Object.keys(outputs);
-      if (keys.length) return { kind: 'text', value: JSON.stringify(outputs, null, 2), source: blockId + '.outputs' };
+      // Fallback only when no visual artifact exists in any completed block
+      if (allowTextFallback) {
+        const keys = Object.keys(outputs);
+        if (keys.length) return { kind: 'text', value: JSON.stringify(outputs, null, 2), source: blockId + '.outputs' };
+      }
       return null;
     }
 
@@ -870,7 +963,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       const hint = document.getElementById('previewHint');
       const source = document.getElementById('livePreviewSource');
 
-      // Find latest completed block with visual-ish output
+      // Prefer latest completed block that has a VISUAL artifact
       const completed = Object.entries(currentRunData.run.blocks)
         .filter(([_, b]) => b.status === 'completed')
         .sort((a, b) => new Date(a[1].completed_at || 0).getTime() - new Date(b[1].completed_at || 0).getTime());
@@ -878,8 +971,14 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       let artifact = null;
       for (let i = completed.length - 1; i >= 0; i--) {
         const [blockId, block] = completed[i];
-        artifact = extractVisualArtifact(blockId, block.outputs);
+        artifact = extractVisualArtifact(blockId, block.outputs, false);
         if (artifact) break;
+      }
+
+      // If no visual artifact exists anywhere, show latest completed block outputs as text
+      if (!artifact && completed.length) {
+        const [blockId, block] = completed[completed.length - 1];
+        artifact = extractVisualArtifact(blockId, block.outputs, true);
       }
 
       frame.style.display = 'none';
@@ -915,6 +1014,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       if (!currentRunId) return;
       try {
         const res = await apiFetch(API + '/api/dag/runs/' + currentRunId);
+        if (!res.ok) return;
         currentRunData = await res.json();
         if (currentRunData.approval && currentRunData.approval.status === 'pending') {
           pendingApproval = currentRunData.approval;
@@ -975,6 +1075,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
             '<div class="block-name">' + (blockDef.name || blockId) + '</div>' +
             '<div class="block-id">' + blockId + '</div>' +
             '<div class="block-status"><span class="status-dot"></span>pending</div>' +
+            '<div class="block-assignee" style="font-size:10px;color:var(--text-dim);margin-top:4px">agent: —</div>' +
             '<div class="block-meta"></div>' +
             '<div class="block-ports">' +
               '<div class="port-group">' + inputs.map(p => '<div class="port in">← ' + p + '</div>').join('') + '</div>' +
@@ -1055,10 +1156,14 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       switch (dagName) {
         case 'coding-pipeline':
           return { prompt: text || 'Build a real-time chat widget with WebSocket support' };
+        case 'game-builder-pipeline':
+          return { prompt: text || 'Build a flappy bird style game with one creative mechanic' };
         case 'research-pipeline':
           return { query: text || 'What are the emerging trends in AI agent frameworks in 2026?' };
         case 'content-pipeline':
           return { topic: text || 'The SaaSpocalypse: How AI Agents Are Replacing Traditional Software' };
+        case 'website-builder-pipeline':
+          return { topic: text || 'A landing page for OpenSkelo with strong CTA' };
         default:
           return text ? { input: text } : {};
       }

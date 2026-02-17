@@ -32,7 +32,7 @@ const DEFAULT_AGENT_MAP: Record<string, string> = {
 
 export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): ProviderAdapter {
   const agentMap = { ...DEFAULT_AGENT_MAP, ...opts.agentMapping };
-  const timeout = opts.timeoutSeconds ?? 120;
+  const timeout = opts.timeoutSeconds ?? 300;
 
   return {
     name: "openclaw",
@@ -42,34 +42,65 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
       const agentId = resolveAgent(request, agentMap);
       const prompt = buildAgentPrompt(request);
 
+      console.log(`[openclaw-provider] Dispatching block "${request.title}" to agent '${agentId}'...`);
+
       try {
         const result = await runOpenClawAgent(agentId, prompt, timeout, opts);
 
+        console.log(`[openclaw-provider] Agent '${agentId}' finished (exit: ${result.exitCode}, stdout: ${result.stdout.length} bytes, stderr: ${result.stderr.length} bytes)`);
+
         if (result.exitCode !== 0) {
+          console.error(`[openclaw-provider] Agent '${agentId}' FAILED:`, result.stderr.slice(0, 500));
           return {
             success: false,
             error: `Agent '${agentId}' exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`,
           };
         }
 
-        // Parse JSON response
+        // Parse JSON response from openclaw agent --json
         const parsed = tryParseJSON(result.stdout);
 
-        if (parsed && parsed.reply) {
-          return {
-            success: true,
-            output: parsed.reply as string,
-            sessionId: (parsed.sessionKey ?? parsed.sessionId ?? `oc_${Date.now()}`) as string,
-            tokensUsed: (parsed.usage as Record<string, number>)?.totalTokens ?? 0,
-          };
+        if (parsed) {
+          // openclaw agent --json returns: { result: { payloads: [{ text }] }, runId, ... }
+          const payloads = (parsed.result as Record<string, unknown>)?.payloads as Array<Record<string, unknown>> | undefined;
+          const text = payloads?.[0]?.text as string | undefined;
+          const runId = parsed.runId as string | undefined;
+          const meta = (parsed.result as Record<string, unknown>)?.meta as Record<string, unknown> | undefined;
+          const agentMeta = meta?.agentMeta as Record<string, unknown> | undefined;
+          const usage = agentMeta?.usage as Record<string, number> | undefined;
+
+          if (text) {
+            return {
+              success: true,
+              output: text,
+              sessionId: (agentMeta?.sessionId as string) ?? runId ?? `oc_${Date.now()}`,
+              tokensUsed: (usage?.input ?? 0) + (usage?.output ?? 0),
+              actualAgentId: agentId,
+              actualModel: opts.model ?? request.agent.model,
+            };
+          }
+
+          // Fallback: try .reply (older format)
+          if (parsed.reply) {
+            return {
+              success: true,
+              output: parsed.reply as string,
+              sessionId: `oc_${Date.now()}`,
+              tokensUsed: 0,
+              actualAgentId: agentId,
+              actualModel: opts.model ?? request.agent.model,
+            };
+          }
         }
 
-        // Fallback: use raw stdout
+        // Last fallback: use raw stdout
         return {
           success: true,
           output: result.stdout.trim(),
           sessionId: `oc_${Date.now()}`,
           tokensUsed: 0,
+          actualAgentId: agentId,
+          actualModel: opts.model ?? request.agent.model,
         };
 
       } catch (err) {
