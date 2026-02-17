@@ -376,16 +376,20 @@ The `DONE` block output always includes:
 - `"what else can we improve on this?"`
 - the original prompt
 
-### New endpoints
+### Legacy endpoints (deprecated)
 
-- `POST /api/runs` — create run
-- `GET /api/runs/:id` — current run state + ordered events + ordered steps
-- `GET /api/runs/:id/steps` — ordered step records (contract-stable step history)
-- `POST /api/runs/:id/step` — deterministic single-step transition
-- `GET /api/runs/:id/context` — get shared context
-- `POST /api/runs/:id/context` — patch shared context
-- `GET /api/runs/:id/artifact` — latest artifact path + preview payload + local persistence metadata
-- `GET /api/runs/:id/artifact/content` — raw artifact HTML from local disk
+> ` /api/runs/* ` is now legacy. Use ` /api/dag/* ` for the canonical runtime.
+
+- `POST /api/runs` — create run (legacy)
+- `GET /api/runs/:id` — run state/events/steps (legacy)
+- `GET /api/runs/:id/steps` — step records (legacy)
+- `POST /api/runs/:id/step` — single-step transition (legacy)
+- `GET /api/runs/:id/context` — get shared context (legacy)
+- `POST /api/runs/:id/context` — patch shared context (legacy)
+- `GET /api/runs/:id/artifact` — artifact metadata (legacy)
+- `GET /api/runs/:id/artifact/content` — artifact HTML (legacy)
+
+Preferred runtime endpoints live under ` /api/dag/* `.
 
 ---
 

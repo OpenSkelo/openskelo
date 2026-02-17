@@ -161,8 +161,16 @@ export function createAPI(ctx: APIContext) {
     return c.json({ gateLogs: rows });
   });
 
-  // Block Core MVP endpoints
+  // Legacy run-loop endpoints (deprecated; DAG API is canonical)
+  const withRunsDeprecation = (c: any) => {
+    c.header("Deprecation", "true");
+    c.header("Sunset", "2026-03-31");
+    c.header("Link", '</api/dag>; rel="successor-version"');
+    c.header("Warning", '299 - "Legacy /api/runs endpoints are deprecated; use /api/dag/*"');
+  };
+
   app.post("/api/runs", async (c) => {
+    withRunsDeprecation(c);
     const raw = await c.req.json();
     const parsed = parseCreateRunBody(raw);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -176,18 +184,21 @@ export function createAPI(ctx: APIContext) {
   });
 
   app.get("/api/runs/:id", (c) => {
+    withRunsDeprecation(c);
     const run = runEngine.getRun(c.req.param("id"));
     if (!run) return c.json({ error: "Not found" }, 404);
     return c.json({ run, events: runEngine.getEvents(run.id), steps: runEngine.listSteps(run.id) });
   });
 
   app.get("/api/runs/:id/steps", (c) => {
+    withRunsDeprecation(c);
     const run = runEngine.getRun(c.req.param("id"));
     if (!run) return c.json({ error: "Not found" }, 404);
     return c.json({ steps: runEngine.listSteps(run.id) });
   });
 
   app.post("/api/runs/:id/step", async (c) => {
+    withRunsDeprecation(c);
     const raw = await c.req.json().catch(() => ({}));
     const headerIdempotencyKey = c.req.header("idempotency-key") ?? c.req.header("x-idempotency-key");
     const parsed = parseStepInput(raw, headerIdempotencyKey);
@@ -204,12 +215,14 @@ export function createAPI(ctx: APIContext) {
   });
 
   app.get("/api/runs/:id/context", (c) => {
+    withRunsDeprecation(c);
     const run = runEngine.getRun(c.req.param("id"));
     if (!run) return c.json({ error: "Not found" }, 404);
     return c.json({ context: run.context });
   });
 
   app.post("/api/runs/:id/context", async (c) => {
+    withRunsDeprecation(c);
     const raw = await c.req.json();
     if (!isPlainObject(raw)) return c.json({ error: "context body must be an object" }, 400);
 
@@ -222,12 +235,14 @@ export function createAPI(ctx: APIContext) {
   });
 
   app.get("/api/runs/:id/artifact", (c) => {
+    withRunsDeprecation(c);
     const artifact = runEngine.getArtifact(c.req.param("id"));
     if (!artifact) return c.json({ error: "Not found" }, 404);
     return c.json(artifact);
   });
 
   app.get("/api/runs/:id/artifact/content", (c) => {
+    withRunsDeprecation(c);
     const artifact = runEngine.getArtifactContent(c.req.param("id"));
     if (!artifact) return c.json({ error: "Artifact not found" }, 404);
     return c.text(artifact.content, 200, { "Content-Type": "text/html; charset=utf-8" });
