@@ -47,6 +47,9 @@ export interface ExecutorOpts {
   /** Called when the entire DAG fails */
   onRunFail?: (run: DAGRun) => void;
 
+  /** Called when a block is waiting for human approval */
+  onApprovalRequired?: (run: DAGRun, blockId: string, approval: Record<string, unknown>) => void;
+
   /** Max parallel blocks executing simultaneously (default: 4) */
   maxParallel?: number;
 }
@@ -86,6 +89,12 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     // Main execution loop
     while (true) {
+      // Pause loop when waiting for human approval
+      if (run.status === "paused_approval") {
+        await sleep(250);
+        continue;
+      }
+
       // Find blocks ready to execute
       const ready = engine.resolveReady(dag, run);
 
@@ -170,6 +179,35 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     // 1. Wire inputs
     const inputs = engine.wireInputs(dag, run, blockId);
+
+    // 1.5 Optional human approval pause gate
+    const needsApproval = blockDef.approval?.required === true;
+    const approvalKey = `__approval_${blockId}`;
+    const approved = run.context[approvalKey] === true;
+    if (needsApproval && !approved) {
+      const existing = run.context.__approval_request as Record<string, unknown> | undefined;
+      const isSamePending = existing?.status === "pending" && existing?.block_id === blockId;
+      if (!isSamePending) {
+        const token = `apr_${run.id}_${blockId}_${Date.now().toString(36)}`;
+        const request = {
+          token,
+          run_id: run.id,
+          block_id: blockId,
+          dag_name: dag.name,
+          status: "pending",
+          requested_at: new Date().toISOString(),
+          prompt: blockDef.approval?.prompt ?? `Approve block ${blockDef.name}?`,
+          approver: blockDef.approval?.approver ?? "owner",
+          timeout_sec: blockDef.approval?.timeout_sec ?? 1800,
+          context_preview: inputs,
+        };
+        run.context.__approval_request = request;
+        run.status = "paused_approval";
+        opts.onApprovalRequired?.(run, blockId, request);
+      }
+      return;
+    }
+
     engine.startBlock(run, blockId, inputs);
     opts.onBlockStart?.(run, blockId);
 

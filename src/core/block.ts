@@ -47,6 +47,9 @@ export interface BlockDef {
   /** Generic gate-failure routing/bounce rules */
   on_gate_fail?: GateFailRule[];
 
+  /** Optional human approval gate before this block executes */
+  approval?: ApprovalPolicy;
+
   /** Retry policy on failure */
   retry: RetryPolicy;
 
@@ -126,6 +129,13 @@ export interface GateFailRule {
   max_bounces: number;
   /** Message shown in logs/events */
   reason?: string;
+}
+
+export interface ApprovalPolicy {
+  required: boolean;
+  prompt?: string;
+  approver?: string;
+  timeout_sec?: number;
 }
 
 // ── DAG Definition (from YAML config) ──
@@ -260,7 +270,7 @@ export interface DAGRun {
   dag_name: string;
 
   /** Overall status */
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status: "pending" | "running" | "paused_approval" | "completed" | "failed" | "cancelled";
 
   /** All block instances in this run */
   blocks: Record<string, BlockInstance>;
@@ -612,6 +622,7 @@ function parseBlockDef(raw: Record<string, unknown>): BlockDef {
     pre_gates: parseBlockGates(raw.pre_gates),
     post_gates: parseBlockGates(raw.post_gates),
     on_gate_fail: parseGateFailRules(raw.on_gate_fail),
+    approval: parseApprovalPolicy(raw.approval),
     retry: parseRetryPolicy(raw.retry),
     timeout_ms: raw.timeout_ms as number | undefined,
     metadata: raw.metadata as Record<string, unknown> | undefined,
@@ -678,6 +689,18 @@ function parseRetryPolicy(raw: unknown): RetryPolicy {
     backoff: (obj.backoff as RetryPolicy["backoff"]) ?? "none",
     delay_ms: (obj.delay_ms as number) ?? 1000,
     max_delay_ms: obj.max_delay_ms as number | undefined,
+  };
+}
+
+function parseApprovalPolicy(raw: unknown): ApprovalPolicy | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (obj.required !== true) return undefined;
+  return {
+    required: true,
+    prompt: obj.prompt as string | undefined,
+    approver: obj.approver as string | undefined,
+    timeout_sec: obj.timeout_sec as number | undefined,
   };
 }
 

@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { spawn } from "node:child_process";
 import { parse as parseYaml } from "yaml";
 import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
@@ -15,7 +16,7 @@ import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
 import type { SkeloConfig } from "../types.js";
 
 interface DAGEvent {
-  type: "run:start" | "block:start" | "block:complete" | "block:fail" | "run:complete" | "run:fail";
+  type: "run:start" | "block:start" | "block:complete" | "block:fail" | "run:complete" | "run:fail" | "approval:requested" | "approval:decided";
   run_id: string;
   block_id?: string;
   data: Record<string, unknown>;
@@ -31,6 +32,38 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   const app = new Hono();
   const engine = createBlockEngine();
   const examplesBaseDir = opts?.examplesDir ?? resolve(process.cwd(), "examples");
+
+  async function notifyApprovalViaTelegram(run: DAGRun, approval: Record<string, unknown>): Promise<void> {
+    const target = process.env.OPENSKELO_APPROVAL_TELEGRAM_TARGET || "5830373538";
+    const token = String(approval.token ?? "");
+    const blockId = String(approval.block_id ?? "");
+    const prompt = String(approval.prompt ?? "Approval required");
+
+    const approveCmd = `curl -X POST http://localhost:4040/api/dag/runs/${run.id}/approvals/${token} -H 'Content-Type: application/json' -d '{\"decision\":\"approve\"}'`;
+    const rejectCmd = `curl -X POST http://localhost:4040/api/dag/runs/${run.id}/approvals/${token} -H 'Content-Type: application/json' -d '{\"decision\":\"reject\"}'`;
+
+    const text = [
+      "🛑 OpenSkelo Approval Required",
+      `Run: ${run.id}`,
+      `DAG: ${run.dag_name}`,
+      `Block: ${blockId}`,
+      `Prompt: ${prompt}`,
+      "",
+      "To decide from terminal:",
+      `Approve: ${approveCmd}`,
+      `Reject:  ${rejectCmd}`,
+    ].join("\n");
+
+    await runCommand("openclaw", [
+      "message",
+      "send",
+      "--channel", "telegram",
+      "--target", target,
+      "--message", text,
+    ], 20).catch((err) => {
+      console.error("[dag-api] Telegram approval notify failed:", err instanceof Error ? err.message : err);
+    });
+  }
 
   // Broadcast event to all SSE clients for a run
   function broadcast(runId: string, event: DAGEvent) {
@@ -176,6 +209,16 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           timestamp: new Date().toISOString(),
         });
       },
+      onApprovalRequired: (run, blockId, approval) => {
+        broadcast(run.id, {
+          type: "approval:requested",
+          run_id: run.id,
+          block_id: blockId,
+          data: approval,
+          timestamp: new Date().toISOString(),
+        });
+        notifyApprovalViaTelegram(run, approval as Record<string, unknown>);
+      },
     });
 
     // Create initial run state for immediate response
@@ -216,9 +259,50 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     return c.json({
       run: entry.run,
       dag: entry.dag,
+      approval: entry.run.context.__approval_request ?? null,
       events: runEvents.get(entry.run.id) ?? [],
       trace: entry.result?.trace ?? [],
     });
+  });
+
+  // Approve/reject pending human approval gate
+  app.post("/api/dag/runs/:id/approvals/:token", async (c) => {
+    const entry = activeRuns.get(c.req.param("id"));
+    if (!entry) return c.json({ error: "Not found" }, 404);
+
+    const request = entry.run.context.__approval_request as Record<string, unknown> | undefined;
+    if (!request || request.status !== "pending") {
+      return c.json({ error: "No pending approval" }, 400);
+    }
+    if (request.token !== c.req.param("token")) {
+      return c.json({ error: "Invalid approval token" }, 403);
+    }
+
+    const body = await c.req.json().catch(() => ({}));
+    const decision = (body.decision as string) ?? "reject";
+    const notes = (body.notes as string) ?? "";
+
+    request.status = decision;
+    request.decided_at = new Date().toISOString();
+    request.notes = notes;
+
+    const blockId = String(request.block_id);
+    if (decision === "approve") {
+      entry.run.context[`__approval_${blockId}`] = true;
+      entry.run.status = "running";
+    } else {
+      entry.run.status = "failed";
+    }
+
+    broadcast(entry.run.id, {
+      type: "approval:decided",
+      run_id: entry.run.id,
+      block_id: blockId,
+      data: { decision, notes },
+      timestamp: new Date().toISOString(),
+    });
+
+    return c.json({ ok: true, decision, run_status: entry.run.status });
   });
 
   // SSE stream for real-time events
@@ -300,4 +384,35 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   });
 
   return app;
+}
+
+function runCommand(cmd: string, args: string[], timeoutSec: number): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      env: { ...process.env },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let killed = false;
+
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill("SIGKILL");
+      reject(new Error(`Command timed out after ${timeoutSec}s`));
+    }, timeoutSec * 1000);
+
+    child.on("close", (code: number | null) => {
+      clearTimeout(timer);
+      if (!killed) resolve({ stdout, stderr, exitCode: code ?? 1 });
+    });
+    child.on("error", (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
 }

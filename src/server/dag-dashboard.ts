@@ -471,6 +471,14 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           <div><span class="label">Status:</span> <span id="runStatus">—</span></div>
           <div><span class="label">Elapsed:</span> <span id="runElapsed">—</span></div>
         </div>
+        <div id="approvalPanel" style="display:none;margin-top:10px;padding:8px;border:1px solid var(--yellow);border-radius:6px;background:rgba(234,179,8,0.08)">
+          <div style="font-size:11px;color:var(--yellow);margin-bottom:4px">Waiting for approval</div>
+          <div id="approvalText" style="font-size:11px;color:var(--text);margin-bottom:8px"></div>
+          <div style="display:flex;gap:8px">
+            <button id="approveBtn" style="padding:6px 10px;background:var(--green);border-color:var(--green);color:white">Approve</button>
+            <button id="rejectBtn" style="padding:6px 10px;background:var(--red);border-color:var(--red);color:white">Reject</button>
+          </div>
+        </div>
       </div>
 
       <div class="panel-section">
@@ -514,6 +522,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     let runStartTime = null;
     let elapsedInterval = null;
     let livePoll = null;
+    let pendingApproval = null;
 
     // Load examples
     async function loadExamples() {
@@ -546,6 +555,8 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
     document.getElementById('runBtn').addEventListener('click', runDAG);
     document.getElementById('stopBtn').addEventListener('click', stopDAG);
+    document.getElementById('approveBtn').addEventListener('click', () => decideApproval('approve'));
+    document.getElementById('rejectBtn').addEventListener('click', () => decideApproval('reject'));
 
     // OpenClaw-only mode for now (no mock toggle)
 
@@ -596,6 +607,17 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       document.getElementById('runBtn').disabled = false;
       document.getElementById('runBtn').textContent = '▶ Run DAG';
       clearInterval(elapsedInterval);
+    }
+
+    async function decideApproval(decision) {
+      if (!currentRunId || !pendingApproval?.token) return;
+      await apiFetch(API + '/api/dag/runs/' + currentRunId + '/approvals/' + pendingApproval.token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision })
+      });
+      pendingApproval = null;
+      document.getElementById('approvalPanel').style.display = 'none';
     }
 
     async function runDAG() {
@@ -667,12 +689,24 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       eventSource.addEventListener('block:start', (e) => handleEvent(JSON.parse(e.data)));
       eventSource.addEventListener('block:complete', (e) => handleEvent(JSON.parse(e.data)));
       eventSource.addEventListener('block:fail', (e) => handleEvent(JSON.parse(e.data)));
+      eventSource.addEventListener('approval:requested', (e) => handleEvent(JSON.parse(e.data)));
+      eventSource.addEventListener('approval:decided', (e) => handleEvent(JSON.parse(e.data)));
       eventSource.addEventListener('run:start', (e) => handleEvent(JSON.parse(e.data)));
       eventSource.addEventListener('run:complete', (e) => handleRunEnd(JSON.parse(e.data)));
       eventSource.addEventListener('run:fail', (e) => handleRunEnd(JSON.parse(e.data)));
     }
 
     function handleEvent(event) {
+      if (event.type === 'approval:requested') {
+        pendingApproval = event.data;
+        document.getElementById('approvalPanel').style.display = 'block';
+        document.getElementById('approvalText').textContent = (event.data.prompt || 'Approval needed') + ' [' + (event.block_id || '') + ']';
+      }
+      if (event.type === 'approval:decided') {
+        pendingApproval = null;
+        document.getElementById('approvalPanel').style.display = 'none';
+      }
+
       // Update block visual
       if (event.block_id) {
         const node = document.getElementById('block-' + event.block_id);
@@ -882,6 +916,11 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       try {
         const res = await apiFetch(API + '/api/dag/runs/' + currentRunId);
         currentRunData = await res.json();
+        if (currentRunData.approval && currentRunData.approval.status === 'pending') {
+          pendingApproval = currentRunData.approval;
+          document.getElementById('approvalPanel').style.display = 'block';
+          document.getElementById('approvalText').textContent = (pendingApproval.prompt || 'Approval needed') + ' [' + (pendingApproval.block_id || '') + ']';
+        }
         if (LIVE_MODE) updateLivePreview();
       } catch (_) {}
     }

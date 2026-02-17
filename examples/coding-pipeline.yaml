@@ -149,6 +149,11 @@ blocks:
       - name: review-approved
         check: { type: expr, expression: "inputs.approved === true" }
         error: "Cannot deploy without review approval"
+    approval:
+      required: true
+      approver: owner
+      prompt: "Deploy this build to staging?"
+      timeout_sec: 1800
     on_gate_fail:
       - when_gate: review-approved
         route_to: build
