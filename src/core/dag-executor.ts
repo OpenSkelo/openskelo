@@ -32,6 +32,13 @@ type FailInfo = {
   repair?: { attempted?: boolean; succeeded?: boolean; error_message?: string };
   raw_output_preview?: string;
   provider_exit_code?: number;
+  contract_trace?: {
+    strict_output: boolean;
+    repair_attempts_max: number;
+    initial_errors: string[];
+    attempts: Array<{ index: number; success: boolean; errors: string[] }>;
+    final_ok: boolean;
+  };
 };
 
 export interface ExecutorOpts {
@@ -406,28 +413,52 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     let outputs = parseAgentOutputs(blockDef, dispatchResult.output ?? "");
     let durationMs = Date.now() - startTime;
 
-    // Enforce output contract at core level (+ one generic repair retry)
+    // Enforce output contract at core level (configurable deterministic repair loop)
+    const strictOutput = blockDef.strict_output !== false;
+    const repairAttemptsMax = Math.max(0, Math.min(3, Number(blockDef.contract_repair_attempts ?? 1)));
     let contract = validateOutputContract(blockDef, outputs);
-    if (!contract.ok) {
-      const repairRequest: DispatchRequest = {
-        ...dispatchRequest,
-        description: buildRepairPrompt(blockDef, dispatchResult.output ?? "", contract.errors),
-      };
+    const contractTrace: NonNullable<FailInfo["contract_trace"]> = {
+      strict_output: strictOutput,
+      repair_attempts_max: repairAttemptsMax,
+      initial_errors: contract.ok ? [] : [...contract.errors],
+      attempts: [],
+      final_ok: contract.ok,
+    };
 
-      try {
-        const repairResult = await provider.dispatch(repairRequest);
-        if (repairResult.success) {
-          dispatchResult = repairResult;
-          outputs = parseAgentOutputs(blockDef, dispatchResult.output ?? "");
-          durationMs = Date.now() - startTime;
-          contract = validateOutputContract(blockDef, outputs);
+    if (strictOutput && !contract.ok) {
+      for (let attempt = 1; attempt <= repairAttemptsMax && !contract.ok; attempt++) {
+        const repairRequest: DispatchRequest = {
+          ...dispatchRequest,
+          description: buildRepairPrompt(blockDef, dispatchResult.output ?? "", contract.errors),
+        };
+
+        let attemptErrors: string[] = [];
+        try {
+          const repairResult = await provider.dispatch(repairRequest);
+          if (repairResult.success) {
+            dispatchResult = repairResult;
+            outputs = parseAgentOutputs(blockDef, dispatchResult.output ?? "");
+            durationMs = Date.now() - startTime;
+            contract = validateOutputContract(blockDef, outputs);
+            attemptErrors = contract.ok ? [] : [...contract.errors];
+          } else {
+            attemptErrors = [repairResult.error ?? "repair dispatch failed"];
+          }
+        } catch (err) {
+          attemptErrors = [err instanceof Error ? err.message : "repair dispatch exception"];
         }
-      } catch {
-        // ignore repair dispatch errors; fall through to contract failure
+
+        contractTrace.attempts.push({
+          index: attempt,
+          success: contract.ok,
+          errors: attemptErrors,
+        });
       }
     }
 
-    if (!contract.ok) {
+    contractTrace.final_ok = contract.ok;
+
+    if (strictOutput && !contract.ok) {
       const err = `Output contract failed: ${contract.errors.join("; ")}`;
       const execution: BlockExecution = {
         agent_id: dispatchResult.actualAgentId ?? agent.id,
@@ -439,8 +470,15 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         duration_ms: durationMs,
         error: err,
       };
+      (execution as unknown as Record<string, unknown>).contract_trace = contractTrace;
       engine.failBlock(run, blockId, err, blockDef);
-      opts.onBlockFail?.(run, blockId, err, "OUTPUT_CONTRACT_FAILED", { stage: "contract", message: err, repair: { attempted: dispatchResult.repairAttempted ?? false, succeeded: dispatchResult.repairSucceeded ?? false }, raw_output_preview: (dispatchResult.output ?? "").slice(0, 400), });
+      opts.onBlockFail?.(run, blockId, err, "OUTPUT_CONTRACT_FAILED", {
+        stage: "contract",
+        message: err,
+        repair: { attempted: contractTrace.attempts.length > 0, succeeded: contract.ok || (dispatchResult.repairSucceeded ?? false) },
+        raw_output_preview: (dispatchResult.output ?? "").slice(0, 400),
+        contract_trace: contractTrace,
+      });
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -474,6 +512,9 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         attempted: dispatchResult.repairAttempted ?? false,
         succeeded: dispatchResult.repairSucceeded ?? false,
       };
+    }
+    if (strictOutput) {
+      (execution as unknown as Record<string, unknown>).contract_trace = contractTrace;
     }
 
     // 6. Evaluate post-gates

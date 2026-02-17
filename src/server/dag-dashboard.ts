@@ -919,6 +919,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           error_stage: event.data?.error_stage || null,
           error_message: event.data?.error_message || null,
           repair: event.data?.repair || null,
+          contract_trace: event.data?.contract_trace || null,
           raw_output_preview: event.data?.raw_output_preview || null,
           provider_exit_code: event.data?.provider_exit_code || null,
           attempt: event.data?.attempt || null,

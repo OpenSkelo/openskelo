@@ -408,6 +408,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
             error_stage: info?.stage ?? "unknown",
             error_message: info?.message ?? error,
             repair: info?.repair ?? null,
+            contract_trace: info?.contract_trace ?? null,
             raw_output_preview: info?.raw_output_preview ?? null,
             provider_exit_code: info?.provider_exit_code ?? null,
             attempt: run.blocks[blockId]?.retry_state?.attempt ?? null,

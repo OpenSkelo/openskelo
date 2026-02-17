@@ -56,6 +56,12 @@ export interface BlockDef {
   /** Optional timeout in ms */
   timeout_ms?: number;
 
+  /** Whether output contract enforcement is strict for this block (default: true) */
+  strict_output?: boolean;
+
+  /** Additional contract-repair attempts after first parse (default: 1) */
+  contract_repair_attempts?: number;
+
   /** Arbitrary user metadata */
   metadata?: Record<string, unknown>;
 }
@@ -582,6 +588,8 @@ export function createBlockEngine() {
       pre_gates: blockDef.pre_gates,
       post_gates: blockDef.post_gates,
       retry: blockDef.retry,
+      strict_output: blockDef.strict_output,
+      contract_repair_attempts: blockDef.contract_repair_attempts,
     });
     return createHash("sha256").update(canonical).digest("hex").slice(0, 16);
   }
@@ -634,6 +642,8 @@ function parseBlockDef(raw: Record<string, unknown>): BlockDef {
     approval: parseApprovalPolicy(raw.approval),
     retry: parseRetryPolicy(raw.retry),
     timeout_ms: raw.timeout_ms as number | undefined,
+    strict_output: raw.strict_output === false ? false : true,
+    contract_repair_attempts: Number(raw.contract_repair_attempts ?? 1),
     metadata: raw.metadata as Record<string, unknown> | undefined,
   };
 }
