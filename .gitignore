@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.db
+*.sqlite
+.env
+.env.local
+.DS_Store
+*.log
+coverage/
+.turbo/
