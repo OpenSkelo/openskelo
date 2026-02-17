@@ -393,12 +393,17 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
       <select id="dagSelect">
         <option value="">Select a DAG...</option>
       </select>
-      <div class="speed-control">
+      <select id="providerSelect">
+        <option value="mock">🔮 Mock (simulated)</option>
+        <option value="openclaw">🦞 OpenClaw (real agents)</option>
+      </select>
+      <div class="speed-control" id="speedGroup">
         <span>Speed:</span>
         <input type="range" id="speedSlider" min="1" max="10" value="5">
         <span id="speedLabel">1x</span>
       </div>
       <button class="primary" id="runBtn" disabled>▶ Run DAG</button>
+      <button id="stopBtn" style="display:none;background:var(--red);border-color:var(--red);color:white;font-weight:600">■ Stop</button>
     </div>
   </div>
 
@@ -448,6 +453,15 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
           </div>
         </div>
       </div>
+
+      <div class="panel-section">
+        <h3>Network Log</h3>
+        <div class="event-log" id="networkLog">
+          <div style="font-size:12px;color:var(--text-dim);text-align:center;padding:20px">
+            No API calls yet
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -461,7 +475,7 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
 
     // Load examples
     async function loadExamples() {
-      const res = await fetch(API + '/api/dag/examples');
+      const res = await apiFetch(API + '/api/dag/examples');
       const { examples } = await res.json();
       const sel = document.getElementById('dagSelect');
       for (const ex of examples) {
@@ -479,7 +493,7 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
         currentDag = null;
         return;
       }
-      const res = await fetch(API + '/api/dag/examples/' + file);
+      const res = await apiFetch(API + '/api/dag/examples/' + file);
       const { dag, order } = await res.json();
       currentDag = { ...dag, order, file };
       document.getElementById('runBtn').disabled = false;
@@ -487,6 +501,12 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
     });
 
     document.getElementById('runBtn').addEventListener('click', runDAG);
+    document.getElementById('stopBtn').addEventListener('click', stopDAG);
+
+    document.getElementById('providerSelect').addEventListener('change', (e) => {
+      const isReal = e.target.value === 'openclaw';
+      document.getElementById('speedGroup').style.display = isReal ? 'none' : 'flex';
+    });
 
     document.getElementById('speedSlider').addEventListener('input', (e) => {
       const val = parseInt(e.target.value);
@@ -494,32 +514,89 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
       document.getElementById('speedLabel').textContent = speed + 'x';
     });
 
+    // Wrapped fetch that logs to network panel
+    async function apiFetch(url, options = {}) {
+      const method = options.method || 'GET';
+      const startMs = Date.now();
+      logNetwork(method, url, 'pending');
+
+      try {
+        const res = await fetch(url, options);
+        const elapsed = Date.now() - startMs;
+        const body = await res.clone().text();
+        logNetwork(method, url, res.status + ' (' + elapsed + 'ms)', body.slice(0, 200));
+        return res;
+      } catch (err) {
+        logNetwork(method, url, 'FAILED: ' + err.message);
+        throw err;
+      }
+    }
+
+    function logNetwork(method, url, status, preview) {
+      const log = document.getElementById('networkLog');
+      if (log.querySelector('div[style]')) log.innerHTML = '';
+
+      const entry = document.createElement('div');
+      const isOk = typeof status === 'string' && (status.startsWith('2') || status === 'pending');
+      entry.className = 'event-entry ' + (status === 'pending' ? 'block-start' : isOk ? 'block-complete' : 'block-fail');
+
+      const time = new Date().toLocaleTimeString();
+      let html = '<span class="event-time">' + time + '</span> <b>' + method + '</b> ' + url.replace(API, '') + ' → ' + status;
+      if (preview) {
+        html += '<div style="font-size:10px;color:var(--text-dim);margin-top:2px;word-break:break-all">' + escapeHtml(preview) + '</div>';
+      }
+      entry.innerHTML = html;
+      log.insertBefore(entry, log.firstChild);
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    async function stopDAG() {
+      if (!currentRunId) return;
+      await apiFetch(API + '/api/dag/runs/' + currentRunId + '/stop', { method: 'POST' });
+      document.getElementById('stopBtn').style.display = 'none';
+      document.getElementById('runBtn').disabled = false;
+      document.getElementById('runBtn').textContent = '▶ Run DAG';
+      clearInterval(elapsedInterval);
+    }
+
     async function runDAG() {
       if (!currentDag) return;
       const btn = document.getElementById('runBtn');
       btn.disabled = true;
       btn.textContent = '⏳ Running...';
+      document.getElementById('stopBtn').style.display = 'inline-block';
 
       // Reset UI
       document.getElementById('eventLog').innerHTML = '';
+      document.getElementById('networkLog').innerHTML = '';
       runStartTime = Date.now();
       updateElapsed();
       elapsedInterval = setInterval(updateElapsed, 100);
 
-      // Speed → delay mapping
-      const speedVal = parseInt(document.getElementById('speedSlider').value);
-      const minDelay = speedVal <= 5 ? (6 - speedVal) * 1000 : Math.max(200, 1000 / (speedVal - 4));
-      const maxDelay = minDelay * 2.5;
+      const providerMode = document.getElementById('providerSelect').value;
 
-      const res = await fetch(API + '/api/dag/run', {
+      // Build request body
+      const reqBody = {
+        example: currentDag.file,
+        context: getDefaultContext(currentDag.name),
+        provider: providerMode,
+      };
+
+      if (providerMode === 'mock') {
+        const speedVal = parseInt(document.getElementById('speedSlider').value);
+        reqBody.minDelay = speedVal <= 5 ? (6 - speedVal) * 1000 : Math.max(200, 1000 / (speedVal - 4));
+        reqBody.maxDelay = reqBody.minDelay * 2.5;
+      } else {
+        reqBody.timeoutSeconds = 120;
+      }
+
+      const res = await apiFetch(API + '/api/dag/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          example: currentDag.file,
-          context: getDefaultContext(currentDag.name),
-          minDelay,
-          maxDelay,
-        }),
+        body: JSON.stringify(reqBody),
       });
 
       const data = await res.json();
@@ -531,7 +608,10 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
 
       // Connect SSE
       if (eventSource) eventSource.close();
-      eventSource = new EventSource(API + '/api/dag/runs/' + data.run_id + '/events');
+      const sseUrl = API + '/api/dag/runs/' + data.run_id + '/events';
+      logNetwork('SSE', sseUrl, 'connecting');
+      eventSource = new EventSource(sseUrl);
+      eventSource.onopen = () => logNetwork('SSE', sseUrl, 'connected');
 
       eventSource.addEventListener('block:start', (e) => handleEvent(JSON.parse(e.data)));
       eventSource.addEventListener('block:complete', (e) => handleEvent(JSON.parse(e.data)));
@@ -581,6 +661,7 @@ export function getDAGDashboardHTML(projectName: string, port: number): string {
       const btn = document.getElementById('runBtn');
       btn.disabled = false;
       btn.textContent = '▶ Run DAG';
+      document.getElementById('stopBtn').style.display = 'none';
       if (eventSource) { eventSource.close(); eventSource = null; }
     }
 

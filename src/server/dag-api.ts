@@ -10,6 +10,7 @@ import { parse as parseYaml } from "yaml";
 import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
 import { createMockProvider } from "../core/mock-provider.js";
+import { createOpenClawProvider } from "../core/openclaw-provider.js";
 import type { DAGDef, DAGRun, BlockInstance } from "../core/block.js";
 import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
 import type { SkeloConfig } from "../types.js";
@@ -109,16 +110,25 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       };
     }
 
-    // Create mock provider
-    const mockProvider = createMockProvider({
-      minDelay: (body.minDelay as number) ?? 2000,
-      maxDelay: (body.maxDelay as number) ?? 5000,
-      failureRate: (body.failureRate as number) ?? 0,
-    });
+    // Choose provider: "openclaw" for real agents, "mock" for simulation
+    const providerMode = (body.provider as string) ?? "mock";
 
-    const providers: Record<string, typeof mockProvider> = {};
+    const provider = providerMode === "openclaw"
+      ? createOpenClawProvider({
+          agentMapping: body.agentMapping as Record<string, string> | undefined,
+          timeoutSeconds: (body.timeoutSeconds as number) ?? 120,
+          model: body.model as string | undefined,
+          thinking: body.thinking as string | undefined,
+        })
+      : createMockProvider({
+          minDelay: (body.minDelay as number) ?? 2000,
+          maxDelay: (body.maxDelay as number) ?? 5000,
+          failureRate: (body.failureRate as number) ?? 0,
+        });
+
+    const providers: Record<string, typeof provider> = {};
     for (const p of config.providers) {
-      providers[p.name] = mockProvider;
+      providers[p.name] = provider;
     }
 
     // Create executor with event hooks
@@ -255,6 +265,28 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       await new Promise(r => setTimeout(r, 1000));
       clients.delete(handler);
     });
+  });
+
+  // Stop/cancel a run
+  app.post("/api/dag/runs/:id/stop", (c) => {
+    const entry = activeRuns.get(c.req.param("id"));
+    if (!entry) return c.json({ error: "Not found" }, 404);
+
+    entry.run.status = "cancelled";
+    for (const block of Object.values(entry.run.blocks)) {
+      if (block.status === "running" || block.status === "pending" || block.status === "ready") {
+        block.status = "skipped";
+      }
+    }
+
+    broadcast(c.req.param("id"), {
+      type: "run:fail",
+      run_id: entry.run.id,
+      data: { status: "cancelled" },
+      timestamp: new Date().toISOString(),
+    });
+
+    return c.json({ status: "cancelled" });
   });
 
   // List all runs
