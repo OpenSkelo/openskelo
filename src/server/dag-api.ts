@@ -4,7 +4,7 @@
 
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { parse as parseYaml } from "yaml";
@@ -39,19 +39,25 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const blockId = String(approval.block_id ?? "");
     const prompt = String(approval.prompt ?? "Approval required");
 
-    const approveCmd = `curl -X POST http://localhost:4040/api/dag/runs/${run.id}/approvals/${token} -H 'Content-Type: application/json' -d '{\"decision\":\"approve\"}'`;
-    const rejectCmd = `curl -X POST http://localhost:4040/api/dag/runs/${run.id}/approvals/${token} -H 'Content-Type: application/json' -d '{\"decision\":\"reject\"}'`;
+    const preview = approval.context_preview as Record<string, unknown> | undefined;
+    const previewText = preview
+      ? Object.entries(preview)
+          .slice(0, 4)
+          .map(([k, v]) => `• ${k}: ${String(typeof v === 'string' ? v : JSON.stringify(v)).slice(0, 180)}`)
+          .join("\n")
+      : "• (no input preview)";
 
     const text = [
-      "🛑 OpenSkelo Approval Required",
-      `Run: ${run.id}`,
-      `DAG: ${run.dag_name}`,
-      `Block: ${blockId}`,
-      `Prompt: ${prompt}`,
+      "🛑 OpenSkelo needs your approval",
+      `Workflow: ${run.dag_name}`,
+      `Step: ${blockId}`,
+      `Why: ${prompt}`,
       "",
-      "To decide from terminal:",
-      `Approve: ${approveCmd}`,
-      `Reject:  ${rejectCmd}`,
+      "Context snapshot:",
+      previewText,
+      "",
+      `Reply with: APPROVE ${run.id}`,
+      `or: REJECT ${run.id} <reason>`
     ].join("\n");
 
     await runCommand("openclaw", [
@@ -81,16 +87,25 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   app.get("/api/dag/examples", (c) => {
     const examples: { name: string; file: string }[] = [];
 
-    for (const file of ["coding-pipeline.yaml", "research-pipeline.yaml", "content-pipeline.yaml"]) {
+    let files: string[] = [];
+    try {
+      files = readdirSync(examplesBaseDir).filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
+    } catch {
+      files = [];
+    }
+
+    for (const file of files) {
       const path = resolve(examplesBaseDir, file);
-      if (existsSync(path)) {
-        try {
-          const raw = parseYaml(readFileSync(path, "utf-8"));
-          examples.push({ name: raw.name ?? file, file });
-        } catch { /* skip bad files */ }
+      if (!existsSync(path)) continue;
+      try {
+        const raw = parseYaml(readFileSync(path, "utf-8"));
+        examples.push({ name: raw.name ?? file, file });
+      } catch {
+        // skip malformed files
       }
     }
 
+    examples.sort((a, b) => a.name.localeCompare(b.name));
     return c.json({ examples });
   });
 
