@@ -39,7 +39,7 @@ export interface ExecutorOpts {
   onBlockComplete?: (run: DAGRun, blockId: string) => void;
 
   /** Called when a block fails */
-  onBlockFail?: (run: DAGRun, blockId: string, error: string) => void;
+  onBlockFail?: (run: DAGRun, blockId: string, error: string, errorCode?: string) => void;
 
   /** Called when the entire DAG completes */
   onRunComplete?: (run: DAGRun) => void;
@@ -267,7 +267,8 @@ export function createDAGExecutor(opts: ExecutorOpts) {
           opts.onBlockFail?.(
             run,
             blockId,
-            `${rule.reason ?? "Gate failure reroute"} Bounce ${bounce}/${rule.max_bounces} → rerouting to ${rule.route_to}.`
+            `${rule.reason ?? "Gate failure reroute"} Bounce ${bounce}/${rule.max_bounces} → rerouting to ${rule.route_to}.`,
+            "GATE_FAIL_REROUTE"
           );
           trace.push({
             block_id: blockId,
@@ -285,7 +286,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       }
 
       engine.failBlock(run, blockId, `Pre-gate failed: ${failedPreGate.name} — ${failedPreGate.reason}`, blockDef);
-      opts.onBlockFail?.(run, blockId, failedPreGate.reason ?? "Pre-gate failed");
+      opts.onBlockFail?.(run, blockId, failedPreGate.reason ?? "Pre-gate failed", "PRE_GATE_FAILED");
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -303,7 +304,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     // 3. Ensure agent exists
     if (!agent) {
       engine.failBlock(run, blockId, `No agent found for block ${blockId}`, blockDef);
-      opts.onBlockFail?.(run, blockId, "No agent found");
+      opts.onBlockFail?.(run, blockId, "No agent found", "AGENT_NOT_FOUND");
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -322,7 +323,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const provider = opts.providers[agent.provider];
     if (!provider) {
       engine.failBlock(run, blockId, `Provider not found: ${agent.provider}`, blockDef);
-      opts.onBlockFail?.(run, blockId, `Provider not found: ${agent.provider}`);
+      opts.onBlockFail?.(run, blockId, `Provider not found: ${agent.provider}`, "PROVIDER_NOT_FOUND");
       return;
     }
 
@@ -353,7 +354,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         return;
       }
       engine.failBlock(run, blockId, error, blockDef);
-      opts.onBlockFail?.(run, blockId, error);
+      opts.onBlockFail?.(run, blockId, error, "DISPATCH_EXCEPTION");
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -374,7 +375,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         return;
       }
       engine.failBlock(run, blockId, dispatchResult.error ?? "Dispatch failed", blockDef);
-      opts.onBlockFail?.(run, blockId, dispatchResult.error ?? "Dispatch failed");
+      opts.onBlockFail?.(run, blockId, dispatchResult.error ?? "Dispatch failed", "DISPATCH_FAILED");
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -427,7 +428,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         error: err,
       };
       engine.failBlock(run, blockId, err, blockDef);
-      opts.onBlockFail?.(run, blockId, err);
+      opts.onBlockFail?.(run, blockId, err, "OUTPUT_CONTRACT_FAILED");
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -464,7 +465,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     if (failedPostGate) {
       execution.error = `Post-gate failed: ${failedPostGate.name}`;
       engine.failBlock(run, blockId, `Post-gate failed: ${failedPostGate.name} — ${failedPostGate.reason}`, blockDef);
-      opts.onBlockFail?.(run, blockId, failedPostGate.reason ?? "Post-gate failed");
+      opts.onBlockFail?.(run, blockId, failedPostGate.reason ?? "Post-gate failed", "POST_GATE_FAILED");
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,

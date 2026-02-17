@@ -346,14 +346,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           timestamp: new Date().toISOString(),
         });
       },
-      onBlockFail: (run, blockId, error) => {
+      onBlockFail: (run, blockId, error, errorCode) => {
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
         broadcast(run.id, {
           type: "block:fail",
           run_id: run.id,
           block_id: blockId,
-          data: { error, instance: run.blocks[blockId] },
+          data: { error, error_code: errorCode ?? "UNKNOWN", instance: run.blocks[blockId] },
           timestamp: new Date().toISOString(),
         });
       },
