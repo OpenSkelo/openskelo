@@ -395,14 +395,26 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           timestamp: new Date().toISOString(),
         });
       },
-      onBlockFail: (run, blockId, error, errorCode) => {
+      onBlockFail: (run, blockId, error, errorCode, info) => {
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
         broadcast(run.id, {
           type: "block:fail",
           run_id: run.id,
           block_id: blockId,
-          data: { error, error_code: errorCode ?? "UNKNOWN", instance: run.blocks[blockId] },
+          data: {
+            error,
+            error_code: errorCode ?? "UNKNOWN",
+            error_stage: info?.stage ?? "unknown",
+            error_message: info?.message ?? error,
+            repair: info?.repair ?? null,
+            raw_output_preview: info?.raw_output_preview ?? null,
+            provider_exit_code: info?.provider_exit_code ?? null,
+            attempt: run.blocks[blockId]?.retry_state?.attempt ?? null,
+            max_attempts: run.blocks[blockId]?.retry_state?.max_attempts ?? null,
+            failed_at: new Date().toISOString(),
+            instance: run.blocks[blockId],
+          },
           timestamp: new Date().toISOString(),
         });
       },

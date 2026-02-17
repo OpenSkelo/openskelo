@@ -25,6 +25,15 @@ import type {
 } from "./block.js";
 import type { ProviderAdapter, DispatchRequest, DispatchResult } from "../types.js";
 
+type FailInfo = {
+  code?: string;
+  stage?: "dispatch" | "parse" | "contract" | "gate" | "timeout" | "orphan" | "unknown";
+  message?: string;
+  repair?: { attempted?: boolean; succeeded?: boolean; error_message?: string };
+  raw_output_preview?: string;
+  provider_exit_code?: number;
+};
+
 export interface ExecutorOpts {
   /** Provider adapters keyed by provider name */
   providers: Record<string, ProviderAdapter>;
@@ -39,7 +48,7 @@ export interface ExecutorOpts {
   onBlockComplete?: (run: DAGRun, blockId: string) => void;
 
   /** Called when a block fails */
-  onBlockFail?: (run: DAGRun, blockId: string, error: string, errorCode?: string) => void;
+  onBlockFail?: (run: DAGRun, blockId: string, error: string, errorCode?: string, info?: FailInfo) => void;
 
   /** Called when the entire DAG completes */
   onRunComplete?: (run: DAGRun) => void;
@@ -268,7 +277,8 @@ export function createDAGExecutor(opts: ExecutorOpts) {
             run,
             blockId,
             `${rule.reason ?? "Gate failure reroute"} Bounce ${bounce}/${rule.max_bounces} → rerouting to ${rule.route_to}.`,
-            "GATE_FAIL_REROUTE"
+            "GATE_FAIL_REROUTE",
+            { stage: "gate", message: `${rule.reason ?? "Gate failure reroute"} Bounce ${bounce}/${rule.max_bounces} → rerouting to ${rule.route_to}.` }
           );
           trace.push({
             block_id: blockId,
@@ -286,7 +296,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       }
 
       engine.failBlock(run, blockId, `Pre-gate failed: ${failedPreGate.name} — ${failedPreGate.reason}`, blockDef);
-      opts.onBlockFail?.(run, blockId, failedPreGate.reason ?? "Pre-gate failed", "PRE_GATE_FAILED");
+      opts.onBlockFail?.(run, blockId, failedPreGate.reason ?? "Pre-gate failed", "PRE_GATE_FAILED", { stage: "gate", message: failedPreGate.reason ?? "Pre-gate failed" });
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -304,7 +314,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     // 3. Ensure agent exists
     if (!agent) {
       engine.failBlock(run, blockId, `No agent found for block ${blockId}`, blockDef);
-      opts.onBlockFail?.(run, blockId, "No agent found", "AGENT_NOT_FOUND");
+      opts.onBlockFail?.(run, blockId, "No agent found", "AGENT_NOT_FOUND", { stage: "dispatch", message: "No agent found" });
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -323,7 +333,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const provider = opts.providers[agent.provider];
     if (!provider) {
       engine.failBlock(run, blockId, `Provider not found: ${agent.provider}`, blockDef);
-      opts.onBlockFail?.(run, blockId, `Provider not found: ${agent.provider}`, "PROVIDER_NOT_FOUND");
+      opts.onBlockFail?.(run, blockId, `Provider not found: ${agent.provider}`, "PROVIDER_NOT_FOUND", { stage: "dispatch", message: `Provider not found: ${agent.provider}` });
       return;
     }
 
@@ -356,7 +366,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         return;
       }
       engine.failBlock(run, blockId, error, blockDef);
-      opts.onBlockFail?.(run, blockId, error, "DISPATCH_EXCEPTION");
+      opts.onBlockFail?.(run, blockId, error, "DISPATCH_EXCEPTION", { stage: "dispatch", message: error });
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -377,7 +387,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         return;
       }
       engine.failBlock(run, blockId, dispatchResult.error ?? "Dispatch failed", blockDef);
-      opts.onBlockFail?.(run, blockId, dispatchResult.error ?? "Dispatch failed", "DISPATCH_FAILED");
+      opts.onBlockFail?.(run, blockId, dispatchResult.error ?? "Dispatch failed", "DISPATCH_FAILED", { stage: "dispatch", message: dispatchResult.error ?? "Dispatch failed" });
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -430,7 +440,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         error: err,
       };
       engine.failBlock(run, blockId, err, blockDef);
-      opts.onBlockFail?.(run, blockId, err, "OUTPUT_CONTRACT_FAILED");
+      opts.onBlockFail?.(run, blockId, err, "OUTPUT_CONTRACT_FAILED", { stage: "contract", message: err, repair: { attempted: dispatchResult.repairAttempted ?? false, succeeded: dispatchResult.repairSucceeded ?? false }, raw_output_preview: (dispatchResult.output ?? "").slice(0, 400), });
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -474,7 +484,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     if (failedPostGate) {
       execution.error = `Post-gate failed: ${failedPostGate.name}`;
       engine.failBlock(run, blockId, `Post-gate failed: ${failedPostGate.name} — ${failedPostGate.reason}`, blockDef);
-      opts.onBlockFail?.(run, blockId, failedPostGate.reason ?? "Post-gate failed", "POST_GATE_FAILED");
+      opts.onBlockFail?.(run, blockId, failedPostGate.reason ?? "Post-gate failed", "POST_GATE_FAILED", { stage: "gate", message: failedPostGate.reason ?? "Post-gate failed" });
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,

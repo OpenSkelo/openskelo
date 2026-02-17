@@ -866,6 +866,14 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         latestBlockErrors[event.block_id] = {
           error: event.data?.error || null,
           error_code: event.data?.error_code || null,
+          error_stage: event.data?.error_stage || null,
+          error_message: event.data?.error_message || null,
+          repair: event.data?.repair || null,
+          raw_output_preview: event.data?.raw_output_preview || null,
+          provider_exit_code: event.data?.provider_exit_code || null,
+          attempt: event.data?.attempt || null,
+          max_attempts: event.data?.max_attempts || null,
+          failed_at: event.data?.failed_at || event.timestamp,
           at: event.timestamp,
         };
       }
