@@ -341,11 +341,23 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     }
 
     // By role + capability
-    const candidates = Object.entries(opts.agents).filter(([_, a]) => {
+    let candidates = Object.entries(opts.agents).filter(([_, a]) => {
       if (ref.role && a.role !== ref.role) return false;
       if (ref.capability && !a.capabilities.includes(ref.capability)) return false;
       return true;
     });
+
+    // Fallback: if no exact match, try role-only, then any agent
+    if (candidates.length === 0 && ref.capability) {
+      candidates = Object.entries(opts.agents).filter(([_, a]) => {
+        if (ref.role && a.role !== ref.role) return false;
+        return true;
+      });
+    }
+    if (candidates.length === 0) {
+      // Last resort: pick any available agent
+      candidates = Object.entries(opts.agents);
+    }
 
     if (candidates.length === 0) return null;
 

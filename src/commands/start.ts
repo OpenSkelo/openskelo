@@ -6,6 +6,8 @@ import { createGateEngine } from "../core/gate-engine.js";
 import { createRouter } from "../core/router.js";
 import { createAPI } from "../server/api.js";
 import { createRunEngine } from "../core/run-engine.js";
+import { createDAGAPI } from "../server/dag-api.js";
+import { getDAGDashboardHTML } from "../server/dag-dashboard.js";
 
 export async function startServer(opts: { port: number; dashboard: boolean }) {
   console.log(chalk.hex("#f97316")(`\n🦴 OpenSkelo starting...\n`));
@@ -55,6 +57,17 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   // Start server
   const app = createAPI({ config, taskEngine, gateEngine, router, runEngine });
 
+  // Mount DAG API and dashboard
+  const { resolve: pathResolve } = await import("node:path");
+  const { findConfigFile } = await import("../core/config.js");
+  const configPath = findConfigFile();
+  const projectRoot = configPath ? pathResolve(configPath, "..") : process.cwd();
+  const examplesDir = pathResolve(projectRoot, "examples");
+  const dagAPI = createDAGAPI(config, { examplesDir });
+  app.route("/", dagAPI);
+
+  app.get("/dag", (c) => c.html(getDAGDashboardHTML(config.name, opts.port)));
+
   await startNodeServer(app, opts.port);
 
   console.log();
@@ -64,6 +77,7 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   if (opts.dashboard) {
     console.log(chalk.dim("  Dashboard: ") + `http://localhost:${opts.port}/dashboard`);
   }
+  console.log(chalk.dim("  DAG Runner:") + `http://localhost:${opts.port}/dag`);
   console.log(chalk.dim("  API:       ") + `http://localhost:${opts.port}/api`);
   console.log();
 
