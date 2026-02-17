@@ -565,6 +565,12 @@ function buildBlockPrompt(blockDef: BlockDef, inputs: Record<string, unknown>): 
       lines.push(`- **${key}** (${portDef.type})${portDef.description ? `: ${portDef.description}` : ""}`);
     }
     lines.push("");
+    lines.push("## JSON Shape Example");
+    lines.push("Use this exact top-level key structure (replace placeholder values):");
+    lines.push("```json");
+    lines.push(JSON.stringify(buildOutputTemplate(blockDef), null, 2));
+    lines.push("```");
+    lines.push("");
   }
 
   if (blockDef.post_gates.length > 0) {
@@ -618,7 +624,33 @@ function buildRepairPrompt(blockDef: BlockDef, _rawOutput: string, errors: strin
     `Return ONLY valid JSON (no markdown, no prose).`,
     `Do NOT include explanations or restate instructions.`,
     `Required outputs: ${required}`,
+    `JSON shape example:`,
+    JSON.stringify(buildOutputTemplate(blockDef), null, 2),
   ].join("\n");
+}
+
+function buildOutputTemplate(blockDef: BlockDef): Record<string, unknown> {
+  const template: Record<string, unknown> = {};
+  for (const [key, def] of Object.entries(blockDef.outputs)) {
+    switch (def.type) {
+      case "string":
+      case "file":
+      case "artifact":
+        template[key] = "<string>";
+        break;
+      case "number":
+        template[key] = 0;
+        break;
+      case "boolean":
+        template[key] = true;
+        break;
+      case "json":
+      default:
+        template[key] = { example: true };
+        break;
+    }
+  }
+  return template;
 }
 
 function parseAgentOutputs(blockDef: BlockDef, rawOutput: string): Record<string, unknown> {
