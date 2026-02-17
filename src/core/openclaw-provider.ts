@@ -1,15 +1,15 @@
 /**
  * OpenClaw Provider — dispatches blocks to real OpenClaw agents
- * via sessions_spawn / CLI agent command.
+ * via the openclaw agent CLI (async, non-blocking).
  *
  * Maps block agent roles to OpenClaw agent IDs:
  * - manager → main (Nora)
- * - worker → rei (Tech Lead)
+ * - worker → rei (Tech Lead)  
  * - reviewer → mari (QA)
  * - specialist → rei (fallback)
  */
 
-import { execSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { ProviderAdapter, DispatchRequest, DispatchResult } from "../types.js";
 
 export interface OpenClawProviderOpts {
@@ -17,7 +17,7 @@ export interface OpenClawProviderOpts {
   agentMapping?: Record<string, string>;
   /** Timeout per block in seconds (default: 120) */
   timeoutSeconds?: number;
-  /** Model override (e.g., "minimax/MiniMax-M2.5") */
+  /** Model override */
   model?: string;
   /** Thinking level */
   thinking?: string;
@@ -40,49 +40,34 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
 
     async dispatch(request: DispatchRequest): Promise<DispatchResult> {
       const agentId = resolveAgent(request, agentMap);
-      const startTime = Date.now();
-
-      // Build the prompt for the agent
       const prompt = buildAgentPrompt(request);
 
       try {
-        // Use openclaw agent CLI to dispatch
-        const args: string[] = [
-          "openclaw", "agent",
-          "--agent", agentId,
-          "--message", prompt,
-          "--json",
-          "--timeout", String(timeout),
-        ];
+        const result = await runOpenClawAgent(agentId, prompt, timeout, opts);
 
-        if (opts.thinking) {
-          args.push("--thinking", opts.thinking);
+        if (result.exitCode !== 0) {
+          return {
+            success: false,
+            error: `Agent '${agentId}' exited with code ${result.exitCode}: ${result.stderr.slice(0, 200)}`,
+          };
         }
 
-        const result = execSync(args.join(" "), {
-          timeout: (timeout + 10) * 1000,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-          env: { ...process.env },
-        });
-
         // Parse JSON response
-        const parsed = tryParseJSON(result);
-        const durationMs = Date.now() - startTime;
+        const parsed = tryParseJSON(result.stdout);
 
         if (parsed && parsed.reply) {
           return {
             success: true,
-            output: parsed.reply,
-            sessionId: parsed.sessionKey ?? parsed.sessionId ?? `oc_${Date.now()}`,
-            tokensUsed: parsed.usage?.totalTokens ?? 0,
+            output: parsed.reply as string,
+            sessionId: (parsed.sessionKey ?? parsed.sessionId ?? `oc_${Date.now()}`) as string,
+            tokensUsed: (parsed.usage as Record<string, number>)?.totalTokens ?? 0,
           };
         }
 
-        // Fallback: treat entire stdout as output
+        // Fallback: use raw stdout
         return {
           success: true,
-          output: result.trim(),
+          output: result.stdout.trim(),
           sessionId: `oc_${Date.now()}`,
           tokensUsed: 0,
         };
@@ -98,12 +83,8 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
 
     async healthCheck(): Promise<boolean> {
       try {
-        const result = execSync("openclaw status --json", {
-          timeout: 5000,
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-        return result.includes("ok") || result.includes("running");
+        const result = await runCommand("openclaw", ["status", "--json"], 5);
+        return result.stdout.includes("ok") || result.stdout.includes("running");
       } catch {
         return false;
       }
@@ -111,18 +92,78 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
   };
 }
 
+/**
+ * Run openclaw agent command asynchronously (non-blocking).
+ */
+function runOpenClawAgent(
+  agentId: string,
+  prompt: string,
+  timeoutSec: number,
+  opts: OpenClawProviderOpts
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const args = [
+    "agent",
+    "--agent", agentId,
+    "--message", prompt,
+    "--json",
+    "--timeout", String(timeoutSec),
+  ];
+
+  if (opts.thinking) {
+    args.push("--thinking", opts.thinking);
+  }
+
+  return runCommand("openclaw", args, timeoutSec + 10);
+}
+
+/**
+ * Async wrapper around child_process.spawn.
+ */
+function runCommand(
+  cmd: string,
+  args: string[],
+  timeoutSec: number
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      env: { ...process.env },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let killed = false;
+
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill("SIGKILL");
+      reject(new Error(`Command timed out after ${timeoutSec}s`));
+    }, timeoutSec * 1000);
+
+    child.on("close", (code: number | null) => {
+      clearTimeout(timer);
+      if (!killed) {
+        resolve({ stdout, stderr, exitCode: code ?? 1 });
+      }
+    });
+
+    child.on("error", (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
 function resolveAgent(request: DispatchRequest, agentMap: Record<string, string>): string {
-  // Try specific agent ID first
   if (request.agent?.id && agentMap[request.agent.id]) {
     return agentMap[request.agent.id];
   }
-
-  // Try role mapping
   if (request.agent?.role && agentMap[request.agent.role]) {
     return agentMap[request.agent.role];
   }
-
-  // Fallback to worker
   return agentMap.worker ?? "rei";
 }
 
@@ -170,20 +211,12 @@ function buildAgentPrompt(request: DispatchRequest): string {
 }
 
 function tryParseJSON(str: string): Record<string, unknown> | null {
-  // Try to find JSON in the output (may have other text around it)
   const trimmed = str.trim();
+  try { return JSON.parse(trimmed); } catch { /* not pure JSON */ }
 
-  // Direct parse
-  try {
-    return JSON.parse(trimmed);
-  } catch { /* not pure JSON */ }
-
-  // Find last JSON object in output
   const jsonMatch = trimmed.match(/\{[\s\S]*\}$/);
   if (jsonMatch) {
-    try {
-      return JSON.parse(jsonMatch[0]);
-    } catch { /* not valid */ }
+    try { return JSON.parse(jsonMatch[0]); } catch { /* not valid */ }
   }
 
   return null;
