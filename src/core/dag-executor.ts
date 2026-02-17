@@ -560,7 +560,7 @@ function buildBlockPrompt(blockDef: BlockDef, inputs: Record<string, unknown>): 
 
   if (Object.keys(blockDef.outputs).length > 0) {
     lines.push("## Expected Outputs");
-    lines.push("Respond with a JSON object containing these keys:");
+    lines.push("Respond with ONLY valid JSON (no markdown, no prose) containing these keys:");
     for (const [key, portDef] of Object.entries(blockDef.outputs)) {
       lines.push(`- **${key}** (${portDef.type})${portDef.description ? `: ${portDef.description}` : ""}`);
     }
@@ -606,7 +606,7 @@ function validateOutputContract(blockDef: BlockDef, outputs: Record<string, unkn
   return { ok: errors.length === 0, errors };
 }
 
-function buildRepairPrompt(blockDef: BlockDef, rawOutput: string, errors: string[]): string {
+function buildRepairPrompt(blockDef: BlockDef, _rawOutput: string, errors: string[]): string {
   const required = Object.entries(blockDef.outputs)
     .filter(([_, d]) => d.required !== false)
     .map(([k, d]) => `${k}:${d.type}`)
@@ -616,9 +616,8 @@ function buildRepairPrompt(blockDef: BlockDef, rawOutput: string, errors: string
     `Your previous response failed output contract validation.`,
     `Errors: ${errors.join("; ")}`,
     `Return ONLY valid JSON (no markdown, no prose).`,
+    `Do NOT include explanations or restate instructions.`,
     `Required outputs: ${required}`,
-    `Previous response:`,
-    rawOutput.slice(0, 2000),
   ].join("\n");
 }
 

@@ -269,7 +269,7 @@ function buildAgentPrompt(request: DispatchRequest): string {
   }
 
   lines.push("## Response Format");
-  lines.push("Respond with a JSON object containing your outputs. Wrap it in ```json code fences.");
+  lines.push("Respond with ONLY valid JSON (no markdown, no prose).");
   lines.push("Each key should match the expected output port names from the block definition.");
 
   if (request.bounceCount > 0) {
