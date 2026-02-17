@@ -161,19 +161,19 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     /* ── Block Nodes ── */
     .block-node {
       position: absolute;
-      width: 200px;
+      width: 240px;
       background: var(--surface);
       border: 2px solid var(--border);
       border-radius: 12px;
-      padding: 16px;
+      padding: 12px;
       z-index: 2;
       transition: all 0.5s ease;
-      cursor: default;
+      cursor: pointer;
     }
 
     .block-node.status-pending {
       border-color: var(--border);
-      opacity: 0.6;
+      opacity: 0.9;
     }
 
     .block-node.status-ready {
@@ -213,26 +213,26 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     }
 
     .block-name {
-      font-size: 14px;
+      font-size: 18px;
       font-weight: 600;
-      margin-bottom: 8px;
+      margin-bottom: 4px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
     .block-id {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--text-dim);
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
 
     .block-status {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
@@ -256,15 +256,26 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     }
 
     .block-meta {
-      margin-top: 8px;
+      margin-top: 6px;
       font-size: 11px;
       color: var(--text-dim);
+    }
+
+    .block-insight {
+      margin-top: 6px;
+      font-size: 10px;
+      color: #fca5a5;
+      min-height: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .block-ports {
       margin-top: 8px;
       display: flex;
       justify-content: space-between;
+      gap: 8px;
     }
 
     .port-group {
@@ -274,11 +285,15 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     }
 
     .port {
-      font-size: 9px;
+      font-size: 10px;
       color: var(--text-dim);
-      padding: 1px 4px;
+      padding: 2px 4px;
       border-radius: 3px;
       background: var(--surface2);
+      max-width: 104px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .port.in { border-left: 2px solid var(--cyan); }
@@ -855,9 +870,20 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
           // Update meta
           const metaEl = node.querySelector('.block-meta');
+          const insightEl = node.querySelector('.block-insight');
           if (metaEl && event.data?.instance?.execution) {
             const exec = event.data.instance.execution;
-            metaEl.textContent = exec.duration_ms + 'ms · ' + exec.tokens_in + ' tok';
+            metaEl.textContent = (exec.duration_ms || 0) + 'ms · ' + (exec.tokens_in || 0) + ' tok';
+          }
+          if (insightEl) {
+            if (event.type === 'block:fail') {
+              const code = event?.data?.error_code ? '[' + event.data.error_code + '] ' : '';
+              insightEl.textContent = code + (event?.data?.error || 'Block failed');
+            } else if (event.type === 'block:complete') {
+              insightEl.textContent = 'completed';
+            } else {
+              insightEl.textContent = '';
+            }
           }
         }
 
@@ -885,6 +911,8 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       btn.textContent = '▶ Run DAG';
       document.getElementById('stopBtn').style.display = 'none';
       refreshRunData().then(() => {
+        const failed = Object.entries(currentRunData?.run?.blocks || {}).find(([_, b]) => b.status === 'failed');
+        if (failed) return showInspector(failed[0]);
         const terminal = findTerminalBlockId();
         if (terminal) showInspector(terminal);
       });
@@ -1099,7 +1127,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
       // Compute layout using topological layers
       const layers = computeLayers(dag);
-      const nodeW = 200, nodeH = 120, gapX = 80, gapY = 60;
+      const nodeW = 240, nodeH = 190, gapX = 90, gapY = 70;
       const positions = {};
 
       // Center each layer
@@ -1129,10 +1157,11 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
             '<div class="block-id">' + blockId + '</div>' +
             '<div class="block-status"><span class="status-dot"></span>pending</div>' +
             '<div class="block-assignee" style="font-size:10px;color:var(--text-dim);margin-top:4px">agent: —</div>' +
-            '<div class="block-meta"></div>' +
+            '<div class="block-meta">in:' + inputs.length + ' · out:' + outputs.length + '</div>' +
+            '<div class="block-insight"></div>' +
             '<div class="block-ports">' +
-              '<div class="port-group">' + inputs.map(p => '<div class="port in">← ' + p + '</div>').join('') + '</div>' +
-              '<div class="port-group">' + outputs.map(p => '<div class="port out">' + p + ' →</div>').join('') + '</div>' +
+              '<div class="port-group">' + inputs.map(p => '<div class="port in" title="' + p + '">← ' + p + '</div>').join('') + '</div>' +
+              '<div class="port-group">' + outputs.map(p => '<div class="port out" title="' + p + '">' + p + ' →</div>').join('') + '</div>' +
             '</div>';
 
           node.addEventListener('click', () => showInspector(blockId));
