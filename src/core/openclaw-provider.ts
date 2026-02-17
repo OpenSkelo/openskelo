@@ -47,6 +47,25 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
         console.log(`[openclaw-provider] Agent '${agentId}' finished (exit: ${result.exitCode}, stdout: ${result.stdout.length} bytes, stderr: ${result.stderr.length} bytes)`);
 
         if (result.exitCode !== 0) {
+          const unknownId = /Unknown agent id/i.test(result.stderr);
+          if (unknownId && agentId !== "main") {
+            console.warn(`[openclaw-provider] Unknown agent '${agentId}', retrying on fallback agent 'main'`);
+            const retry = await runOpenClawAgent("main", prompt, timeout, opts, request.abortSignal);
+            if (retry.exitCode === 0) {
+              const parsedRetry = tryParseJSON(retry.stdout);
+              const payloads = (parsedRetry?.result as Record<string, unknown> | undefined)?.payloads as Array<Record<string, unknown>> | undefined;
+              const text = payloads?.[0]?.text as string | undefined;
+              return {
+                success: true,
+                output: text ?? retry.stdout.trim(),
+                sessionId: `oc_${Date.now()}`,
+                tokensUsed: 0,
+                actualAgentId: "main",
+                actualModel: opts.model ?? request.agent.model,
+              };
+            }
+          }
+
           console.error(`[openclaw-provider] Agent '${agentId}' FAILED:`, result.stderr.slice(0, 500));
           return {
             success: false,

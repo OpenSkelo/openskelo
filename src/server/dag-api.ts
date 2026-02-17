@@ -295,8 +295,15 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       return c.json({ error: "Only provider=openclaw is enabled in this build" }, 400);
     }
 
+    const roleDerivedMapping = Object.fromEntries(
+      Object.entries(config.agents).map(([id, a]) => [a.role, id])
+    ) as Record<string, string>;
+
     const provider = createOpenClawProvider({
-      agentMapping: body.agentMapping as Record<string, string> | undefined,
+      agentMapping: {
+        ...roleDerivedMapping,
+        ...(body.agentMapping as Record<string, string> | undefined),
+      },
       timeoutSeconds: Math.min((body.timeoutSeconds as number) ?? 300, Math.ceil(safety.maxBlockDurationMs / 1000)),
       model: (body.model as string | undefined) ?? "openai-codex/gpt-5.3-codex",
       thinking: body.thinking as string | undefined,
