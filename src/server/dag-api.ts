@@ -292,40 +292,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
   });
 
-  // Start a DAG run
-  app.post("/api/dag/run", async (c) => {
-    const body = await c.req.json();
-    const file = body.example as string | undefined;
-    const context = (body.context as Record<string, unknown>) ?? {};
-    const devMode = body.devMode === true || process.env.OPENSKELO_DEV_MODE === "1";
-    if (devMode) context.__dev_auto_approve = true;
-
-    // Iteration/shared-memory scaffold (phase 1)
-    const originalIntent = String((context.prompt ?? context.topic ?? context.request ?? "") as string);
-    if (!context.__shared_memory || typeof context.__shared_memory !== "object") {
-      context.__shared_memory = {
-        original_intent: originalIntent,
-        feedback_history: [],
-        decisions: [],
-      };
-    }
-
-    let dag: DAGDef;
-    try {
-      if (file) {
-        const path = resolve(examplesBaseDir, file);
-        if (!existsSync(path)) return c.json({ error: "Example not found" }, 404);
-        const raw = parseYaml(readFileSync(path, "utf-8"));
-        dag = engine.parseDAG(raw);
-      } else if (body.dag) {
-        dag = engine.parseDAG(body.dag);
-      } else {
-        return c.json({ error: "Provide 'example' filename or 'dag' definition" }, 400);
-      }
-    } catch (err) {
-      return c.json({ error: (err as Error).message }, 400);
-    }
-
+  async function startDagExecution(dag: DAGDef, context: Record<string, unknown>, body: Record<string, unknown>) {
     // Enforce DAG safety caps
     dag.blocks = dag.blocks.map((b) => ({
       ...b,
@@ -347,11 +314,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       };
     }
 
-    // Choose provider: "openclaw" for real agents, "mock" for simulation
     const providerMode = (body.provider as string) ?? "openclaw";
-
     if (providerMode !== "openclaw") {
-      return c.json({ error: "Only provider=openclaw is enabled in this build" }, 400);
+      return { error: "Only provider=openclaw is enabled in this build", status: 400 as const };
     }
 
     const roleDerivedMapping = Object.fromEntries(
@@ -369,14 +334,11 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     });
 
     const providers: Record<string, typeof provider> = {};
-    for (const p of config.providers) {
-      providers[p.name] = provider;
-    }
+    for (const p of config.providers) providers[p.name] = provider;
 
     const runAbortController = new AbortController();
     let runIdRef = "";
 
-    // Create executor with event hooks
     const executor = createDAGExecutor({
       providers,
       agents,
@@ -553,13 +515,54 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       console.error("[dag-api] Run failed:", err);
     });
 
-    return c.json({
+    return {
       run_id: initialRun.id,
       dag_name: dag.name,
       blocks: dag.blocks.map(b => ({ id: b.id, name: b.name })),
       edges: dag.edges,
       sse_url: `/api/dag/runs/${initialRun.id}/events`,
-    }, 201);
+    };
+  }
+
+  // Start a DAG run
+  app.post("/api/dag/run", async (c) => {
+    const body = await c.req.json();
+    const file = body.example as string | undefined;
+    const context = (body.context as Record<string, unknown>) ?? {};
+    const devMode = body.devMode === true || process.env.OPENSKELO_DEV_MODE === "1";
+    if (devMode) context.__dev_auto_approve = true;
+
+    const originalIntent = String((context.prompt ?? context.topic ?? context.request ?? "") as string);
+    if (!context.__shared_memory || typeof context.__shared_memory !== "object") {
+      context.__shared_memory = { original_intent: originalIntent, feedback_history: [], decisions: [] };
+    }
+    context.__run_options = {
+      provider: (body.provider as string) ?? "openclaw",
+      agentMapping: body.agentMapping,
+      timeoutSeconds: body.timeoutSeconds,
+      model: body.model,
+      thinking: body.thinking,
+    };
+
+    let dag: DAGDef;
+    try {
+      if (file) {
+        const path = resolve(examplesBaseDir, file);
+        if (!existsSync(path)) return c.json({ error: "Example not found" }, 404);
+        const raw = parseYaml(readFileSync(path, "utf-8"));
+        dag = engine.parseDAG(raw);
+      } else if (body.dag) {
+        dag = engine.parseDAG(body.dag);
+      } else {
+        return c.json({ error: "Provide 'example' filename or 'dag' definition" }, 400);
+      }
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+
+    const started = await startDagExecution(dag, context, body as Record<string, unknown>);
+    if ((started as { error?: string }).error) return c.json({ error: (started as { error: string }).error }, (started as { status?: number }).status ?? 400);
+    return c.json(started, 201);
   });
 
   // Get run status
@@ -672,10 +675,21 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     if (decision === "approve") {
       entry.run.context[`__approval_${blockId}`] = true;
       entry.run.status = "running";
-    } else {
-      entry.run.status = "failed";
+      persistRunSnapshot(entry);
+
+      broadcast(entry.run.id, {
+        type: "approval:decided",
+        run_id: entry.run.id,
+        block_id: blockId,
+        data: { decision, notes, feedback, restart_mode: restartMode },
+        timestamp: new Date().toISOString(),
+      });
+
+      return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status } };
     }
 
+    // Reject path: fail current run; optionally spawn next cycle (phase 2)
+    entry.run.status = "failed";
     persistRunSnapshot(entry);
 
     broadcast(entry.run.id, {
@@ -686,7 +700,46 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       timestamp: new Date().toISOString(),
     });
 
-    return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status } };
+    const shouldIterate = body.iterate !== false;
+    if (!shouldIterate) {
+      return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status } };
+    }
+
+    const nextContext = { ...(entry.run.context as Record<string, unknown>) };
+    const shared2 = (nextContext.__shared_memory as Record<string, unknown> | undefined) ?? {};
+    const cycle = Number(shared2.cycle ?? 0) + 1;
+    const maxCycles = Number(shared2.max_cycles ?? 5);
+    shared2.cycle = cycle;
+    shared2.max_cycles = maxCycles;
+    nextContext.__shared_memory = shared2;
+
+    if (cycle > maxCycles) {
+      return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status, iteration_stopped: "max_cycles_reached" } };
+    }
+
+    if (restartMode === "from_scratch") {
+      const original = String((shared2.original_intent ?? nextContext.prompt ?? "") as string);
+      nextContext.prompt = original;
+    }
+    nextContext.__latest_feedback = feedback;
+
+    const runOpts = (nextContext.__run_options as Record<string, unknown> | undefined) ?? {};
+    const started = await startDagExecution(entry.dag, nextContext, runOpts);
+    if ((started as { error?: string }).error) {
+      return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status, iteration_error: (started as { error: string }).error } };
+    }
+
+    return {
+      status: 200 as const,
+      payload: {
+        ok: true,
+        decision,
+        feedback,
+        restart_mode: restartMode,
+        run_status: entry.run.status,
+        iterated_run_id: (started as { run_id: string }).run_id,
+      },
+    };
   }
 
   // Approve/reject pending human approval gate (tokened)
