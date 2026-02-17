@@ -525,6 +525,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     let livePoll = null;
     let pendingApproval = null;
     let staleRunDetected = false;
+    let latestBlockErrors = {};
     let lastSseEventAt = 0;
     let sseWatchdog = null;
 
@@ -687,6 +688,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         document.getElementById('stopBtn').style.display = 'inline-block';
 
       // Reset UI
+      latestBlockErrors = {};
       document.getElementById('eventLog').innerHTML = '';
       document.getElementById('networkLog').innerHTML = '';
       if (LIVE_MODE) {
@@ -795,6 +797,14 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         document.getElementById('approvalPanel').style.display = 'block';
         document.getElementById('approvalText').textContent = (event.data.prompt || 'Approval needed') + ' [' + (event.block_id || '') + ']';
       }
+
+      if (event.type === 'block:fail' && event.block_id) {
+        latestBlockErrors[event.block_id] = {
+          error: event.data?.error || null,
+          error_code: event.data?.error_code || null,
+          at: event.timestamp,
+        };
+      }
       if (event.type === 'approval:decided') {
         pendingApproval = null;
         document.getElementById('approvalPanel').style.display = 'none';
@@ -887,8 +897,9 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
       const time = new Date(event.timestamp).toLocaleTimeString();
       const blockLabel = event.block_id ? ' [' + event.block_id + ']' : '';
+      const code = event?.data?.error_code ? (' (' + event.data.error_code + ')') : '';
       entry.innerHTML = '<span class="event-time">' + time + '</span> ' +
-        (icons[event.type] ?? '·') + ' ' + event.type + blockLabel;
+        (icons[event.type] ?? '·') + ' ' + event.type + blockLabel + code;
 
       log.insertBefore(entry, log.firstChild);
     }
@@ -920,6 +931,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         execution: block.execution,
         pre_gates: block.pre_gate_results,
         post_gates: block.post_gate_results,
+        failure: latestBlockErrors[blockId] || null,
       };
       document.getElementById('inspectorJson').textContent = JSON.stringify(details, null, 2);
 
