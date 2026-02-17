@@ -61,6 +61,8 @@ npx openskelo start
 
 ### 1. Define your pipeline in `skelo.yaml`
 
+> Note: names like `coder` and `reviewer` below are example labels only. You can name agents anything.
+
 ```yaml
 name: my-pipeline
 

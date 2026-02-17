@@ -237,6 +237,8 @@ Finds the right agent for a stage:
 3. Pick agent with lowest load
 4. Exclude busy agents (at `max_concurrent`)
 
+> Note: agent IDs in examples (e.g., `coder`, `reviewer`) are template labels, not platform requirements.
+
 ---
 
 ## Pipeline Stages
@@ -390,8 +392,8 @@ The `DONE` block output always includes:
 ## Current Demo State
 
 The demo at `localhost:4040` has:
-- **2 agents**: coder (worker), reviewer (reviewer)  
-- **1 pipeline**: "coding"
+- **2 example agents**: `coder` (worker), `reviewer` (reviewer)
+- **1 example pipeline**: "coding"
 - **4 gates**:
   1. `needs-assignee` — PENDING→IN_PROGRESS requires "assigned" field
   2. `structured-feedback` — REVIEW→IN_PROGRESS requires "WHAT:", "WHERE:", "FIX:" in notes
@@ -417,9 +419,9 @@ The engine currently:
   4. Returns result for REVIEW
 
 **Dashboard should show:**
-- What Nora planned (context, acceptance criteria)
-- What Rei is building (real-time output from agent)
-- What Mari reviewed (gate results, feedback)
+- What was planned (context, acceptance criteria)
+- What is being executed (real-time output from assigned agent)
+- What was reviewed (gate results, feedback)
 - Live preview (artifact from agent output)
 
 ---
