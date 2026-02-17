@@ -67,6 +67,27 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       display: flex;
       gap: 12px;
       align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .topic-input {
+      width: 420px;
+      max-width: 100%;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+    }
+
+    .run-actions {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      margin-left: auto;
     }
 
     select, button {
@@ -421,6 +442,26 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       width: 80px;
       accent-color: var(--accent);
     }
+
+    @media (max-width: 1100px) {
+      .header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+      }
+      .controls {
+        justify-content: flex-start;
+      }
+      .topic-input {
+        flex: 1 1 100%;
+        min-width: 220px;
+      }
+      .run-actions {
+        margin-left: 0;
+        position: sticky;
+        right: 0;
+      }
+    }
   </style>
 </head>
 <body>
@@ -439,7 +480,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       <select id="providerSelect" disabled>
         <option value="openclaw">🦞 OpenClaw (real agents)</option>
       </select>
-      <input id="topicInput" placeholder="Enter pipeline input (e.g., research about cats vs dogs)" style="width:420px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:inherit;font-size:12px" />
+      <input id="topicInput" class="topic-input" placeholder="Enter pipeline input (e.g., research about cats vs dogs)" />
       <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:6px"><input type="checkbox" id="devModeToggle" /> dev mode</label>
       <label style="font-size:11px;color:var(--text-dim)">filter
         <select id="viewFilter" style="margin-left:4px;padding:4px 6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:11px">
@@ -455,8 +496,10 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         <button id="zoomInBtn" style="padding:4px 8px">＋</button>
         <button id="zoomFitBtn" style="padding:4px 8px">Fit</button>
       </div>
-      <button class="primary" id="runBtn" disabled>▶ Run DAG</button>
-      <button id="stopBtn" style="display:none;background:var(--red);border-color:var(--red);color:white;font-weight:600">■ Stop</button>
+      <div class="run-actions">
+        <button class="primary" id="runBtn" disabled>▶ Run DAG</button>
+        <button id="stopBtn" style="display:none;background:var(--red);border-color:var(--red);color:white;font-weight:600">■ Stop</button>
+      </div>
     </div>
   </div>
 
@@ -611,6 +654,13 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
     document.getElementById('runBtn').addEventListener('click', runDAG);
     document.getElementById('stopBtn').addEventListener('click', stopDAG);
+    document.getElementById('topicInput').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const runBtn = document.getElementById('runBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      if (!runBtn.disabled && stopBtn.style.display === 'none') runDAG();
+    });
     document.getElementById('approveBtn').addEventListener('click', () => decideApproval('approve'));
     document.getElementById('rejectBtn').addEventListener('click', () => decideApproval('reject'));
     document.getElementById('copyInspectorBtn').addEventListener('click', copyInspectorJson);
