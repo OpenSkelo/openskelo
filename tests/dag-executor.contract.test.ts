@@ -41,6 +41,49 @@ const agents = {
   worker: { role: "worker", capabilities: ["coding"], provider: "local", model: "test-model" },
 };
 
+const chainDag: DAGDef = {
+  name: "contract-chain-test",
+  blocks: [
+    {
+      id: "spec",
+      name: "Spec",
+      inputs: { prompt: { type: "string", required: true } },
+      outputs: {
+        game_spec: { type: "json", required: true },
+        dev_plan: { type: "string", required: true },
+      },
+      agent: { role: "worker" },
+      pre_gates: [],
+      post_gates: [],
+      retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+      contract_repair_attempts: 2,
+    },
+    {
+      id: "build",
+      name: "Build",
+      inputs: {
+        game_spec: { type: "json", required: true },
+        dev_plan: { type: "string", required: true },
+      },
+      outputs: {
+        artifact_html: { type: "artifact", required: true },
+        branch: { type: "string", required: true },
+        changelog: { type: "string", required: true },
+      },
+      agent: { role: "worker" },
+      pre_gates: [],
+      post_gates: [],
+      retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+    },
+  ],
+  edges: [
+    { from: "spec", output: "game_spec", to: "build", input: "game_spec" },
+    { from: "spec", output: "dev_plan", to: "build", input: "dev_plan" },
+  ],
+  entrypoints: ["spec"],
+  terminals: ["build"],
+};
+
 describe("DAG executor output contract", () => {
   it("fails when required outputs are missing", async () => {
     const provider = makeProvider(() => ({ success: true, output: JSON.stringify({ game_spec: { ok: true } }) }));
@@ -85,5 +128,33 @@ describe("DAG executor output contract", () => {
 
     expect(run.status).toBe("completed");
     expect(run.blocks.spec.outputs.dev_plan).toBe("ship it");
+  });
+
+  it("continues from spec to build across repeated runs", async () => {
+    for (let i = 0; i < 5; i++) {
+      let call = 0;
+      const provider: ProviderAdapter = {
+        name: "test",
+        type: "test",
+        async dispatch(req: DispatchRequest) {
+          call++;
+          if (req.title === "Spec") {
+            if (call % 2 === 1) return { success: true, output: JSON.stringify({ game_spec: { ok: true } }) };
+            return { success: true, output: JSON.stringify({ game_spec: { ok: true }, dev_plan: "build now" }) };
+          }
+          return {
+            success: true,
+            output: JSON.stringify({ artifact_html: "<html></html>", branch: "feature/test", changelog: "ok" }),
+          };
+        },
+      };
+
+      const ex = createDAGExecutor({ providers: { local: provider }, agents });
+      const { run } = await ex.execute(chainDag, { prompt: "doom clone" });
+      expect(run.status).toBe("completed");
+      expect(run.blocks.spec.status).toBe("completed");
+      expect(run.blocks.build.status).toBe("completed");
+      expect(run.blocks.build.outputs.artifact_html).toContain("<html>");
+    }
   });
 });

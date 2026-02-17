@@ -27,7 +27,7 @@ import type { ProviderAdapter, DispatchRequest, DispatchResult } from "../types.
 
 type FailInfo = {
   code?: string;
-  stage?: "dispatch" | "parse" | "contract" | "gate" | "timeout" | "orphan" | "unknown";
+  stage?: "dispatch" | "parse" | "contract" | "gate" | "handoff" | "timeout" | "orphan" | "unknown";
   message?: string;
   repair?: { attempted?: boolean; succeeded?: boolean; error_message?: string };
   raw_output_preview?: string;
@@ -542,6 +542,31 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     // 7. Complete block
     engine.completeBlock(run, blockId, outputs, execution);
+
+    // 7.5 Handoff readiness check: ensure downstream required inputs remain satisfiable
+    const handoff = evaluateDownstreamSatisfiable(dag, run, blockId);
+    if (!handoff.ok) {
+      const err = `Handoff unsatisfied: ${handoff.errors.join('; ')}`;
+      run.status = "failed";
+      opts.onBlockFail?.(run, blockId, err, "HANDOFF_UNSATISFIABLE", {
+        stage: "handoff",
+        message: err,
+      });
+      opts.onRunFail?.(run);
+      trace.push({
+        block_id: blockId,
+        instance_id: run.blocks[blockId].instance_id,
+        status: "failed",
+        inputs,
+        outputs,
+        pre_gates: preGates,
+        post_gates: postGates,
+        execution: { ...execution, error: err },
+        duration_ms: durationMs,
+      });
+      return;
+    }
+
     // successful completion; bounce counters can remain for audit context
     opts.onBlockComplete?.(run, blockId);
 
@@ -603,6 +628,53 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 }
 
 // ── Helpers ──
+
+function evaluateDownstreamSatisfiable(dag: DAGDef, run: DAGRun, fromBlockId: string): { ok: boolean; errors: string[] } {
+  const errors: string[] = [];
+  const outgoing = dag.edges.filter(e => e.from === fromBlockId);
+  const downstreamIds = [...new Set(outgoing.map(e => e.to))];
+
+  for (const downId of downstreamIds) {
+    const downDef = dag.blocks.find(b => b.id === downId);
+    if (!downDef) continue;
+
+    for (const [portName, portDef] of Object.entries(downDef.inputs)) {
+      if (portDef.required === false) continue;
+
+      // default value or context can satisfy required input
+      if (Object.prototype.hasOwnProperty.call(portDef, "default")) continue;
+      if (Object.prototype.hasOwnProperty.call(run.context, portName)) continue;
+
+      const sourceEdges = dag.edges.filter(e => e.to === downId && e.input === portName);
+      if (sourceEdges.length === 0) {
+        errors.push(`${downId}.${portName} has no source/default/context`);
+        continue;
+      }
+
+      let satisfiable = false;
+      for (const edge of sourceEdges) {
+        const sourceInst = run.blocks[edge.from];
+        if (!sourceInst) continue;
+
+        if (sourceInst.status === "completed" && Object.prototype.hasOwnProperty.call(sourceInst.outputs, edge.output)) {
+          satisfiable = true;
+          break;
+        }
+
+        if (["pending", "ready", "running", "retrying"].includes(sourceInst.status)) {
+          satisfiable = true;
+          break;
+        }
+      }
+
+      if (!satisfiable) {
+        errors.push(`${downId}.${portName} unsatisfied (all sources terminal/missing)`);
+      }
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
 
 function buildBlockPrompt(blockDef: BlockDef, inputs: Record<string, unknown>): string {
   const lines: string[] = [];
