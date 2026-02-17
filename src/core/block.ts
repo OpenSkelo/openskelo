@@ -214,6 +214,12 @@ export interface BlockInstance {
   /** Execution metadata */
   execution: BlockExecution | null;
 
+  /** Assigned worker for this block run (set when scheduler routes it) */
+  active_agent_id?: string;
+  active_model?: string;
+  active_provider?: string;
+  active_schema_guided?: boolean;
+
   /** Retry state */
   retry_state: RetryState;
 
@@ -353,6 +359,9 @@ export function createBlockEngine() {
         pre_gate_results: [],
         post_gate_results: [],
         execution: null,
+        active_agent_id: undefined,
+        active_model: undefined,
+        active_provider: undefined,
         retry_state: {
           attempt: 0,
           max_attempts: blockDef.retry.max_attempts,

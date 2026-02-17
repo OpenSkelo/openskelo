@@ -344,6 +344,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         model: agent.model,
       },
     };
+    run.blocks[blockId].active_schema_guided = !!dispatchRequest.outputSchema;
 
     let dispatchResult: DispatchResult;
     try {

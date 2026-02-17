@@ -951,6 +951,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         active_agent_id: block.active_agent_id,
         active_model: block.active_model,
         active_provider: block.active_provider,
+        schema_guided_mode: block.active_schema_guided === true,
         inputs: block.inputs,
         outputs: block.outputs,
         execution: block.execution,
