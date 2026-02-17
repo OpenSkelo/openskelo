@@ -788,7 +788,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
             await refreshRunData();
             if (LIVE_MODE) focusActiveBlock();
           }, 2000);
-          addEventLog({ type: 'run:fail', run_id: currentRunId, data: { status: 'SSE stale, fallback polling enabled' }, timestamp: new Date().toISOString() });
+          addEventLog({ type: 'transport:warn', run_id: currentRunId, data: { status: 'SSE stale, fallback polling enabled' }, timestamp: new Date().toISOString() });
         }
       }, 1500);
 
@@ -916,7 +916,8 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
       const icons = {
         'run:start': '🚀', 'block:start': '⚡', 'block:complete': '✅',
-        'block:fail': '❌', 'run:complete': '🎉', 'run:fail': '💥'
+        'block:fail': '❌', 'run:complete': '🎉', 'run:fail': '💥',
+        'transport:warn': '⚠️'
       };
 
       const time = new Date(event.timestamp).toLocaleTimeString();
