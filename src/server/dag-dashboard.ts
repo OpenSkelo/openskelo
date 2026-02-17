@@ -1187,6 +1187,39 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         const res = await apiFetch(API + '/api/dag/runs/' + currentRunId);
         if (!res.ok) return;
         currentRunData = await res.json();
+
+        // Snapshot truth sync (for SSE drops or reconnect gaps)
+        const run = currentRunData?.run;
+        if (run?.status) {
+          document.getElementById('runStatus').textContent = run.status;
+          Object.entries(run.blocks || {}).forEach(([id, b]) => {
+            const node = document.getElementById('block-' + id);
+            if (!node) return;
+            node.className = 'block-node status-' + (b.status || 'pending');
+            const statusEl = node.querySelector('.block-status');
+            if (statusEl) statusEl.innerHTML = '<span class="status-dot"></span>' + (b.status || 'pending');
+            const assignEl = node.querySelector('.block-assignee');
+            if (assignEl) {
+              const aid = b?.execution?.agent_id || b?.active_agent_id;
+              const mdl = b?.execution?.model || b?.active_model;
+              assignEl.textContent = 'agent: ' + (aid || '—') + (mdl ? ' · ' + mdl : '');
+            }
+          });
+          updateStats();
+          applyViewFilter();
+
+          if (run.status === 'failed' || run.status === 'completed' || run.status === 'cancelled') {
+            const btn = document.getElementById('runBtn');
+            btn.disabled = false;
+            btn.textContent = '▶ Run DAG';
+            document.getElementById('stopBtn').style.display = 'none';
+            if (eventSource) { eventSource.close(); eventSource = null; }
+            if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
+            if (livePoll) { clearInterval(livePoll); livePoll = null; }
+            clearInterval(elapsedInterval);
+          }
+        }
+
         if (currentRunData.approval && currentRunData.approval.status === 'pending') {
           pendingApproval = currentRunData.approval;
           document.getElementById('approvalPanel').style.display = 'block';
