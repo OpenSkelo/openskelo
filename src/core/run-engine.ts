@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { nanoid } from "nanoid";
 import { getDB } from "./db.js";
 import type {
@@ -165,6 +167,7 @@ export function createRunEngine() {
     }
 
     const output = buildOutput(run, next, mergedContext);
+    persistArtifact(output.artifact_path, output.artifact_preview);
     const transition = `${run.current_block}->${next}`;
     const stepCountRow = getStepCountStmt.get(run.id) as { count?: number } | undefined;
     const stepIndex = Number(stepCountRow?.count ?? 0) + 1;
@@ -214,12 +217,29 @@ export function createRunEngine() {
     return { ok: true, run: getRun(runId)! };
   }
 
-  function getArtifact(runId: string): { artifact_path: string | null; preview: string | null } | null {
+  function getArtifact(runId: string): {
+    artifact_path: string | null;
+    preview: string | null;
+    file_path: string | null;
+    persisted: boolean;
+  } | null {
     const run = getRun(runId);
     if (!run) return null;
+    const filePath = run.artifact_path ? resolve(process.cwd(), ".skelo", trimLeadingSlash(run.artifact_path)) : null;
     return {
       artifact_path: run.artifact_path,
       preview: run.artifact_preview,
+      file_path: filePath,
+      persisted: filePath ? existsSync(filePath) : false,
+    };
+  }
+
+  function getArtifactContent(runId: string): { content: string; file_path: string } | null {
+    const artifact = getArtifact(runId);
+    if (!artifact?.file_path || !existsSync(artifact.file_path)) return null;
+    return {
+      content: readFileSync(artifact.file_path, "utf8"),
+      file_path: artifact.file_path,
     };
   }
 
@@ -246,7 +266,18 @@ export function createRunEngine() {
     insertEventStmt.run(nanoid(), runId, block, transition, result, JSON.stringify(details));
   }
 
-  return { createRun, getRun, step, getArtifact, setContext, getEvents, listSteps };
+  return { createRun, getRun, step, getArtifact, getArtifactContent, setContext, getEvents, listSteps };
+}
+
+function persistArtifact(artifactPath: string | null, preview: string | null): void {
+  if (!artifactPath || !preview) return;
+  const diskPath = resolve(process.cwd(), ".skelo", trimLeadingSlash(artifactPath));
+  mkdirSync(dirname(diskPath), { recursive: true });
+  writeFileSync(diskPath, preview, "utf8");
+}
+
+function trimLeadingSlash(value: string): string {
+  return value.startsWith("/") ? value.slice(1) : value;
 }
 
 function evaluateGate(

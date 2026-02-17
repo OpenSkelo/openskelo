@@ -205,6 +205,8 @@ Each executed transition is also persisted as a first-class `run_step` record wi
 - `context_snapshot`, `timestamp`
 - artifact metadata for that step
 
+Artifacts are now persisted to local disk under `.skelo/artifacts/...` (derived from `artifact_path`), making UI preview/read APIs observer-only against real local files.
+
 The `DONE` block output always includes:
 - `"what else can we improve on this?"`
 - the original prompt
@@ -217,7 +219,8 @@ The `DONE` block output always includes:
 - `POST /api/runs/:id/step` — deterministic single-step transition
 - `GET /api/runs/:id/context` — get shared context
 - `POST /api/runs/:id/context` — patch shared context
-- `GET /api/runs/:id/artifact` — latest artifact path + preview payload
+- `GET /api/runs/:id/artifact` — latest artifact path + preview payload + local persistence metadata
+- `GET /api/runs/:id/artifact/content` — raw artifact HTML from local disk
 
 ---
 

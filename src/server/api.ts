@@ -224,6 +224,12 @@ export function createAPI(ctx: APIContext) {
     return c.json(artifact);
   });
 
+  app.get("/api/runs/:id/artifact/content", (c) => {
+    const artifact = runEngine.getArtifactContent(c.req.param("id"));
+    if (!artifact) return c.json({ error: "Artifact not found" }, 404);
+    return c.text(artifact.content, 200, { "Content-Type": "text/html; charset=utf-8" });
+  });
+
   if (config.dashboard.enabled) {
     app.get("/dashboard", (c) => c.html(getDashboardHTML(config.name, config.dashboard.port)));
     app.get("/", (c) => c.redirect("/dashboard"));
