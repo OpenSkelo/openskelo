@@ -113,6 +113,7 @@ export interface DispatchRequest {
   acceptanceCriteria: string[];
   previousNotes?: string;
   bounceCount: number;
+  outputSchema?: Record<string, unknown>;
   abortSignal?: AbortSignal;
   isCancelled?: () => boolean;
   agent: {

@@ -272,6 +272,15 @@ function buildAgentPrompt(request: DispatchRequest): string {
   lines.push("Respond with ONLY valid JSON (no markdown, no prose).");
   lines.push("Each key should match the expected output port names from the block definition.");
 
+  if (request.outputSchema) {
+    lines.push("");
+    lines.push("## Output Schema (strict)");
+    lines.push("Your JSON must satisfy this schema:");
+    lines.push("```json");
+    lines.push(JSON.stringify(request.outputSchema, null, 2));
+    lines.push("```");
+  }
+
   if (request.bounceCount > 0) {
     lines.push("");
     lines.push(`⚠️ This is retry attempt ${request.bounceCount + 1}. Previous attempt failed.`);

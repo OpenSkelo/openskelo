@@ -335,6 +335,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       context: inputs,
       acceptanceCriteria: blockDef.post_gates.map(g => g.error),
       bounceCount: run.blocks[blockId].retry_state.attempt - 1,
+      outputSchema: buildOutputJsonSchema(blockDef),
       abortSignal: opts.abortSignal,
       isCancelled: opts.isCancelled,
       agent: {
@@ -651,6 +652,31 @@ function buildOutputTemplate(blockDef: BlockDef): Record<string, unknown> {
     }
   }
   return template;
+}
+
+function buildOutputJsonSchema(blockDef: BlockDef): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+
+  for (const [key, def] of Object.entries(blockDef.outputs)) {
+    if (def.required !== false) required.push(key);
+    const type =
+      def.type === "string" || def.type === "file" || def.type === "artifact"
+        ? "string"
+        : def.type === "number"
+        ? "number"
+        : def.type === "boolean"
+        ? "boolean"
+        : "object";
+    properties[key] = { type, description: def.description ?? "" };
+  }
+
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties,
+    required,
+  };
 }
 
 function parseAgentOutputs(blockDef: BlockDef, rawOutput: string): Record<string, unknown> {
