@@ -154,6 +154,10 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       filter: drop-shadow(0 0 4px var(--green-glow));
     }
 
+    svg.edges path.dimmed {
+      opacity: 0.15;
+    }
+
     svg.edges marker path {
       fill: var(--border);
     }
@@ -448,6 +452,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         <button id="zoomOutBtn" style="padding:4px 8px">−</button>
         <button id="zoomResetBtn" style="padding:4px 8px">100%</button>
         <button id="zoomInBtn" style="padding:4px 8px">＋</button>
+        <button id="zoomFitBtn" style="padding:4px 8px">Fit</button>
       </div>
       <button class="primary" id="runBtn" disabled>▶ Run DAG</button>
       <button id="stopBtn" style="display:none;background:var(--red);border-color:var(--red);color:white;font-weight:600">■ Stop</button>
@@ -612,6 +617,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     document.getElementById('zoomInBtn').addEventListener('click', () => setDagZoom(dagZoom + 0.1));
     document.getElementById('zoomOutBtn').addEventListener('click', () => setDagZoom(dagZoom - 0.1));
     document.getElementById('zoomResetBtn').addEventListener('click', () => setDagZoom(1));
+    document.getElementById('zoomFitBtn').addEventListener('click', fitDagToView);
 
     // OpenClaw-only mode for now (no mock toggle)
 
@@ -964,6 +970,18 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       if (reset) reset.textContent = Math.round(dagZoom * 100) + '%';
     }
 
+    function fitDagToView() {
+      const pane = document.getElementById('dagCanvas');
+      const container = document.getElementById('dagContainer');
+      if (!pane || !container) return;
+      const pw = pane.clientWidth - 40;
+      const ph = pane.clientHeight - 40;
+      const cw = container.scrollWidth || 1;
+      const ch = container.scrollHeight || 1;
+      const scale = Math.min(1.6, Math.max(0.6, Math.min(pw / cw, ph / ch)));
+      setDagZoom(scale);
+    }
+
     function applyViewFilter() {
       const nodes = document.querySelectorAll('.block-node');
       nodes.forEach((n) => {
@@ -971,6 +989,16 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         const isFailed = n.classList.contains('status-failed');
         const show = currentFilter === 'all' || (currentFilter === 'active' && isRunning) || (currentFilter === 'failed' && isFailed);
         n.style.display = show ? 'block' : 'none';
+      });
+
+      const edges = document.querySelectorAll('svg.edges path');
+      edges.forEach((p) => {
+        const from = p.dataset.from;
+        const to = p.dataset.to;
+        const fromNode = document.getElementById('block-' + from);
+        const toNode = document.getElementById('block-' + to);
+        const visible = fromNode && toNode && fromNode.style.display !== 'none' && toNode.style.display !== 'none';
+        p.classList.toggle('dimmed', !visible);
       });
     }
 
