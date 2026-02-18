@@ -2,7 +2,6 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { initProject } from "./commands/init.js";
 import { startServer } from "./commands/start.js";
-import { taskCommands } from "./commands/task.js";
 import { statusCommand } from "./commands/status.js";
 import { runCommands } from "./commands/run.js";
 
@@ -47,16 +46,7 @@ program
     });
   });
 
-// ── legacy task (visible deprecation path) ──
-const legacy = program
-  .command("legacy")
-  .description("Legacy surfaces scheduled for removal next release");
-
-const legacyTask = legacy
-  .command("task")
-  .description("[legacy-deprecated] Manage pipeline tasks");
-
-taskCommands(legacyTask);
+// legacy task commands removed in hard-cut phase
 
 // ── status ──
 program

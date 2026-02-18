@@ -29,7 +29,7 @@ OpenSkelo is different. It's not another agent framework — it's the **skeleton
 ## Runtime Status (Important)
 
 - ✅ **Canonical runtime:** `/api/dag/*` (DAG engine, approvals, replay, durability)
-- ⚠️ **Legacy surface (`task` CLI + `/api/tasks*`):** deprecated and scheduled for removal in the next release
+- ✅ **Legacy surface removed from CLI default path**; migration targets DAG runtime APIs/commands
 
 ## Quick Start
 
@@ -116,34 +116,7 @@ gates:
     error: "Provide evidence of completion"
 ```
 
-### 2. Legacy task flow (deprecated)
-
-> This flow is still available for one release window, but new builds should use DAG run APIs (`/api/dag/*`).
-
-```bash
-# Create a task
-skelo task create --pipeline coding --title "Add auth middleware" --assign coder
-
-# Check status
-skelo status
-
-# View task detail
-skelo task show TASK-001
-
-# Update status (gates enforce quality)
-skelo task update TASK-001 --status REVIEW --notes "Ready for review"
-
-# Try a bad bounce (gate rejects it!)
-skelo task update TASK-001 --status IN_PROGRESS --notes "bad"
-# ✗ Gate 'structured-feedback' failed: notes missing: WHAT:, WHERE:, FIX:
-
-# Proper bounce (gate passes)
-skelo task update TASK-001 --status IN_PROGRESS \
-  --notes "WHAT: Missing error handler WHERE: auth.ts:42 FIX: Add try/catch"
-# ✓ TASK-001: REVIEW → IN_PROGRESS
-```
-
-### 3. Blocks are the core building unit
+### 2. Blocks are the core building unit
 
 A **block** is a single step in your workflow DAG.
 
@@ -246,10 +219,6 @@ skelo run status <runId>       # DAG run status
 skelo run approve <runId>      # Approve pending gate
 skelo run reject <runId> --feedback "..."   # Reject pending gate
 skelo run stop <runId>         # Stop a run
-skelo legacy task create       # Legacy-deprecated (explicit namespace)
-skelo legacy task list         # Legacy-deprecated (explicit namespace)
-skelo legacy task show <id>    # Legacy-deprecated (explicit namespace)
-skelo legacy task update <id>  # Legacy-deprecated (explicit namespace)
 skelo agents                   # List registered agents
 skelo gates                    # List pipeline gates
 skelo logs                     # Stream audit log

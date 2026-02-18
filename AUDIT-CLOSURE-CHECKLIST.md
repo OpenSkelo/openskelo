@@ -124,6 +124,7 @@ Legend:
 1. Legacy hard cut (remove legacy task engine/routes/db usage)
    - Plan committed: `LEGACY-HARD-CUT-PLAN.md`
    - Slice A started: DAG-first API startup path no longer requires task engine wiring
+   - Slice B started: legacy task CLI namespace removed from command surface
 2. Remove hardcoded Telegram target default
 3. Regex ReDoS hardening
 4. YAML line/column diagnostics
