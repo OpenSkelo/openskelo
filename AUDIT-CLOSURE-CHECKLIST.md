@@ -95,7 +95,8 @@ Legend:
   - Proof: `66738d3`
 - [x] Legacy commands moved under explicit namespace (`skelo legacy task ...`)
   - Proof: `53b0710`
-- [ ] DAG-only template verification and cleanup
+- [x] DAG-only template verification and cleanup (example corpus parse test + legacy-key guardrails)
+  - Proof: `pending-commit`
 - [~] YAML line/column diagnostics (parse errors now include file:line:col); typo hints added for unknown block/port edge references
 
 ## 10) Testing & QA
