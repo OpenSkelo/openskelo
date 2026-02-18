@@ -82,6 +82,7 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
     explainer: "generic-block-explainer.html",
     architecture: "full-stack-architecture.html",
     roadmap: "visual-roadmap.html",
+    status: "status-checklist.html",
   };
 
   const serveDoc = async (name: string) => {
@@ -104,13 +105,21 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   app.get("/doc", (c) => c.redirect("/doc/visualizer"));
 
   app.get("/docs/:name", async (c) => {
-    const html = await serveDoc(c.req.param("name"));
+    const name = c.req.param("name");
+    if (name in docsAliases && name !== "visualizer") {
+      return c.redirect(`/doc/visualizer?tab=${encodeURIComponent(name)}`);
+    }
+    const html = await serveDoc(name);
     if (!html) return c.text("Not found", 404);
     return c.html(html);
   });
 
   app.get("/doc/:name", async (c) => {
-    const html = await serveDoc(c.req.param("name"));
+    const name = c.req.param("name");
+    if (name in docsAliases && name !== "visualizer") {
+      return c.redirect(`/doc/visualizer?tab=${encodeURIComponent(name)}`);
+    }
+    const html = await serveDoc(name);
     if (!html) return c.text("Not found", 404);
     return c.html(html);
   });

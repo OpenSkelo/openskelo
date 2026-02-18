@@ -39,6 +39,11 @@
     .g-lane{font-size:10px;fill:#9eb0e6;letter-spacing:.5px}
     ul{margin:6px 0 0 18px;color:#c7d5ff;font-size:13px}
     .mono{font-family:ui-monospace,Menlo,monospace}
+    .top5{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    @media(max-width:980px){.top5{grid-template-columns:1fr}}
+    .uc{border:1px solid var(--border);border-radius:12px;background:var(--card);padding:12px}
+    .uc h4{margin:0 0 8px;font-size:15px}
+    .why{font-size:12px;color:#c8d6ff;margin-top:6px}
   </style>
 </head>
 <body>
@@ -118,8 +123,8 @@
         <div class="mini-graph">
           <svg viewBox="0 0 560 220" role="img" aria-label="Multi-branch DAG with split and join">
             <defs>
-              <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L8,4 L0,8 z" fill="#7f94cc"></path>
+              <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="#7f94cc"></path>
               </marker>
             </defs>
             <text x="8" y="28" class="g-lane">TRUNK</text>
@@ -136,17 +141,17 @@
             <rect class="g-node" x="320" y="130" width="98" height="32" fill="rgba(255,209,102,.18)" stroke="rgba(255,209,102,.7)"/><text class="g-label" x="344" y="151">Build UI</text>
             <rect class="g-node" x="442" y="130" width="98" height="32" fill="rgba(255,107,107,.18)" stroke="rgba(255,107,107,.7)"/><text class="g-label" x="465" y="151">UI Test</text>
 
-            <rect class="g-node" x="320" y="184" width="86" height="32" fill="rgba(255,209,102,.18)" stroke="rgba(255,209,102,.7)"/><text class="g-label" x="343" y="205">Merge</text>
+            <rect class="g-node" x="250" y="184" width="86" height="32" fill="rgba(255,209,102,.18)" stroke="rgba(255,209,102,.7)"/><text class="g-label" x="273" y="205">Merge</text>
             <rect class="g-node" x="430" y="184" width="110" height="32" fill="rgba(57,217,138,.18)" stroke="rgba(57,217,138,.7)"/><text class="g-label" x="454" y="205">Release</text>
 
             <path class="g-edge" d="M156 26 L200 26"/>
-            <path class="g-edge" d="M286 26 C305 26, 302 86, 320 86"/>
-            <path class="g-edge" d="M286 26 C305 26, 302 146, 320 146"/>
+            <path class="g-edge" d="M286 26 C306 26, 304 82, 320 86"/>
+            <path class="g-edge" d="M286 26 C306 26, 304 142, 320 146"/>
             <path class="g-edge" d="M418 86 L442 86"/>
             <path class="g-edge" d="M418 146 L442 146"/>
-            <path class="g-edge" d="M540 86 C552 86, 555 200, 406 200"/>
-            <path class="g-edge" d="M540 146 C552 146, 555 200, 406 200"/>
-            <path class="g-edge" d="M406 200 L430 200"/>
+            <path class="g-edge" d="M540 86 C520 86, 430 170, 336 196"/>
+            <path class="g-edge" d="M540 146 C520 146, 430 184, 336 204"/>
+            <path class="g-edge" d="M336 200 L430 200"/>
           </svg>
         </div>
       </div>
@@ -162,8 +167,8 @@
         <div class="mini-graph">
           <svg viewBox="0 0 560 240" role="img" aria-label="Advanced iterative DAG with approve path, reject loop, and safety escalation">
             <defs>
-              <marker id="arrow2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L8,4 L0,8 z" fill="#7f94cc"></path>
+              <marker id="arrow2" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L7,3.5 L0,7 z" fill="#7f94cc"></path>
               </marker>
             </defs>
             <text x="8" y="28" class="g-lane">CYCLE N</text>
@@ -184,11 +189,11 @@
 
             <path class="g-edge" style="marker-end:url(#arrow2)" d="M180 26 L214 26"/>
             <path class="g-edge" style="marker-end:url(#arrow2)" d="M308 26 L342 26"/>
-            <path class="g-edge" style="marker-end:url(#arrow2)" d="M403 42 L261 104"/>
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M418 42 C410 66, 302 88, 262 104"/>
             <path class="g-edge" style="marker-end:url(#arrow2)" d="M308 120 L342 120"/>
-            <path class="g-edge" style="marker-end:url(#arrow2)" d="M403 42 L261 154"/>
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M438 42 C428 92, 312 132, 262 154"/>
             <path class="g-edge" style="marker-end:url(#arrow2)" d="M308 170 L342 170"/>
-            <path class="g-edge-loop" style="marker-end:url(#arrow2)" d="M512 170 C540 170, 540 20, 180 20"/>
+            <path class="g-edge-loop" style="marker-end:url(#arrow2)" d="M512 170 C544 170, 546 2, 186 18"/>
             <path class="g-edge" style="marker-end:url(#arrow2)" d="M261 186 L261 196"/>
             <path class="g-edge" style="marker-end:url(#arrow2)" d="M318 212 L352 212"/>
           </svg>
@@ -198,6 +203,70 @@
         <li>Use case: operator-guided refinement until approval.</li>
         <li>Reject loops back into next cycle; max-cycle breach escalates to human owner.</li>
       </ul>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <h3>Top 5 OpenSkelo Use Cases + Example Pipelines</h3>
+    <div class="sub" style="margin:4px 0 0">These are the strongest near-term use cases based on your current architecture (deterministic blocks, approvals, replay, iteration).</div>
+
+    <div class="top5">
+      <div class="uc">
+        <h4>1) Spec → Build → QA → Release automation</h4>
+        <div class="steps">
+          <span class="node n-input">Spec</span><span class="arrow">→</span>
+          <span class="node n-work">Build</span><span class="arrow">→</span>
+          <span class="node n-gate">QA Gate</span><span class="arrow">→</span>
+          <span class="node n-output">Release</span>
+        </div>
+        <div class="why"><b>Use case:</b> software/content production pipelines with repeatable quality checks.</div>
+      </div>
+
+      <div class="uc">
+        <h4>2) Human-in-loop approval workflows</h4>
+        <div class="steps">
+          <span class="node n-work">Create</span><span class="arrow">→</span>
+          <span class="node n-human">Review</span><span class="arrow">→</span>
+          <span class="node n-output">Approve</span>
+          <span class="node n-gate">Reject ↺ Refine</span>
+        </div>
+        <div class="why"><b>Use case:</b> anything high-risk or customer-facing where final human sign-off matters.</div>
+      </div>
+
+      <div class="uc">
+        <h4>3) Parallel multi-agent execution + merge</h4>
+        <div class="steps">
+          <span class="node n-input">Plan</span><span class="arrow">→</span>
+          <span class="node n-work">Agent A</span>
+          <span class="node n-work">Agent B</span>
+          <span class="node n-work">Agent C</span><span class="arrow">→</span>
+          <span class="node n-gate">Merge Gate</span>
+        </div>
+        <div class="why"><b>Use case:</b> research synthesis, multi-track implementation, and faster throughput.</div>
+      </div>
+
+      <div class="uc">
+        <h4>4) Reliability-first provider routing</h4>
+        <div class="steps">
+          <span class="node n-input">Task</span><span class="arrow">→</span>
+          <span class="node n-work">Primary Provider</span><span class="arrow">→</span>
+          <span class="node n-gate">Contract Check</span><span class="arrow">→</span>
+          <span class="node n-work">Fallback Provider</span>
+        </div>
+        <div class="why"><b>Use case:</b> keep pipelines running during provider failures/latency spikes.</div>
+      </div>
+
+      <div class="uc" style="grid-column:1 / -1">
+        <h4>5) Continuous improvement loop (memory-backed)</h4>
+        <div class="steps">
+          <span class="node n-work">Generate</span><span class="arrow">→</span>
+          <span class="node n-gate">Evaluate</span><span class="arrow">→</span>
+          <span class="node n-human">Feedback</span><span class="arrow">→</span>
+          <span class="node n-input">__shared_memory</span><span class="arrow">→</span>
+          <span class="node n-work">Next Cycle</span>
+        </div>
+        <div class="why"><b>Use case:</b> iterative design/writing/agent planning where each cycle gets smarter from stored decisions.</div>
+      </div>
     </div>
   </div>
 </div>

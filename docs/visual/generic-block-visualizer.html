@@ -86,6 +86,7 @@
     <a class="top-tab" id="tabExplainer" href="/doc/explainer">📘 Explainer</a>
     <a class="top-tab" id="tabArchitecture" href="/doc/architecture">🏗️ Architecture</a>
     <a class="top-tab" id="tabRoadmap" href="/doc/roadmap">🗺️ Roadmap</a>
+    <a class="top-tab" id="tabStatus" href="/doc/status">✅ Status</a>
   </div>
 
   <div id="visualizerPanel" class="layout" style="margin-top:2px">
@@ -249,6 +250,9 @@
   <div id="roadmapPanel" style="display:none;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0f1730;margin-top:2px">
     <iframe id="roadmapFrame" src="./visual-roadmap.html?embed=1" title="Visual Roadmap" style="display:block;width:100%;height:calc(100vh - 180px);border:0;background:#0f1730"></iframe>
   </div>
+  <div id="statusPanel" style="display:none;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0f1730;margin-top:2px">
+    <iframe id="statusFrame" src="./status-checklist.html?embed=1" title="Status Checklist" style="display:block;width:100%;height:calc(100vh - 180px);border:0;background:#0f1730"></iframe>
+  </div>
 </div>
 
 <script>
@@ -311,29 +315,37 @@
   const architecturePanel = document.getElementById('architecturePanel');
   const tabRoadmap = document.getElementById('tabRoadmap');
   const roadmapPanel = document.getElementById('roadmapPanel');
+  const tabStatus = document.getElementById('tabStatus');
+  const statusPanel = document.getElementById('statusPanel');
   function setTopTab(which){
     const isViz = which==='visualizer';
     const isOverview = which==='overview';
     const isExplainer = which==='explainer';
     const isArch = which==='architecture';
     const isRoadmap = which==='roadmap';
+    const isStatus = which==='status';
     if (visualizerPanel) visualizerPanel.style.display = isViz ? 'grid' : 'none';
     if (overviewPanel) overviewPanel.style.display = isOverview ? 'block' : 'none';
     if (explainerPanel) explainerPanel.style.display = isExplainer ? 'block' : 'none';
     if (architecturePanel) architecturePanel.style.display = isArch ? 'block' : 'none';
     if (roadmapPanel) roadmapPanel.style.display = isRoadmap ? 'block' : 'none';
+    if (statusPanel) statusPanel.style.display = isStatus ? 'block' : 'none';
     if (tabVisualizer) tabVisualizer.classList.toggle('active', isViz);
     if (tabOverview) tabOverview.classList.toggle('active', isOverview);
     if (tabExplainer) tabExplainer.classList.toggle('active', isExplainer);
     if (tabArchitecture) tabArchitecture.classList.toggle('active', isArch);
     if (tabRoadmap) tabRoadmap.classList.toggle('active', isRoadmap);
+    if (tabStatus) tabStatus.classList.toggle('active', isStatus);
   }
   if (tabVisualizer) tabVisualizer.addEventListener('click', ()=>setTopTab('visualizer'));
   if (tabOverview) tabOverview.addEventListener('click', ()=>setTopTab('overview'));
   if (tabExplainer) tabExplainer.addEventListener('click', ()=>setTopTab('explainer'));
   if (tabArchitecture) tabArchitecture.addEventListener('click', ()=>setTopTab('architecture'));
   if (tabRoadmap) tabRoadmap.addEventListener('click', ()=>setTopTab('roadmap'));
-  setTopTab('visualizer');
+  if (tabStatus) tabStatus.addEventListener('click', ()=>setTopTab('status'));
+  const initialTab = new URLSearchParams(location.search).get('tab');
+  const allowedTabs = new Set(['visualizer','overview','explainer','architecture','roadmap','status']);
+  setTopTab(allowedTabs.has(initialTab || '') ? initialTab : 'visualizer');
 
   const steps = Array.from(document.querySelectorAll('.flow-step'));
   steps.forEach(s => s.addEventListener('click', () => s.classList.toggle('active')));
