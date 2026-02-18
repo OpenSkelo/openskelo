@@ -321,17 +321,26 @@ export function createBlockEngine() {
 
     // Validate edges reference real blocks and ports
     const blockMap = new Map(blocks.map(b => [b.id, b]));
+    const allBlockIds = blocks.map((b) => b.id);
     for (const edge of edges) {
       const fromBlock = blockMap.get(edge.from);
-      if (!fromBlock) throw new Error(`Edge references unknown block: ${edge.from}`);
+      if (!fromBlock) {
+        const hint = suggestClosest(edge.from, allBlockIds);
+        throw new Error(`Edge references unknown block: ${edge.from}${hint ? ` (did you mean '${hint}'?)` : ""}`);
+      }
       if (!fromBlock.outputs[edge.output]) {
-        throw new Error(`Edge references unknown output port: ${edge.from}.${edge.output}`);
+        const hint = suggestClosest(edge.output, Object.keys(fromBlock.outputs));
+        throw new Error(`Edge references unknown output port: ${edge.from}.${edge.output}${hint ? ` (did you mean '${hint}'?)` : ""}`);
       }
 
       const toBlock = blockMap.get(edge.to);
-      if (!toBlock) throw new Error(`Edge references unknown block: ${edge.to}`);
+      if (!toBlock) {
+        const hint = suggestClosest(edge.to, allBlockIds);
+        throw new Error(`Edge references unknown block: ${edge.to}${hint ? ` (did you mean '${hint}'?)` : ""}`);
+      }
       if (!toBlock.inputs[edge.input]) {
-        throw new Error(`Edge references unknown input port: ${edge.to}.${edge.input}`);
+        const hint = suggestClosest(edge.input, Object.keys(toBlock.inputs));
+        throw new Error(`Edge references unknown input port: ${edge.to}.${edge.input}${hint ? ` (did you mean '${hint}'?)` : ""}`);
       }
     }
 
@@ -980,6 +989,35 @@ function isPotentiallyUnsafeRegex(pattern: string): boolean {
   if (pattern.length > 256) return true;
   const nestedQuantifier = /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]/;
   return nestedQuantifier.test(pattern);
+}
+
+function suggestClosest(input: string, options: string[]): string | null {
+  if (!input || options.length === 0) return null;
+  let best: { value: string; dist: number } | null = null;
+  for (const opt of options) {
+    const dist = levenshtein(input, opt);
+    if (!best || dist < best.dist) best = { value: opt, dist };
+  }
+  if (!best) return null;
+  const threshold = Math.max(1, Math.floor(Math.max(input.length, best.value.length) * 0.4));
+  return best.dist <= threshold ? best.value : null;
+}
+
+function levenshtein(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[a.length][b.length];
 }
 
 function isShellGateEnabled(): boolean {

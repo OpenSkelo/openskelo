@@ -66,6 +66,19 @@ describe("Block Engine — parseDAG", () => {
     ).toThrow(/unknown block/i);
   });
 
+  it("includes typo hints for unknown block references", () => {
+    expect(() =>
+      engine.parseDAG({
+        name: "hint-edge",
+        blocks: [
+          { id: "review", inputs: { x: "string" }, outputs: { y: "string" }, agent: {} },
+          { id: "build", inputs: { x: "string" }, outputs: { y: "string" }, agent: {} },
+        ],
+        edges: [{ from: "build", output: "y", to: "reveiw", input: "x" }],
+      })
+    ).toThrow(/did you mean 'review'/i);
+  });
+
   it("validates port references in edges", () => {
     expect(() =>
       engine.parseDAG({

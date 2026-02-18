@@ -80,7 +80,7 @@ Legend:
 - [x] Legacy commands moved under explicit namespace (`skelo legacy task ...`)
   - Proof: `53b0710`
 - [ ] DAG-only template verification and cleanup
-- [~] YAML line/column diagnostics (parse errors now include file:line:col); typo hints pending
+- [~] YAML line/column diagnostics (parse errors now include file:line:col); typo hints added for unknown block/port edge references
 
 ## 10) Testing & QA
 - [x] Expanded integration/security coverage (now 40/40)
