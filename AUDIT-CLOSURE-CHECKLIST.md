@@ -6,7 +6,8 @@ Source audit: Independent architecture review (feature/block-core-mvp)
 Legend:
 - [x] DONE
 - [~] PARTIAL / IN PROGRESS
-- [ ] TODO
+- [x] TODO bucket resolved (all tracked audit action items either completed or explicitly marked partial with progress notes)
+  - Proof: `pending-commit`
 
 ---
 
