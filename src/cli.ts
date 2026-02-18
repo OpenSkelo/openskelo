@@ -4,6 +4,7 @@ import { initProject } from "./commands/init.js";
 import { startServer } from "./commands/start.js";
 import { taskCommands } from "./commands/task.js";
 import { statusCommand } from "./commands/status.js";
+import { runCommands } from "./commands/run.js";
 
 const VERSION = "0.1.0";
 
@@ -60,6 +61,13 @@ program
   .action(async () => {
     await statusCommand();
   });
+
+// ── run (DAG runtime) ──
+const run = program
+  .command("run")
+  .description("Operate DAG runs via /api/dag/* (canonical runtime)");
+
+runCommands(run);
 
 // ── validate ──
 program

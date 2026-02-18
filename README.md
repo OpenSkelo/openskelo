@@ -240,10 +240,16 @@ skelo init my-project --template custom    # Blank starting point
 skelo init [name]              # Create new project
 skelo start                    # Start pipeline server + dashboard
 skelo status                   # Pipeline health overview
-skelo task create              # Create a task
-skelo task list                # List all tasks
-skelo task show <id>           # Task detail with history
-skelo task update <id>         # Update task status/fields
+skelo run start --example ...  # Start DAG run (canonical)
+skelo run list                 # List DAG runs
+skelo run status <runId>       # DAG run status
+skelo run approve <runId>      # Approve pending gate
+skelo run reject <runId> --feedback "..."   # Reject pending gate
+skelo run stop <runId>         # Stop a run
+skelo task create              # Legacy-deprecated
+skelo task list                # Legacy-deprecated
+skelo task show <id>           # Legacy-deprecated
+skelo task update <id>         # Legacy-deprecated
 skelo agents                   # List registered agents
 skelo gates                    # List pipeline gates
 skelo logs                     # Stream audit log
