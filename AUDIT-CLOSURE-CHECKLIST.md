@@ -76,7 +76,7 @@ Legend:
 - [x] Optional auth model (`OPENSKELO_API_KEY` via Bearer or `x-api-key`)
   - Proof: `31320cc`
 - [x] SSE client lifecycle hardening (client IDs + dedupe + cleanup)
-  - Proof: `pending-commit`
+  - Proof: `fe61393`
 - [ ] Error contract/pagination consistency polish
 
 ## 9) DX & CLI
