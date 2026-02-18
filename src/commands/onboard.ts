@@ -4,7 +4,9 @@ import { intro, isCancel, outro, select, spinner, text } from "@clack/prompts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { stringify } from "yaml";
+import open from "open";
 import { loadAuthStore, saveAuthStore, type AuthEntry, type AuthStore } from "../core/auth.js";
+import { loginOpenAIOAuth, type OpenAIOAuthTokens } from "../core/oauth.js";
 
 interface OnboardOpts {
   reset?: boolean;
@@ -56,9 +58,31 @@ async function runOnboard(opts: OnboardOpts): Promise<void> {
   if (isCancel(auth)) return cancel();
 
   let apiKey: string | undefined;
+  let oauthTokens: OpenAIOAuthTokens | undefined;
+
   if (auth === "openai-oauth") {
-    outro("OpenAI OAuth is selected. Full PKCE browser flow is landing in the next patch. For now use OpenAI API key or OpenRouter API key.");
-    process.exit(2);
+    const oauthSpin = spinner();
+    oauthSpin.start("Starting OpenAI OAuth login...");
+    try {
+      oauthTokens = await loginOpenAIOAuth({
+        onAuthUrl: async (url) => {
+          oauthSpin.update("Opening browser for OpenAI sign-in...");
+          await open(url);
+          console.log(chalk.dim(`If browser did not open, visit:\n${url}`));
+        },
+        onPrompt: async (message) => {
+          const input = await text({ message, placeholder: "http://127.0.0.1:1455/auth/callback?code=...&state=..." });
+          if (isCancel(input)) throw new Error("OAuth login cancelled");
+          return String(input);
+        },
+      });
+      oauthSpin.stop("OpenAI OAuth complete");
+      apiKey = oauthTokens.access_token;
+    } catch (err) {
+      oauthSpin.stop("OpenAI OAuth failed");
+      console.error(chalk.red(`✗ ${String((err as Error).message ?? err)}`));
+      process.exit(2);
+    }
   }
 
   if (auth === "openai-key" || auth === "openrouter-key") {
@@ -100,7 +124,7 @@ async function runOnboard(opts: OnboardOpts): Promise<void> {
   const setupSpinner = spinner();
   setupSpinner.start("Generating project and saving auth...");
 
-  persistAuth(auth, apiKey);
+  persistAuth(auth, apiKey, oauthTokens);
   const outDir = resolve(String(dir));
   createProject(outDir, auth, String(model), template);
 
@@ -160,6 +184,18 @@ function timeoutSignal(ms = 10_000): AbortSignal {
 }
 
 async function verifyConnection(auth: AuthMode, apiKey?: string): Promise<void> {
+  if (auth === "openai-oauth") {
+    if (!apiKey) throw new Error("Missing OAuth access token");
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "user", content: "Say OK" }], max_tokens: 5 }),
+      signal: timeoutSignal(),
+    });
+    if (!res.ok) throw new Error(`OpenAI OAuth validation failed (${res.status}).`);
+    return;
+  }
+
   if (auth === "openai-key") {
     if (!apiKey?.startsWith("sk-")) throw new Error("OpenAI API key must start with 'sk-'.");
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -201,12 +237,24 @@ async function verifyConnection(auth: AuthMode, apiKey?: string): Promise<void> 
   }
 }
 
-function persistAuth(auth: AuthMode, apiKey?: string): void {
+function persistAuth(auth: AuthMode, apiKey?: string, oauth?: OpenAIOAuthTokens): void {
   const store: AuthStore = loadAuthStore() ?? { version: 1, providers: {} };
   const now = new Date().toISOString();
 
   let entry: AuthEntry | null = null;
-  if (auth === "openai-key") {
+  if (auth === "openai-oauth") {
+    if (!oauth) throw new Error("Missing OAuth tokens");
+    entry = {
+      type: "oauth",
+      access_token: oauth.access_token,
+      refresh_token: oauth.refresh_token,
+      token_type: oauth.token_type,
+      expires_at: oauth.expires_at,
+      account_id: oauth.account_id,
+      created_at: now,
+    };
+    store.providers.openai = entry;
+  } else if (auth === "openai-key") {
     entry = { type: "api_key", api_key: apiKey, created_at: now };
     store.providers.openai = entry;
   } else if (auth === "openrouter-key") {
