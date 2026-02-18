@@ -1,0 +1,116 @@
+name: game-builder-pipeline
+
+blocks:
+  - id: spec
+    name: Define Game Spec
+    inputs:
+      prompt: { type: string, description: "Game request" }
+    outputs:
+      game_spec: { type: json, description: "Rules, controls, assets" }
+      dev_plan: { type: string, description: "Implementation plan" }
+    agent: { role: manager }
+    pre_gates:
+      - name: has-prompt
+        check: { type: port_not_empty, port: prompt }
+        error: "Prompt is required"
+    post_gates:
+      - name: has-spec
+        check: { type: port_not_empty, port: game_spec }
+        error: "Game spec must be produced"
+    retry: { max_attempts: 1, backoff: none, delay_ms: 0 }
+
+  - id: build
+    name: Build Playable Prototype
+    inputs:
+      game_spec: { type: json }
+      dev_plan: { type: string }
+    outputs:
+      artifact_html: { type: artifact, description: "Playable game HTML" }
+      branch: { type: string, description: "Feature branch" }
+      changelog: { type: string, description: "What was built" }
+    agent: { role: worker, capability: coding }
+    pre_gates: []
+    post_gates:
+      - name: has-artifact
+        check: { type: port_not_empty, port: artifact_html }
+        error: "Playable artifact required"
+    retry: { max_attempts: 2, backoff: linear, delay_ms: 3000 }
+
+  - id: qa
+    name: QA Gameplay & Bugs
+    inputs:
+      artifact_html: { type: artifact }
+      changelog: { type: string }
+    outputs:
+      approved: { type: boolean }
+      feedback: { type: string }
+      bug_list: { type: json }
+    agent: { role: reviewer }
+    pre_gates: []
+    post_gates:
+      - name: has-approval
+        check: { type: port_type, port: approved, expected: boolean }
+        error: "QA must output approved true/false"
+    retry: { max_attempts: 0, backoff: none, delay_ms: 0 }
+
+  - id: polish
+    name: Polish Based on QA
+    inputs:
+      artifact_html: { type: artifact }
+      approved: { type: boolean }
+      feedback: { type: string }
+      bug_list: { type: json }
+    outputs:
+      artifact_html: { type: artifact }
+      release_notes: { type: string }
+    agent: { role: worker, capability: coding }
+    pre_gates: []
+    on_gate_fail:
+      - when_gate: qa-approved
+        route_to: build
+        reset_blocks: [qa, polish]
+        max_bounces: 2
+        reason: "QA rejected build"
+    post_gates:
+      - name: has-polished-artifact
+        check: { type: port_not_empty, port: artifact_html }
+        error: "Polished artifact required"
+    retry: { max_attempts: 1, backoff: none, delay_ms: 0 }
+
+  - id: release
+    name: Release Candidate Approval
+    inputs:
+      artifact_html: { type: artifact }
+      release_notes: { type: string }
+      approved: { type: boolean }
+    outputs:
+      deploy_url: { type: string }
+      release_tag: { type: string }
+    agent: { role: worker, capability: devops }
+    approval:
+      required: true
+      approver: owner
+      prompt: "Approve this game build for release candidate?"
+      timeout_sec: 1800
+    pre_gates:
+      - name: qa-approved
+        check: { type: expr, expression: "inputs.approved === true" }
+        error: "QA approval needed before release"
+    post_gates:
+      - name: has-url
+        check: { type: port_matches, port: deploy_url, pattern: "^https?://" }
+        error: "Release must provide URL"
+    retry: { max_attempts: 1, backoff: none, delay_ms: 0 }
+
+edges:
+  - { from: spec, output: game_spec, to: build, input: game_spec }
+  - { from: spec, output: dev_plan, to: build, input: dev_plan }
+  - { from: build, output: artifact_html, to: qa, input: artifact_html }
+  - { from: build, output: changelog, to: qa, input: changelog }
+  - { from: build, output: artifact_html, to: polish, input: artifact_html }
+  - { from: qa, output: approved, to: polish, input: approved }
+  - { from: qa, output: feedback, to: polish, input: feedback }
+  - { from: qa, output: bug_list, to: polish, input: bug_list }
+  - { from: polish, output: artifact_html, to: release, input: artifact_html }
+  - { from: polish, output: release_notes, to: release, input: release_notes }
+  - { from: qa, output: approved, to: release, input: approved }

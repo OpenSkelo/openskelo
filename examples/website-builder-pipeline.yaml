@@ -1,0 +1,80 @@
+name: website-builder-pipeline
+
+blocks:
+  - id: brief
+    name: Generate Site Brief
+    inputs:
+      topic: { type: string, description: "What to build" }
+    outputs:
+      site_brief: { type: json }
+      copy_outline: { type: string }
+    agent: { role: manager }
+    pre_gates:
+      - name: has-topic
+        check: { type: port_not_empty, port: topic }
+        error: "Topic is required"
+    post_gates:
+      - name: has-brief
+        check: { type: port_not_empty, port: site_brief }
+        error: "Need a site brief"
+    retry: { max_attempts: 1, backoff: none, delay_ms: 0 }
+
+  - id: ui
+    name: Build Website UI
+    inputs:
+      site_brief: { type: json }
+      copy_outline: { type: string }
+    outputs:
+      artifact_html: { type: artifact }
+      style_tokens: { type: json }
+    agent: { role: worker, capability: coding }
+    pre_gates: []
+    post_gates:
+      - name: has-ui
+        check: { type: port_not_empty, port: artifact_html }
+        error: "UI artifact required"
+    retry: { max_attempts: 2, backoff: linear, delay_ms: 3000 }
+
+  - id: copy
+    name: Fill Marketing Copy
+    inputs:
+      copy_outline: { type: string }
+      style_tokens: { type: json }
+    outputs:
+      copy_json: { type: json }
+    agent: { role: worker, capability: writing }
+    pre_gates: []
+    post_gates:
+      - name: has-copy
+        check: { type: port_not_empty, port: copy_json }
+        error: "Copy output required"
+    retry: { max_attempts: 1, backoff: none, delay_ms: 0 }
+
+  - id: integrate
+    name: Integrate UI + Copy
+    inputs:
+      artifact_html: { type: artifact }
+      copy_json: { type: json }
+    outputs:
+      artifact_html: { type: artifact }
+      deploy_url: { type: string }
+    agent: { role: worker, capability: coding }
+    approval:
+      required: true
+      approver: owner
+      prompt: "Approve website release candidate?"
+      timeout_sec: 1800
+    pre_gates: []
+    post_gates:
+      - name: has-preview-url
+        check: { type: port_matches, port: deploy_url, pattern: "^https?://" }
+        error: "Deploy URL required"
+    retry: { max_attempts: 1, backoff: none, delay_ms: 0 }
+
+edges:
+  - { from: brief, output: site_brief, to: ui, input: site_brief }
+  - { from: brief, output: copy_outline, to: ui, input: copy_outline }
+  - { from: brief, output: copy_outline, to: copy, input: copy_outline }
+  - { from: ui, output: style_tokens, to: copy, input: style_tokens }
+  - { from: ui, output: artifact_html, to: integrate, input: artifact_html }
+  - { from: copy, output: copy_json, to: integrate, input: copy_json }
