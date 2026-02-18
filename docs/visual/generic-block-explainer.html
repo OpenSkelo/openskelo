@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenSkelo Generic Block Explainer</title>
+  <style>
+    :root{--bg:#0b1020;--card:#131b35;--border:#33406b;--text:#e8eeff;--muted:#aab8e6;--in:#39d98a;--edge:#7aa2ff;--ctx:#ffd166;--def:#ff8fab}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui;background:radial-gradient(1000px 500px at 20% -10%, #1e2a52 0%, var(--bg) 55%);color:var(--text)}
+    .wrap{max-width:980px;margin:24px auto;padding:0 16px 40px}
+    h1{margin:0 0 8px} .sub{color:var(--muted);margin-bottom:14px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:12px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:860px){.row{grid-template-columns:1fr}}
+    .pill{display:inline-block;border-radius:999px;padding:4px 9px;margin:4px 4px 0 0;font-size:12px;border:1px solid var(--border)}
+    .p1{background:rgba(57,217,138,.14);border-color:rgba(57,217,138,.45)}
+    .p2{background:rgba(122,162,255,.14);border-color:rgba(122,162,255,.45)}
+    .p3{background:rgba(255,209,102,.14);border-color:rgba(255,209,102,.45)}
+    .p4{background:rgba(255,143,171,.14);border-color:rgba(255,143,171,.45)}
+    .mono{font-family:ui-monospace,Menlo,monospace}
+    .stack .step{border:1px dashed var(--border);border-radius:10px;padding:10px;margin:8px 0}
+    .small{font-size:13px;color:var(--muted)}
+    table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #30406f;padding:8px;vertical-align:top}th{background:#1a2752;text-align:left}
+    .hint{font-size:14px;color:#c6d6ff;background:#121a34;border:1px solid #2f3d6b;padding:10px;border-radius:10px}
+  </style>
+</head>
+<body>
+<div class="wrap" id="wrapRoot">
+  <div id="localHeader">
+    <h1>Generic Block Explainer (Visual)</h1>
+    <div class="sub">Quick, intuitive explanation of input priority and output processing. <a href="./generic-block-visualizer.html" style="color:#9ec0ff">Open visualizer</a></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Input Priority: where a value comes from</h3>
+    <div class="small">When a block needs an input (like <span class="mono">approved</span>), OpenSkelo checks in this exact order and uses the first match:</div>
+    <div style="margin-top:8px">
+      <span class="pill p1">1) override</span>
+      <span class="pill p2">2) edge</span>
+      <span class="pill p3">3) context</span>
+      <span class="pill p4">4) default</span>
+    </div>
+    <div class="hint" style="margin-top:10px"><b>Memory trick:</b> Override beats edge, edge beats context, context beats default.</div>
+  </div>
+
+  <div class="row">
+    <div class="card stack">
+      <h3 style="margin-top:0">Concrete example: release.approved</h3>
+      <div class="step"><b>Override</b><br><span class="mono">__override_input_release_approved=true</span><br><span class="small">If present, this wins immediately.</span></div>
+      <div class="step"><b>Edge</b><br><span class="mono">qa.approved -> release.approved</span><br><span class="small">Normal pipeline wiring.</span></div>
+      <div class="step"><b>Context</b><br><span class="mono">context.approved</span><br><span class="small">Run-level shared value.</span></div>
+      <div class="step"><b>Default</b><br><span class="mono">inputs.approved.default</span><br><span class="small">Fallback only.</span></div>
+    </div>
+
+    <div class="card stack">
+      <h3 style="margin-top:0">Outputs: parsed → validated → metadata</h3>
+      <div class="step"><b>1) Parsed</b><br><span class="small">Raw provider text is converted into output ports.</span></div>
+      <div class="step"><b>2) Validated</b><br><span class="small">Required keys and types are checked against output contract.</span></div>
+      <div class="step"><b>3) Metadata attached</b><br><span class="small">Agent/model/provider, duration, usage, repair trace for debugging.</span></div>
+      <div class="hint"><b>If strict output is on:</b> invalid outputs run bounded repair attempts, then fail with <span class="mono">OUTPUT_CONTRACT_FAILED</span>.</div>
+    </div>
+  
+
+  <div class="card">
+    <h3 style="margin-top:0">Where does the AI actually run?</h3>
+    <div class="hint">
+      <b>Only one place:</b> during <b>dispatch</b> (step 5 in the execution flow).<br/>
+      The executor calls <span class="mono">provider.dispatch(...)</span>, and the provider calls the actual agent/LLM.
+    </div>
+    <table style="margin-top:10px">
+      <tr><th>Phase</th><th>AI involved?</th><th>What happens</th></tr>
+      <tr><td>Input wiring + gates (steps 1-4)</td><td>No</td><td>Deterministic orchestration checks.</td></tr>
+      <tr><td>Dispatch (step 5)</td><td><b>Yes</b></td><td>Actual model/agent invocation.</td></tr>
+      <tr><td>Parse/validate/persist (steps 6+)</td><td>No (except optional repair dispatch)</td><td>Contract checks, metadata, events, storage.</td></tr>
+    </table>
+  </div>
+
+
+  <div class="card">
+    <h3 style="margin-top:0">Common failures cheat sheet</h3>
+    <table>
+      <tr><th>Error</th><th>Meaning</th><th>Fix</th></tr>
+      <tr><td class="mono">PRE_GATE_FAILED</td><td>Pre-gate condition failed</td><td>Check gate inputs + required fields.</td></tr>
+      <tr><td class="mono">OUTPUT_CONTRACT_FAILED</td><td>Outputs do not match contract</td><td>Improve schema compliance / repair attempts.</td></tr>
+      <tr><td class="mono">HANDOFF_UNSATISFIABLE</td><td>Downstream input path broken</td><td>Validate edge wiring/default/context.</td></tr>
+      <tr><td>Approval mismatch</td><td>Approval and gate source diverge</td><td>Use explicit approval input override.</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Why this design exists</h3>
+    <table>
+      <tr><th>Goal</th><th>How this helps</th></tr>
+      <tr><td>Determinism</td><td>Same precedence order every run.</td></tr>
+      <tr><td>Human control</td><td>Overrides allow explicit operator decisions.</td></tr>
+      <tr><td>Reliability</td><td>Contract validation prevents hidden bad outputs.</td></tr>
+      <tr><td>Debuggability</td><td>Metadata + error codes explain failures clearly.</td></tr>
+    </table>
+  </div>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.get('embed') === '1') {
+    const h = document.getElementById('localHeader');
+    if (h) h.style.display = 'none';
+    const w = document.getElementById('wrapRoot');
+    if (w) { w.style.margin = '0 auto'; w.style.paddingTop = '0'; }
+    document.body.style.background = 'transparent';
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenSkelo Generic Block Visualizer</title>
+  <style>
+    :root {
+      --bg:#0b1020; --panel:#121a31; --border:#33406b; --text:#e8eeff; --muted:#a9b7e6;
+      --chip:#24315a; --ok:#39d98a; --warn:#ffd166; --bad:#ff6b6b;
+      --in:#39d98a; --out:#ff6b6b;
+    }
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui;background:radial-gradient(1200px 600px at 20% -10%, #1e2a52 0%, var(--bg) 55%);color:var(--text)}
+    .wrap{max-width:1160px;margin:14px auto;padding:0 16px 28px} h1{margin:0 0 2px;font-size:22px;line-height:1.2}.sub{color:var(--muted);margin-bottom:8px;font-size:14px;line-height:1.35}
+    .top-tabs{display:flex;gap:6px;margin:0 0 10px;padding:5px;border:1px solid #364c89;border-radius:12px;background:linear-gradient(180deg,#121b39,#101733);width:fit-content;max-width:100%;overflow:auto}
+    .top-tab{background:transparent;border:1px solid transparent;color:#b8c8f8;border-radius:9px;padding:7px 11px;cursor:pointer;font-size:12px;white-space:nowrap;transition:all .18s ease}
+    .top-tab:hover{color:#e7eeff;background:rgba(122,162,255,.12)}
+    .top-tab.active{background:linear-gradient(180deg,#2b437f,#253a6f);border-color:#7ea0f2;color:#ffffff;box-shadow:0 0 0 1px rgba(126,160,242,.28) inset, 0 2px 8px rgba(0,0,0,.22)}
+    .layout{display:grid;grid-template-columns:320px 1fr;gap:14px}@media (max-width:980px){.layout{grid-template-columns:1fr}}
+    #explainerPanel{display:none;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0f1730;margin-top:2px}
+    #explainerFrame{display:block;width:100%;height:calc(100vh - 180px);border:0;background:#0f1730}
+    #architecturePanel{display:none;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0f1730;margin-top:2px}
+    #architectureFrame{display:block;width:100%;height:calc(100vh - 180px);border:0;background:#0f1730}
+    .card{border:1px solid var(--border);background:linear-gradient(180deg,var(--panel),#101733);border-radius:12px;padding:12px}
+    .card h3{margin:0 0 10px;font-size:14px;color:#c9d7ff}
+    .chip{display:inline-block;background:var(--chip);border:1px solid var(--border);border-radius:999px;padding:4px 9px;margin:4px 4px 0 0;font-size:12px}
+    .chip.ok{border-color:#2d7f5d;color:#b8f4d7}.chip.warn{border-color:#8f7638;color:#ffe3a3}.chip.bad{border-color:#8f4545;color:#ffc0c0}
+    .tone-green{color:#9ef1c8}.tone-blue{color:#b7ccff}.tone-yellow{color:#ffe3a3}.tone-pink{color:#ffc3d8}
+    .mono{font-family:ui-monospace,Menlo,monospace}
+
+    .big-block{border:1px solid #4c63a8;background:linear-gradient(160deg,#1a2550,#121a35 62%);border-radius:14px;padding:14px;box-shadow:0 0 0 1px rgba(122,162,255,.2),0 14px 40px rgba(0,0,0,.35)}
+    .bb-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap}
+    .bb-title{font-weight:700;font-size:18px;margin-bottom:6px}.bb-sub{color:var(--muted);font-size:13px;margin-bottom:0}
+    .controls{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 4px}
+    button{background:#21305f;color:#e7eeff;border:1px solid #4860a5;border-radius:8px;padding:7px 10px;cursor:pointer;font-size:12px}
+
+    .code-view{margin-top:10px;border:1px solid var(--border);border-radius:10px;background:#0f1730;overflow:hidden}
+    .code-head{padding:8px 10px;border-bottom:1px solid #2a3866;font-size:12px;color:#c8d6ff}
+    pre{margin:0;padding:10px;max-height:220px;overflow:auto;font-size:12px;line-height:1.45;color:#d9e4ff}
+    #textMode{margin-top:12px}
+    #textMode pre{max-height:none;height:calc(100vh - 230px);overflow:auto;font-size:11px;line-height:1.35}
+
+    .slots{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}@media (max-width:860px){.slots{grid-template-columns:1fr}}
+    .slot{border:1px dashed var(--border);background:rgba(16,24,50,.7);border-radius:10px;padding:10px}
+    .slot .t{font-size:12px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px}
+    .slot.inputs{border-color:rgba(57,217,138,.5);background:rgba(17,46,36,.45)} .slot.inputs .t{color:#8ef1bf}
+    .slot.outputs{border-color:rgba(255,107,107,.45);background:rgba(58,23,31,.45)} .slot.outputs .t{color:#ffb1b1}
+
+    .flow{margin-top:2px;border:1px solid #3d538f;border-radius:10px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(61,83,143,.25)}
+    .flow-step{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid #34508b;background:linear-gradient(90deg, rgba(22,39,78,.95), rgba(18,26,52,.95));cursor:pointer}
+    .flow-step:first-child{border-top:none}.n{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;border:1px solid #4f65aa;background:#1f2b55}
+     .flow-step.llm-focus{background:linear-gradient(90deg, rgba(255,221,87,.26), #121a34);border-top:1px solid rgba(255,221,87,.55)}
+    .flow-step.llm-focus .label{font-weight:700;color:#f6ecbf}
+    .flow-step.llm-focus .n{border-color:#e0cf84;background:#4a3f17;box-shadow:0 0 0 1px rgba(255,221,87,.25)}
+    .flow-step.pre-dispatch{background:linear-gradient(90deg, rgba(72,255,170,.16), #121a34);border-top:1px solid rgba(72,255,170,.35)}
+    .flow-step.pre-dispatch .n{border-color:rgba(72,255,170,.55);background:#173228}
+    .flow-step.post-risk{background:linear-gradient(90deg, rgba(255,95,122,.16), #121a34);border-top:1px solid rgba(255,95,122,.38)}
+    .flow-step.post-risk .n{border-color:rgba(255,140,160,.55);background:#3b1f28}
+    .flow-step.post-dispatch{background:linear-gradient(90deg, rgba(255,170,68,.16), #121a34);border-top:1px solid rgba(255,170,68,.35)}
+    .flow-step.post-dispatch .n{border-color:rgba(255,190,120,.55);background:#3b2c19}
+    .flow-body{display:none;padding:10px;background:#0f1730;color:#cfdbff;font-size:13px;line-height:1.45}.flow-step.active+.flow-body{display:block}
+
+    .tabs{margin-top:14px;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+    .tab-buttons{display:flex;flex-wrap:wrap;background:#111936;border-bottom:1px solid #2a3866}
+    .tab-btn{border:0;border-right:1px solid #2a3866;border-radius:0;background:#111936;padding:8px 10px}.tab-btn.active{background:#1c2a56}
+    .tab-panel{display:none;padding:10px;background:#0f1730;font-size:13px;line-height:1.5}
+    .tab-panel.active{display:block}
+    table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #30406f;padding:6px 8px;vertical-align:top}th{background:#18244a;text-align:left}
+    .legend{margin-top:10px;font-size:12px;color:var(--muted)}
+    .llm-callout{margin-top:12px;border:1px solid rgba(122,162,255,.40);background:rgba(35,55,105,.22);border-radius:10px;padding:10px;font-size:13px;line-height:1.5}
+    .left-legend{margin-top:12px;padding:10px;border:1px dashed #3b4f8f;border-radius:10px;background:rgba(18,27,56,.55);font-size:12px;line-height:1.55;color:#c9d7ff}
+    .pipeline-arrows{display:flex;align-items:center;justify-content:center;gap:10px;margin:10px 0 12px;font-size:13px;color:#dbe6ff}
+    .node-badge{padding:6px 10px;border-radius:999px;border:1px solid #41568f;background:#1a264a}
+    .arr{font-size:18px;opacity:.9}
+
+    @media (max-width:700px){ .top-tabs{display:grid;grid-template-columns:1fr;width:100%;margin-bottom:8px} .top-tab{width:100%;text-align:left;padding:7px 10px} .tab-buttons{display:grid;grid-template-columns:1fr 1fr} .controls button{font-size:11px;padding:6px 8px} #textMode pre{height:calc(100vh - 180px)} }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>OpenSkelo — Generic Block</h1>
+  <div class="sub">Single reusable block contract. This is the core blueprint you can instantiate repeatedly across any workflow stage.</div>
+  <div class="top-tabs">
+    <button class="top-tab active" id="tabVisualizer">🧩 Block Visualizer</button>
+    <button class="top-tab" id="tabExplainer">📘 Explainer</button>
+    <button class="top-tab" id="tabArchitecture">🏗️ Architecture</button>
+    <button class="top-tab" id="tabRoadmap">🗺️ Roadmap</button>
+  </div>
+
+  <div id="visualizerPanel" class="layout" style="margin-top:2px">
+    <div class="card">
+      <h3>Block Identity (routing + traceability)</h3>
+      <div class="chip mono">id</div><div class="chip mono">name</div><div class="chip mono">agent { role/capability/specific }</div>
+      <div style="margin-top:8px;font-size:12px;color:#b8c8f8">This left panel is a quick legend: what every block can declare before execution starts.</div>
+      <h3 style="margin-top:14px">Port Types (I/O contracts)</h3>
+      <div style="font-size:12px;color:#b8c8f8">Each input/output port is typed and validated by contract rules.</div>
+      <div class="chip">string</div><div class="chip">number</div><div class="chip">boolean</div><div class="chip">json</div><div class="chip">file</div><div class="chip">artifact</div>
+      <h3 style="margin-top:14px">Internal Features (safety + control)</h3>
+      <div style="font-size:12px;color:#b8c8f8">These are optional knobs that make runs deterministic, reviewable, and resilient.</div>
+      <div class="chip ok">pre_gates</div><div class="chip ok">post_gates</div><div class="chip ok">approval.required</div><div class="chip ok">retry policy</div><div class="chip ok">timeout_ms</div>
+      <div class="chip ok">strict_output</div><div class="chip ok">contract_repair_attempts</div><div class="chip ok">on_gate_fail bounce/reroute</div>
+      <div class="chip warn">input overrides</div><div class="chip warn">shared run memory</div><div class="chip bad">error envelope</div>
+    </div>
+
+    <div class="big-block">
+      <div class="bb-head">
+        <div>
+          <div class="bb-title">GENERIC BLOCK ENGINE</div>
+          <div class="bb-sub">Core logic is fixed; YAML parameters shape behavior.</div>
+        </div>
+        <div class="controls" style="margin:0">
+          <button id="modeToggle">View Full Engine YAML</button>
+        </div>
+      </div>
+
+      <div id="textMode" class="code-view" style="display:none;margin-top:12px">
+        <div class="code-head" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span id="textModeLabel">Full Engine YAML</span><button id="copyYAMLBtn" style="padding:4px 8px;font-size:11px">Copy YAML</button></div>
+        <pre id="engineTextView" class="mono"></pre>
+      </div>
+
+      <div id="visualMode">
+      <div class="slots">
+        <div class="slot inputs">
+          <div class="t">Inputs</div>
+          <div class="chip">priority: override → edge → context → default</div>
+          <div style="margin-top:8px;font-size:12px;color:#b8f8d7">Cardinality: <b>0..N input ports</b> (keyed object map).</div>
+        </div>
+        <div class="slot outputs">
+          <div class="t">Outputs</div>
+          <div class="chip">parsed + validated + metadata attached</div>
+          <div style="margin-top:8px;font-size:12px;color:#ffc2c2">Cardinality: <b>0..N output ports</b> (keyed object map).</div>
+        </div>
+      </div>
+
+      <div class="io-arrows" style="display:grid;grid-template-columns:1fr 1fr;align-items:center;justify-items:center;height:56px;margin:2px 0 2px;pointer-events:none">
+        <div style="font-size:44px;line-height:1;color:rgba(240,248,255,.92);transform:translateY(1px)">↓</div>
+        <div style="font-size:44px;line-height:1;color:rgba(240,248,255,.92);transform:translateY(1px)">↑</div>
+      </div>
+      </div>
+
+      <div class="controls">
+        <button id="expandToggle">Expand all steps</button>
+      </div>
+
+      <div class="flow">
+        <div class="flow-step pre-dispatch"><div class="n">1</div><div>Resolve ready block (is this block ready to run?)</div></div><div class="flow-body">Dependencies + required inputs satisfy readiness.</div>
+        <div class="flow-step pre-dispatch"><div class="n">2</div><div>Wire inputs (where each input value comes from)</div></div><div class="flow-body">Materialize inputs with precedence rules.</div>
+        <div class="flow-step pre-dispatch"><div class="n">3</div><div>Optional approval pause (wait for human decision if required)</div></div><div class="flow-body">If approval required, pause and persist approval request/decision.</div>
+        <div class="flow-step pre-dispatch"><div class="n">4</div><div>Pre-gates (must-pass checks before AI call)</div></div><div class="flow-body">Fail fast or reroute/bounce based on gate policy.</div>
+        <div class="flow-step llm-focus"><div class="n">5</div><div class="label">Provider dispatch (AI call happens here)</div></div><div class="flow-body"><b>This is the actual AI call.</b> Adapter invokes provider/agent runtime and captures raw model output + actual agent/model metadata.</div>
+        <div class="flow-step post-risk"><div class="n">6</div><div>Output contract + repair (did output match required shape?)</div></div><div class="flow-body">Validate required outputs/types; bounded repair retries if strict.</div>
+        <div class="flow-step post-risk"><div class="n">7</div><div>Post-gates (quality checks after output)</div></div><div class="flow-body">Quality checks after output generation.</div>
+        <div class="flow-step post-dispatch"><div class="n">8</div><div>Handoff readiness (can downstream blocks run now?)</div></div><div class="flow-body">Downstream required inputs must remain satisfiable.</div>
+        <div class="flow-step post-dispatch"><div class="n">9</div><div>Persist + emit events (save state + notify UI/API)</div></div><div class="flow-body">Snapshot + events + trace written for replay/debug.</div>
+      </div>
+
+
+
+      <div class="llm-callout">
+        <b>Where the AI/LLM is actually called:</b><br/>
+        The model/agent call happens at <b>Step 5: Dispatch to provider adapter</b>.
+        <div style="margin-top:6px;color:#c7d7ff">Everything before step 5 is orchestration/gating. Everything after step 5 is parsing, contract validation, and persistence.</div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab-buttons">
+          <button class="tab-btn active" data-tab="mapping">YAML → Runtime Mapping</button>
+          <button class="tab-btn" data-tab="gates">Gate Types</button>
+          <button class="tab-btn" data-tab="errors">Error Codes</button>
+          <button class="tab-btn" data-tab="approval">Approval Semantics</button>
+          <button class="tab-btn" data-tab="precedence">Input Precedence</button>
+        </div>
+
+        <div class="tab-panel active" id="tab-mapping">
+          <table>
+            <tr><th>YAML Field</th><th>Runtime Meaning</th></tr>
+            <tr><td class="mono">id</td><td>Primary identifier used in run state, edges, events.</td></tr>
+            <tr><td class="mono">inputs / outputs</td><td>Port schemas (0..N). Required ports drive readiness and contract checks.</td></tr>
+            <tr><td class="mono">agent</td><td>Routing target resolution (specific/role/capability).</td></tr>
+            <tr><td class="mono">pre_gates / post_gates</td><td>Deterministic guards before/after dispatch.</td></tr>
+            <tr><td class="mono">approval.required</td><td>Pause run for human decision before block execution.</td></tr>
+            <tr><td class="mono">retry</td><td>Failure retry policy (attempts/backoff).</td></tr>
+            <tr><td class="mono">strict_output</td><td>Whether contract mismatch is hard fail.</td></tr>
+            <tr><td class="mono">contract_repair_attempts</td><td>Bounded structured repair retries.</td></tr>
+          </table>
+        </div>
+
+        <div class="tab-panel" id="tab-gates">
+          <table>
+            <tr><th>Gate Check</th><th>What it validates</th></tr>
+            <tr><td class="mono">port_not_empty</td><td>Input/output port must be present and not empty.</td></tr>
+            <tr><td class="mono">port_matches</td><td>Regex pattern check on string value.</td></tr>
+            <tr><td class="mono">port_min_length</td><td>Minimum string length.</td></tr>
+            <tr><td class="mono">port_type</td><td>Runtime type check.</td></tr>
+            <tr><td class="mono">expr</td><td>Expression-based boolean gate.</td></tr>
+            <tr><td class="mono">shell</td><td>Shell command exit/status gate.</td></tr>
+          </table>
+        </div>
+
+        <div class="tab-panel" id="tab-errors">
+          <table>
+            <tr><th>Error Code</th><th>Stage</th><th>Meaning</th></tr>
+            <tr><td class="mono">PRE_GATE_FAILED</td><td>gate</td><td>Pre-gate condition failed before dispatch.</td></tr>
+            <tr><td class="mono">OUTPUT_CONTRACT_FAILED</td><td>contract</td><td>Missing/wrong outputs after repair attempts.</td></tr>
+            <tr><td class="mono">POST_GATE_FAILED</td><td>gate</td><td>Post-gate quality check failed.</td></tr>
+            <tr><td class="mono">HANDOFF_UNSATISFIABLE</td><td>handoff</td><td>Downstream required input cannot be satisfied.</td></tr>
+            <tr><td class="mono">DISPATCH_FAILED</td><td>dispatch</td><td>Provider dispatch returned failure.</td></tr>
+            <tr><td class="mono">ORPHANED_RUN</td><td>orphan</td><td>Durable run was stale without active executor.</td></tr>
+          </table>
+        </div>
+
+        <div class="tab-panel" id="tab-approval">
+          <ul>
+            <li>When approval is required, run status becomes <span class="mono">paused_approval</span>.</li>
+            <li>Approval request/decision persists in <span class="mono">dag_approvals</span> + event stream.</li>
+            <li>Approve can set per-block input override (e.g. <span class="mono">approved=true</span> for release gate).</li>
+            <li>Reject can optionally trigger iteration: <span class="mono">refine</span> or <span class="mono">from_scratch</span>.</li>
+            <li>Shared memory carries feedback/decisions across cycles.</li>
+          </ul>
+        </div>
+
+        <div class="tab-panel" id="tab-precedence">
+          <ol>
+            <li><b>Override</b>: <span class="mono">__override_input_{block}_{port}</span></li>
+            <li><b>Edge output</b>: upstream completed block output via DAG edge</li>
+            <li><b>Run context</b>: initial + accumulated context</li>
+            <li><b>Default</b>: port default value</li>
+          </ol>
+          <p>Reason: this gives deterministic and debuggable gate behavior, especially with human approval bridges.</p>
+        </div>
+      </div>
+      <div class="legend">
+                <div><b>Where in code?</b> <span class="mono">src/core/block.ts</span> · <span class="mono">src/core/dag-executor.ts</span> · <span class="mono">src/server/dag-api.ts</span></div>
+        <div><b>Port count:</b> unlimited in practice (bounded by payload size/perf).</div>
+              </div>
+      </div>
+    </div>
+  </div>
+  <div id="explainerPanel">
+    <iframe id="explainerFrame" src="./generic-block-explainer.html?embed=1" title="Generic Block Explainer"></iframe>
+  </div>
+  <div id="architecturePanel">
+    <iframe id="architectureFrame" src="./full-stack-architecture.html?embed=1" title="Full Stack Architecture"></iframe>
+  </div>
+  <div id="roadmapPanel" style="display:none;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0f1730;margin-top:2px">
+    <iframe id="roadmapFrame" src="./visual-roadmap.html?embed=1" title="Visual Roadmap" style="display:block;width:100%;height:calc(100vh - 180px);border:0;background:#0f1730"></iframe>
+  </div>
+</div>
+
+<script>
+  const quickTemplate = {
+    id: "<block-id>",
+    name: "<human-readable-name>",
+    inputs: { "<input_port>": { type: "string|number|boolean|json|file|artifact", required: true } },
+    outputs: { "<output_port>": { type: "string|number|boolean|json|file|artifact", required: true } },
+    agent: { role: "worker", capability: "optional", specific: "optional" },
+    pre_gates: [{ name: "gate-name", check: { type: "port_not_empty", port: "<port>" }, error: "message" }],
+    post_gates: [],
+    approval: { required: false },
+    retry: { max_attempts: 1, backoff: "linear", delay_ms: 1000 },
+    strict_output: true,
+    contract_repair_attempts: 1
+  };
+
+  const fullEngineYAML = `engine: OpenSkelo Generic Block Engine\nblock_contract:\n  id: <block-id>\n  name: <human-readable-name>\n  inputs:\n    <input_port>:\n      type: string\n      required: true\n  outputs:\n    <output_port>:\n      type: string\n      required: true\n  agent:\n    role: worker\n  pre_gates: []\n  post_gates: []\n  approval:\n    required: false\n  retry:\n    max_attempts: 1\n    backoff: linear\n    delay_ms: 1000\n  strict_output: true\n  contract_repair_attempts: 1\ninput_precedence:\n  - override\n  - edge\n  - context\n  - default\nexecution_flow:\n  - resolve_ready\n  - wire_inputs\n  - approval_pause_optional\n  - pre_gates\n  - dispatch_provider\n  - parse_and_contract_validate\n  - post_gates\n  - handoff_satisfiable_check\n  - persist_snapshot_and_events\ngate_checks:\n  - port_not_empty\n  - port_matches\n  - port_min_length\n  - port_type\n  - expr\n  - shell\nfailure_codes:\n  - PRE_GATE_FAILED\n  - OUTPUT_CONTRACT_FAILED\n  - POST_GATE_FAILED\n  - HANDOFF_UNSATISFIABLE\n  - DISPATCH_FAILED\n  - ORPHANED_RUN\napproval_semantics:\n  required_pause: true\n  decisions: [approve, reject]\n  overrides_supported: true\n  iteration_modes: [refine, from_scratch]`;
+
+
+  const visualMode = document.getElementById('visualMode');
+  const textMode = document.getElementById('textMode');
+  const textModeLabel = document.getElementById('textModeLabel');
+  const engineTextView = document.getElementById('engineTextView');
+
+  let mode = 'visual';
+  function setMode(nextMode){
+    mode = nextMode;
+    const toggleBtn=document.getElementById('modeToggle');
+
+    if(mode==='visual'){
+      visualMode.style.display='block';
+      textMode.style.display='none';
+      if (toggleBtn) toggleBtn.textContent='View Full Engine YAML';
+      return;
+    }
+
+    visualMode.style.display='none';
+    textMode.style.display='block';
+    textModeLabel.textContent='Full Generic Engine (YAML)';
+    engineTextView.textContent = fullEngineYAML;
+    if (toggleBtn) toggleBtn.textContent='View Visual Docs';
+    textMode.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  const modeToggleBtn = document.getElementById('modeToggle');
+  if (modeToggleBtn) modeToggleBtn.addEventListener('click', ()=>setMode(mode==='visual' ? 'yaml' : 'visual'));
+  const copyYAMLBtn = document.getElementById('copyYAMLBtn');
+  if (copyYAMLBtn) copyYAMLBtn.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(fullEngineYAML); copyYAMLBtn.textContent='Copied'; setTimeout(()=>copyYAMLBtn.textContent='Copy YAML',1200);} catch { copyYAMLBtn.textContent='Copy failed'; setTimeout(()=>copyYAMLBtn.textContent='Copy YAML',1200);} 
+  });
+  setMode('visual');
+
+
+  const visualizerPanel = document.getElementById('visualizerPanel');
+  const explainerPanel = document.getElementById('explainerPanel');
+  const tabVisualizer = document.getElementById('tabVisualizer');
+  const tabExplainer = document.getElementById('tabExplainer');
+  const tabArchitecture = document.getElementById('tabArchitecture');
+  const architecturePanel = document.getElementById('architecturePanel');
+  const tabRoadmap = document.getElementById('tabRoadmap');
+  const roadmapPanel = document.getElementById('roadmapPanel');
+  function setTopTab(which){
+    const isViz = which==='visualizer';
+    const isExplainer = which==='explainer';
+    const isArch = which==='architecture';
+    const isRoadmap = which==='roadmap';
+    if (visualizerPanel) visualizerPanel.style.display = isViz ? 'grid' : 'none';
+    if (explainerPanel) explainerPanel.style.display = isExplainer ? 'block' : 'none';
+    if (architecturePanel) architecturePanel.style.display = isArch ? 'block' : 'none';
+    if (roadmapPanel) roadmapPanel.style.display = isRoadmap ? 'block' : 'none';
+    if (tabVisualizer) tabVisualizer.classList.toggle('active', isViz);
+    if (tabExplainer) tabExplainer.classList.toggle('active', isExplainer);
+    if (tabArchitecture) tabArchitecture.classList.toggle('active', isArch);
+    if (tabRoadmap) tabRoadmap.classList.toggle('active', isRoadmap);
+  }
+  if (tabVisualizer) tabVisualizer.addEventListener('click', ()=>setTopTab('visualizer'));
+  if (tabExplainer) tabExplainer.addEventListener('click', ()=>setTopTab('explainer'));
+  if (tabArchitecture) tabArchitecture.addEventListener('click', ()=>setTopTab('architecture'));
+  if (tabRoadmap) tabRoadmap.addEventListener('click', ()=>setTopTab('roadmap'));
+  setTopTab('visualizer');
+
+  const steps = Array.from(document.querySelectorAll('.flow-step'));
+  steps.forEach(s => s.addEventListener('click', () => s.classList.toggle('active')));
+  const expandToggle = document.getElementById('expandToggle');
+  if (expandToggle) {
+    expandToggle.addEventListener('click', () => {
+      const allActive = steps.every(s => s.classList.contains('active'));
+      if (allActive) {
+        steps.forEach(s => s.classList.remove('active'));
+        expandToggle.textContent = 'Expand all steps';
+      } else {
+        steps.forEach(s => s.classList.add('active'));
+        expandToggle.textContent = 'Collapse all steps';
+      }
+    });
+  }
+
+  const tabBtns = Array.from(document.querySelectorAll('.tab-btn'));
+  const tabPanels = Array.from(document.querySelectorAll('.tab-panel'));
+  tabBtns.forEach(btn => btn.onclick = () => {
+    const key = btn.dataset.tab;
+    tabBtns.forEach(b => b.classList.toggle('active', b===btn));
+    tabPanels.forEach(p => p.classList.toggle('active', p.id === 'tab-' + key));
+  });
+</script>
+</body>
+</html>

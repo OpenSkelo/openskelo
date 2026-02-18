@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenSkelo Full Stack Architecture</title>
+  <style>
+    :root{--bg:#0b1020;--card:#131b35;--border:#33406b;--text:#e8eeff;--muted:#aab8e6}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui;background:radial-gradient(1200px 700px at 20% -20%, #1f2a56 0%, var(--bg) 60%);color:var(--text)}
+    .wrap{max-width:1200px;margin:16px auto;padding:0 16px 34px}
+    h1{margin:0 0 6px;font-size:26px}
+    .sub{color:var(--muted);margin-bottom:12px}
+
+    .legend{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 12px}
+    .chip{padding:5px 9px;border-radius:999px;border:1px solid var(--border);font-size:12px}
+    .l1{background:rgba(110,231,183,.12);border-color:rgba(110,231,183,.4)}
+    .l2{background:rgba(147,197,253,.12);border-color:rgba(147,197,253,.4)}
+    .l3{background:rgba(252,165,165,.12);border-color:rgba(252,165,165,.4)}
+    .l4{background:rgba(252,211,77,.12);border-color:rgba(252,211,77,.4)}
+    .l5{background:rgba(196,181,253,.12);border-color:rgba(196,181,253,.4)}
+
+    .stack-shell{border:1px solid #3b4f8f;border-radius:14px;padding:12px;background:linear-gradient(180deg, rgba(21,31,64,.75), rgba(14,21,45,.75));box-shadow:inset 0 0 0 1px rgba(80,105,170,.2)}
+    .layers{display:grid;gap:10px}
+    .layer-arrow{display:flex;justify-content:center;align-items:center;color:#d9e6ff;font-size:22px;line-height:1;opacity:.85}
+
+    .layer{border:1px solid var(--border);border-radius:12px;padding:12px}
+    .layer h3{margin:0 0 8px;font-size:16px}
+
+    .nodes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+    @media (max-width:900px){.nodes{grid-template-columns:1fr}}
+    .node{border:1px dashed #4461a8;border-radius:10px;padding:9px;background:#0f1730}
+    .node b{display:block;margin-bottom:4px}
+    .small{font-size:12px;color:var(--muted);line-height:1.4}
+
+    .block-parent{border:1px solid #7b61ff;border-radius:14px;padding:10px;background:linear-gradient(180deg, rgba(88,65,180,.24), rgba(22,20,54,.9));box-shadow:0 0 0 1px rgba(123,97,255,.2) inset}
+    .block-parent-title{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:#e5dcff;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+    .block-parent-title .pill{padding:2px 8px;border-radius:999px;border:1px solid #9f8dff;background:#4b3aa0;color:#fff;font-size:11px}
+
+    .component-group{border:1px dashed #4a5f9f;border-radius:10px;padding:10px;background:rgba(14,23,48,.45)}
+    .component-title{font-size:12px;color:#b9c8f8;text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px}
+
+    .flow{margin-top:14px;border:1px solid var(--border);border-radius:12px;padding:12px;background:#0f1730}
+    .flow h3{margin:0 0 8px}
+    .lane-wrap{border:1px dashed #4860a5;border-radius:12px;padding:10px;background:rgba(15,23,48,.45)}
+    .lane-title{font-size:12px;color:#b9c8f8;text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px}
+    .line{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+    .box{padding:7px 10px;border-radius:8px;border:1px solid #435a95;background:#1a274f;font-size:12px}
+    .arrow{opacity:.8}
+
+    table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+    th,td{border:1px solid #30406f;padding:7px 8px;vertical-align:top}
+    th{background:#18244a;text-align:left}
+
+    .callout{margin-top:12px;padding:10px;border:1px solid rgba(252,211,77,.45);background:rgba(252,211,77,.12);border-radius:10px;font-size:13px}
+    .mono{font-family:ui-monospace,Menlo,monospace}
+  </style>
+</head>
+<body>
+<div class="wrap" id="wrapRoot">
+  <div id="localHeader">
+    <h1>OpenSkelo — Full Stack Architecture</h1>
+    <div class="sub">End-to-end view: UI, API, runtime core, provider adapters, durability, and shared memory flow.</div>
+  </div>
+
+  <div class="legend">
+    <span class="chip l1">Surface/UI</span>
+    <span class="chip l2">API & Transport</span>
+    <span class="chip l3">Runtime Core</span>
+    <span class="chip l4">Provider/LLM Boundary</span>
+    <span class="chip l5">Storage + Memory</span>
+  </div>
+
+  <div class="stack-shell">
+    <div class="layers">
+      <section class="layer" style="border-color:rgba(110,231,183,.55);background:linear-gradient(180deg, rgba(20,55,48,.38), rgba(14,25,47,.92))">
+        <h3>1) Surface Layer (Observer + Controls)</h3>
+        <div class="nodes">
+          <div class="node"><b>/dag dashboard</b><div class="small">Run controls, inspector, approvals, visual timeline.</div></div>
+          <div class="node"><b>Operator actions</b><div class="small">Run/stop, approve/reject, iterate, restart mode.</div></div>
+          <div class="node"><b>Observability surfaces</b><div class="small">Graphical dashboard + terminal/log/replay views.</div></div>
+        </div>
+      </section>
+
+      <div class="layer-arrow">↓</div>
+
+      <section class="layer" style="border-color:rgba(147,197,253,.55);background:linear-gradient(180deg, rgba(22,46,78,.36), rgba(14,25,47,.92))">
+        <h3>2) API + Transport Layer</h3>
+        <div class="nodes">
+          <div class="node"><b><span class="mono">/api/dag/run</span></b><div class="small">Starts run and builds executor context.</div></div>
+          <div class="node"><b>SSE + replay endpoints</b><div class="small">Live events, replay cursors, resilience fallback.</div></div>
+          <div class="node"><b>Approval + iteration endpoints</b><div class="small">Decision persistence, overrides, next-cycle spawn.</div></div>
+        </div>
+      </section>
+
+      <div class="layer-arrow">↓</div>
+
+      <div class="block-parent">
+        <div class="block-parent-title"><span class="pill">Block</span> Block Runtime Envelope (Layers 3–5)</div>
+
+        <section class="layer" style="border-color:rgba(252,165,165,.55);background:linear-gradient(180deg, rgba(86,33,48,.34), rgba(14,25,47,.92))">
+          <h3>3) Runtime Core (Deterministic Engine)</h3>
+          <div class="component-group">
+            <div class="component-title">Core Components</div>
+            <div class="nodes">
+              <div class="node"><b>Block Engine</b><div class="small">Parse DAG, resolve ready blocks, wire inputs, evaluate gates.</div></div>
+              <div class="node"><b>DAG Executor</b><div class="small">Orchestration, retries, contract checks, handoff checks.</div></div>
+              <div class="node"><b>Failure semantics</b><div class="small">Structured <span class="mono">error_code + stage</span> envelope.</div></div>
+            </div>
+          </div>
+        </section>
+
+        <div class="layer-arrow">↓</div>
+
+        <section class="layer" style="border-color:rgba(252,211,77,.55);background:linear-gradient(180deg, rgba(88,68,24,.34), rgba(14,25,47,.92))">
+          <h3>4) Provider/Agent Layer (Actual AI call)</h3>
+          <div class="component-group">
+            <div class="component-title">Provider Components</div>
+            <div class="nodes">
+              <div class="node"><b>Provider Adapter</b><div class="small">Converts generic dispatch request into runtime/provider call.</div></div>
+              <div class="node"><b>OpenClaw Provider</b><div class="small">Invokes agent, normalizes output, returns metadata.</div></div>
+              <div class="node"><b>Boundary point</b><div class="small">This is where LLM/agent inference actually runs.</div></div>
+            </div>
+          </div>
+        </section>
+
+        <div class="layer-arrow">↓</div>
+
+        <section class="layer" style="border-color:rgba(196,181,253,.6);background:linear-gradient(180deg, rgba(64,49,96,.34), rgba(14,25,47,.92))">
+          <h3>5) Durability + Memory + Replay Layer</h3>
+          <div class="component-group">
+            <div class="component-title">Storage Components</div>
+            <div class="nodes">
+              <div class="node"><b><span class="mono">dag_runs</span></b><div class="small">Authoritative run snapshots (status + block state + context).</div></div>
+              <div class="node"><b><span class="mono">dag_events</span></b><div class="small">Append-only timeline for replay and diagnostics.</div></div>
+              <div class="node"><b><span class="mono">dag_approvals</span></b><div class="small">Approval request/decision lifecycle + audit trail.</div></div>
+              <div class="node"><b>Run context memory</b><div class="small"><span class="mono">__shared_memory</span>, feedback history, decisions, cycle metadata.</div></div>
+              <div class="node"><b>Input override memory</b><div class="small"><span class="mono">__override_input_*</span> bridge values for gate-relevant inputs.</div></div>
+              <div class="node"><b>Recovery paths</b><div class="small">Orphan reconciliation, replay reads, restart-safe state reconstruction.</div></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow">
+    <h3>Execution Spine (high-level)</h3>
+    <div class="lane-wrap">
+      <div class="lane-title">Control path + data path</div>
+      <div class="line">
+        <span class="box">UI Trigger</span><span class="arrow">⟶</span>
+        <span class="box">API Start</span><span class="arrow">⟶</span>
+        <span class="box">Core Orchestration</span><span class="arrow">⟶</span>
+        <span class="box" style="border-color:rgba(252,211,77,.6)">Provider Dispatch (AI call)</span><span class="arrow">⟶</span>
+        <span class="box">Contract + Gates</span><span class="arrow">⟶</span>
+        <span class="box">Persist + Broadcast</span>
+      </div>
+    </div>
+
+    <div class="lane-wrap" style="margin-top:10px">
+      <div class="lane-title">Ownership & Responsibility Matrix</div>
+      <table>
+        <tr><th>Concern</th><th>Owned by</th><th>Why it matters</th></tr>
+        <tr><td>Input precedence</td><td>Core block engine</td><td>Deterministic behavior and explicit override control.</td></tr>
+        <tr><td>Human approval bridge</td><td>API + runtime context wiring</td><td>Lets operator decisions affect gate-relevant inputs safely.</td></tr>
+        <tr><td>Output contract safety</td><td>Executor + adapter</td><td>Prevents malformed outputs from silently propagating.</td></tr>
+        <tr><td>Shared memory continuity</td><td>Run context + durable snapshots</td><td>Carries feedback/decisions across iterations and restarts.</td></tr>
+      </table>
+    </div>
+
+    <div class="callout"><b>Important:</b> Core remains generic. Pipeline-specific behavior comes from YAML definitions, gates, and context policy — not hardcoded block names.</div>
+  </div>
+</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.get('embed') === '1') {
+    const h = document.getElementById('localHeader');
+    if (h) h.style.display = 'none';
+    const w = document.getElementById('wrapRoot');
+    if (w) { w.style.margin = '0 auto'; w.style.paddingTop = '0'; }
+    document.body.style.background = 'transparent';
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>OpenSkelo Visual Roadmap</title>
+  <style>
+    :root{--bg:#0b1020;--card:#131b35;--border:#33406b;--text:#e8eeff;--muted:#aab8e6;--ok:#39d98a;--warn:#ffd166;--bad:#ff6b6b;--info:#7aa2ff}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui;background:radial-gradient(1200px 700px at 20% -20%, #1f2a56 0%, var(--bg) 60%);color:var(--text)}
+    .wrap{max-width:1200px;margin:16px auto;padding:0 16px 34px}
+    h1{margin:0 0 6px;font-size:24px}.sub{color:var(--muted);margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}@media(max-width:980px){.grid{grid-template-columns:1fr}}
+    .lane{border:1px solid var(--border);border-radius:12px;background:var(--card);padding:10px}
+    .lane h3{margin:0 0 8px;font-size:15px}
+    .item{border:1px dashed #4662a8;border-radius:10px;padding:8px;margin:7px 0;background:#0f1730;font-size:13px}
+    .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid var(--border);margin-right:6px}
+    .p0{background:rgba(255,107,107,.14);border-color:rgba(255,107,107,.45)}
+    .p1{background:rgba(255,209,102,.14);border-color:rgba(255,209,102,.45)}
+    .p2{background:rgba(122,162,255,.14);border-color:rgba(122,162,255,.45)}
+    .bar{height:8px;border-radius:999px;background:#1a274f;overflow:hidden;margin-top:6px}
+    .fill{height:100%;background:linear-gradient(90deg,#3ed89f,#6aa8ff)}
+    .section{margin-top:12px;border:1px solid var(--border);border-radius:12px;background:#0f1730;padding:10px}
+    table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #30406f;padding:7px 8px;vertical-align:top}th{background:#18244a;text-align:left}
+    .chip{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid var(--border);font-size:12px;margin-right:6px}
+    .ok{background:rgba(57,217,138,.14);border-color:rgba(57,217,138,.45)}
+    .warn{background:rgba(255,209,102,.14);border-color:rgba(255,209,102,.45)}
+    .bad{background:rgba(255,107,107,.14);border-color:rgba(255,107,107,.45)}
+  </style>
+</head>
+<body>
+<div class="wrap" id="wrapRoot">
+  <div id="localHeader">
+    <h1>OpenSkelo — Visual Roadmap (Alpha and Beyond)</h1>
+    <div class="sub">Now, next alpha gates, and beyond-alpha path in one visual view.</div>
+  </div>
+
+  <div class="grid">
+    <div class="lane">
+      <h3>Now (Active)</h3>
+      <div class="item"><span class="tag p0">P0</span> Block reliability + continuation stability</div>
+      <div class="item"><span class="tag p0">P0</span> Approval bridge + iteration behavior</div>
+      <div class="item"><span class="tag p1">P1</span> Operator diagnostics + UX consistency</div>
+      <div class="bar"><div class="fill" style="width:68%"></div></div>
+      <div style="font-size:12px;color:#b9c8f8;margin-top:4px">Current execution progress: ~68%</div>
+    </div>
+
+    <div class="lane">
+      <h3>Next (Alpha Gates)</h3>
+      <div class="item"><span class="tag p0">Gate</span> Restart-safe active run recovery</div>
+      <div class="item"><span class="tag p0">Gate</span> Provider-agnostic canonical dispatch</div>
+      <div class="item"><span class="tag p1">Gate</span> Verify endpoint + consistency checks</div>
+      <div class="item"><span class="tag p1">Gate</span> Approval lifecycle TTL/escalation hardening</div>
+      <div class="bar"><div class="fill" style="width:42%"></div></div>
+      <div style="font-size:12px;color:#b9c8f8;margin-top:4px">Alpha gate completion: ~42%</div>
+    </div>
+
+    <div class="lane">
+      <h3>Beyond Alpha</h3>
+      <div class="item"><span class="tag p2">Beta</span> Provider ecosystem expansion</div>
+      <div class="item"><span class="tag p2">Beta</span> Policy packs + deterministic run bundles</div>
+      <div class="item"><span class="tag p2">Beta</span> Artifact registry + richer render adapters</div>
+      <div class="item"><span class="tag p2">Later</span> Advanced utilization/cost observability</div>
+      <div class="bar"><div class="fill" style="width:18%"></div></div>
+      <div style="font-size:12px;color:#b9c8f8;margin-top:4px">Beyond-alpha prep: ~18%</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3 style="margin:0 0 8px">Alpha Definition of Done Snapshot</h3>
+    <span class="chip ok">Done</span><span class="chip warn">In Progress</span><span class="chip bad">Missing</span>
+    <table style="margin-top:8px">
+      <tr><th>Gate</th><th>Status</th><th>Notes</th></tr>
+      <tr><td>Single runtime (/api/dag/*) convergence</td><td><span class="chip ok">Done</span></td><td>Legacy runtime removed.</td></tr>
+      <tr><td>Deterministic contract enforcement</td><td><span class="chip ok">Done</span></td><td>Strict output + repair + diagnostics shipped.</td></tr>
+      <tr><td>Approval + iteration semantics</td><td><span class="chip warn">In Progress</span></td><td>Bridge landed; lifecycle hardening remains.</td></tr>
+      <tr><td>Restart-safe active run recovery</td><td><span class="chip bad">Missing</span></td><td>Major alpha blocker.</td></tr>
+      <tr><td>Provider-agnostic canonical dispatch</td><td><span class="chip bad">Missing</span></td><td>Still openclaw-first runtime path.</td></tr>
+      <tr><td>Runtime truth verify endpoint</td><td><span class="chip warn">In Progress</span></td><td>Diagnostics improved; endpoint pending.</td></tr>
+    </table>
+  </div>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.get('embed') === '1') {
+    const h = document.getElementById('localHeader');
+    if (h) h.style.display = 'none';
+    const w = document.getElementById('wrapRoot');
+    if (w) { w.style.margin = '0 auto'; w.style.paddingTop = '0'; }
+    document.body.style.background = 'transparent';
+  }
+</script>
+</body>
+</html>
