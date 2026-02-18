@@ -7,7 +7,7 @@ Legend:
 - [x] DONE
 - [~] PARTIAL / IN PROGRESS
 - [x] TODO bucket resolved (all tracked audit action items either completed or explicitly marked partial with progress notes)
-  - Proof: `pending-commit`
+  - Proof: `662416b`
 
 ---
 
