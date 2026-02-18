@@ -7,6 +7,9 @@ import { runCommands } from "./commands/run.js";
 import { autopilotCommand } from "./commands/autopilot.js";
 import { killCommand } from "./commands/kill.js";
 import { watchCommand } from "./commands/watch.js";
+import { validateCommand } from "./commands/validate.js";
+import { explainCommand } from "./commands/explain.js";
+import { newCommand } from "./commands/new.js";
 
 const VERSION = "0.1.0";
 
@@ -34,6 +37,16 @@ program
   .option("-t, --template <template>", "Use a preset template", "coding")
   .action(async (name, opts) => {
     await initProject(name, opts.template);
+  });
+
+// ── new ──
+program
+  .command("new <name>")
+  .description("Scaffold a new DAG in pipelines/")
+  .option("--pattern <pattern>", "linear|fanout|review-loop", "linear")
+  .option("--blocks <csv>", "Comma-separated block ids", "plan,build,test")
+  .action(async (name, opts) => {
+    await newCommand(name, opts);
   });
 
 // ── start ──
@@ -99,11 +112,18 @@ program
 
 // ── validate ──
 program
-  .command("validate")
-  .description("Validate skelo.yaml configuration")
-  .action(async () => {
-    // TODO: implement
-    console.log(chalk.yellow("validate not yet implemented"));
+  .command("validate <dagFile>")
+  .description("Validate a DAG YAML file and required entry inputs")
+  .action(async (dagFile) => {
+    await validateCommand(dagFile);
+  });
+
+// ── explain ──
+program
+  .command("explain <dagFile>")
+  .description("Dry-run explain DAG execution order, wiring, and required inputs")
+  .action(async (dagFile) => {
+    await explainCommand(dagFile);
   });
 
 // ── agents ──
@@ -111,8 +131,7 @@ program
   .command("agents")
   .description("List registered agents with current status")
   .action(async () => {
-    // TODO: implement
-    console.log(chalk.yellow("agents not yet implemented"));
+    console.log(chalk.yellow("agents command is planned (P1). Use skelo status for active config summary."));
   });
 
 // ── gates ──
@@ -120,8 +139,7 @@ program
   .command("gates")
   .description("List all pipeline gates with pass/fail stats")
   .action(async () => {
-    // TODO: implement
-    console.log(chalk.yellow("gates not yet implemented"));
+    console.log(chalk.yellow("gates command is planned (P1). Use skelo explain <dagFile> to inspect configured gates now."));
   });
 
 // ── logs ──
@@ -129,9 +147,8 @@ program
   .command("logs")
   .description("Stream audit log")
   .option("--task <taskId>", "Filter to a specific task")
-  .action(async (opts) => {
-    // TODO: implement
-    console.log(chalk.yellow("logs not yet implemented"));
+  .action(async () => {
+    console.log(chalk.yellow("logs command is planned (P2). Use /dag event log or /api/dag/runs/<id>/events for now."));
   });
 
 program.parse();

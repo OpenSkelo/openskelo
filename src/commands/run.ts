@@ -1,5 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import { readFileSync } from "fs";
+import { watchCommand } from "./watch.js";
+import { loadDagFromFile, missingRequiredInputs, parseInputPairs, requiredContextInputs, resolveDagPath } from "./dag-cli-utils.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,42 +23,38 @@ const DEFAULT_API = process.env.OPENSKELO_API ?? "http://localhost:4040";
 
 export function runCommands(parent: Command): void {
   parent
+    .argument("[dagFile]", "DAG yaml file (path, pipelines/name, examples/name)")
+    .option("--input <key=value>", "Named context input (repeatable)", collect, [])
+    .option("--watch", "Watch run live in terminal", false)
+    .option("--provider <nameOrType>", "Provider override")
+    .option("--api <url>", "API base URL", DEFAULT_API)
+    .description("Run a DAG directly: skelo run my-pipeline.yaml --input prompt=\"Build login\" --watch")
+    .action(async (dagFile, opts) => {
+      if (!dagFile) {
+        console.log(chalk.dim("Tip: skelo run <dag-file> --input prompt=\"...\" --watch"));
+        return;
+      }
+      await runDagFile(dagFile, opts);
+    });
+
+  parent
     .command("start")
-    .description("Start a DAG run")
-    .requiredOption("--example <file>", "Example DAG yaml filename from examples/")
+    .description("Start a DAG run (legacy flags supported)")
+    .option("--example <file>", "DAG yaml filename from examples/ or pipelines/")
+    .option("--pipeline <file>", "Alias for --example")
+    .option("--dag-file <file>", "Run DAG YAML by path")
+    .option("--input <key=value>", "Named context input (repeatable)", collect, [])
+    .option("--watch", "Watch run live in terminal", false)
     .option("--provider <nameOrType>", "Provider override")
     .option("--context-json <json>", "JSON object for run context", "{}")
     .option("--api <url>", "API base URL", DEFAULT_API)
     .action(async (opts) => {
-      let context: Record<string, unknown> = {};
-      try {
-        context = JSON.parse(opts.contextJson);
-      } catch {
-        console.error(chalk.red("✗ --context-json must be valid JSON"));
+      const dagFile = (opts.dagFile as string | undefined) ?? (opts.pipeline as string | undefined) ?? (opts.example as string | undefined);
+      if (!dagFile) {
+        console.error(chalk.red("✗ Provide --dag-file (or --pipeline/--example)"));
         process.exit(1);
       }
-
-      const body: Record<string, unknown> = {
-        example: opts.example,
-        context,
-      };
-      if (opts.provider) body.provider = opts.provider;
-
-      const res = await fetch(`${opts.api}/api/dag/run`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      const data = (await res.json()) as Record<string, unknown>;
-      if (!res.ok) {
-        console.error(chalk.red(`✗ ${(data.error as string) ?? `HTTP ${res.status}`}`));
-        process.exit(1);
-      }
-
-      console.log(chalk.green(`✓ Run started: ${String(data.run_id ?? "unknown")}`));
-      if (data.status_url) console.log(chalk.dim(`  status: ${String(data.status_url)}`));
-      if (data.sse_url) console.log(chalk.dim(`  events: ${String(data.sse_url)}`));
+      await runDagFile(dagFile, opts);
     });
 
   parent
@@ -228,4 +227,73 @@ export function runCommands(parent: Command): void {
       const stopped = Number(data.stopped ?? 0);
       console.log(chalk.green(`✓ Emergency stop complete. Stopped ${stopped} run${stopped === 1 ? "" : "s"}.`));
     });
+}
+
+async function runDagFile(dagFile: string, opts: Record<string, unknown>): Promise<void> {
+  const api = String(opts.api ?? DEFAULT_API);
+  const inputContext = parseInputPairs(opts.input as string[] | undefined);
+
+  let context: Record<string, unknown> = {};
+  try {
+    context = JSON.parse(String(opts.contextJson ?? "{}")) as Record<string, unknown>;
+  } catch {
+    console.error(chalk.red("✗ --context-json must be valid JSON"));
+    process.exit(1);
+  }
+
+  context = { ...context, ...inputContext };
+
+  const loaded = loadDagFromFile(dagFile);
+  const { dag } = loaded;
+  const missing = missingRequiredInputs(requiredContextInputs(dag), context);
+  if (missing.length > 0) {
+    console.error(chalk.red("✗ Missing required input(s):"));
+    for (const m of missing) {
+      console.error(`  - ${m.name} (${m.type})${m.description ? ` — ${m.description}` : ""}`);
+    }
+    console.error(chalk.dim(`Usage: skelo run ${dagFile} --input ${missing[0].name}=...`));
+    process.exit(1);
+  }
+
+  const resolvedPath = resolveDagPath(dagFile);
+  const body: Record<string, unknown> = {
+    dag: loaded.raw,
+    context,
+  };
+  if (opts.provider) body.provider = String(opts.provider);
+
+  let res: Response;
+  try {
+    res = await fetch(`${api}/api/dag/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    console.error(chalk.red(`✗ Failed to reach API at ${api}: ${String((err as Error).message ?? err)}`));
+    process.exit(1);
+    return;
+  }
+
+  const data = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) {
+    console.error(chalk.red(`✗ ${(data.error as string) ?? `HTTP ${res.status}`}`));
+    process.exit(1);
+  }
+
+  const runId = String(data.run_id ?? "unknown");
+  console.log(chalk.green(`✓ Run started: ${runId}`));
+  console.log(chalk.dim(`  dag: ${dag.name}`));
+  console.log(chalk.dim(`  file: ${resolvedPath}`));
+  if (data.status_url) console.log(chalk.dim(`  status: ${String(data.status_url)}`));
+  if (data.sse_url) console.log(chalk.dim(`  events: ${String(data.sse_url)}`));
+
+  if (opts.watch) {
+    await watchCommand(runId, { api });
+  }
+}
+
+function collect(value: string, prev: string[]): string[] {
+  prev.push(value);
+  return prev;
 }
