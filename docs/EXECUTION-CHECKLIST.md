@@ -122,8 +122,8 @@ Exit criteria:
 ## Phase 4 — Viral Demo Artifact (P1)
 
 ### Build
-- [ ] Terminal renderer optimized for shareability
-- [ ] Display: block states, gate outcomes, retry loops, correction passes
+- [x] Terminal renderer optimized for shareability (`skelo run watch <runId>`)
+- [x] Display: block states, gate outcomes, retry loops, correction passes
 - [ ] Include budget/tokens metadata in readable format
 
 ### Artifact

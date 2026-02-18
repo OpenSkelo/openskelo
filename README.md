@@ -204,6 +204,7 @@ skelo status                   # Pipeline health overview
 skelo run start --example ...  # Start DAG run (canonical)
 skelo run list                 # List DAG runs
 skelo run status <runId>       # DAG run status
+skelo run watch <runId>        # Terminal watch view (shareable)
 skelo run approve <runId>      # Approve pending gate
 skelo run reject <runId> --feedback "..."   # Reject pending gate
 skelo run stop <runId>         # Stop a run
@@ -264,6 +265,7 @@ OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 ## 60-Second Demo
 
 - Quick walkthrough: `docs/DEMO-60S.md`
+- Terminal-first capture runbook: `docs/DEMO-VIRAL-RUNBOOK.md`
 - Claim alignment: `docs/CLAIM-ALIGNMENT.md`
 - ID strategy review: `docs/ID-STRATEGY-REVIEW.md`
 - Mutable-state contract: `docs/MUTABILITY-CONTRACT.md`
