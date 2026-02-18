@@ -68,7 +68,8 @@ Legend:
 - [~] Durable tables + replay endpoint implemented (durable run reads and list views now reconstruct from event stream)
 - [~] Store-first/event reconstruction advanced: durable `GET /api/dag/runs/:id` now reconstructs state from event stream on fallback (full event-sourced completion pending)
 - [ ] Remove legacy DB schema paths/tables in hard-cut release
-- [ ] Numbered migration framework (`schema_migrations` + migration files)
+- [x] Numbered migration framework baseline (`schema_migrations` + ordered migration runner)
+  - Proof: `pending-commit`
 
 ## 8) API & Server
 - [x] Legacy `/api/tasks*` deprecation headers
