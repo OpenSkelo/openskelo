@@ -660,8 +660,13 @@ function parseBlockDef(raw: Record<string, unknown>): BlockDef {
 }
 
 function parsePortDef(raw: unknown, path: string): PortDef {
+  const allowedTypes = new Set<PortDef["type"]>(["string", "number", "boolean", "json", "file", "artifact"]);
+
   // Shorthand: just a type string
   if (typeof raw === "string") {
+    if (!allowedTypes.has(raw as PortDef["type"])) {
+      throw new Error(`Invalid port type at ${path}: '${raw}'. Allowed: ${Array.from(allowedTypes).join(", ")}`);
+    }
     return { type: raw as PortDef["type"], required: true };
   }
 
@@ -670,8 +675,13 @@ function parsePortDef(raw: unknown, path: string): PortDef {
   }
 
   const obj = raw as Record<string, unknown>;
+  const type = (obj.type as PortDef["type"]) ?? "string";
+  if (!allowedTypes.has(type)) {
+    throw new Error(`Invalid port type at ${path}.type: '${String(obj.type)}'. Allowed: ${Array.from(allowedTypes).join(", ")}`);
+  }
+
   return {
-    type: (obj.type as PortDef["type"]) ?? "string",
+    type,
     description: obj.description as string | undefined,
     required: obj.required !== false,
     default: obj.default,
@@ -689,11 +699,88 @@ function parseAgentRef(raw: Record<string, unknown> | undefined): AgentRef {
 
 function parseBlockGates(raw: unknown): BlockGate[] {
   if (!Array.isArray(raw)) return [];
-  return raw.map((g: Record<string, unknown>) => ({
-    name: g.name as string,
-    check: g.check as BlockGateCheck,
-    error: (g.error as string) ?? "Gate failed",
-  }));
+
+  return raw.map((gateRaw: unknown, i: number) => {
+    if (!gateRaw || typeof gateRaw !== "object") {
+      throw new Error(`Invalid gate at gates[${i}]: must be an object`);
+    }
+
+    const g = gateRaw as Record<string, unknown>;
+    const name = String(g.name ?? "").trim();
+    if (!name) throw new Error(`Invalid gate at gates[${i}]: 'name' is required`);
+
+    return {
+      name,
+      check: parseBlockGateCheck(g.check, `gates[${i}].check`),
+      error: typeof g.error === "string" && g.error.trim() ? g.error : "Gate failed",
+    };
+  });
+}
+
+function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
+  if (!raw || typeof raw !== "object") {
+    throw new Error(`Invalid gate check at ${path}: must be an object`);
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const type = String(obj.type ?? "");
+
+  switch (type) {
+    case "port_not_empty": {
+      if (typeof obj.port !== "string" || !obj.port.trim()) {
+        throw new Error(`Invalid ${path}: port_not_empty requires non-empty 'port'`);
+      }
+      return { type, port: obj.port };
+    }
+    case "port_matches": {
+      if (typeof obj.port !== "string" || !obj.port.trim()) {
+        throw new Error(`Invalid ${path}: port_matches requires non-empty 'port'`);
+      }
+      if (typeof obj.pattern !== "string" || !obj.pattern) {
+        throw new Error(`Invalid ${path}: port_matches requires non-empty 'pattern'`);
+      }
+      try {
+        // Validate regex at parse-time
+        new RegExp(obj.pattern);
+      } catch {
+        throw new Error(`Invalid ${path}: pattern is not a valid regex`);
+      }
+      return { type, port: obj.port, pattern: obj.pattern };
+    }
+    case "port_min_length": {
+      if (typeof obj.port !== "string" || !obj.port.trim()) {
+        throw new Error(`Invalid ${path}: port_min_length requires non-empty 'port'`);
+      }
+      const min = Number(obj.min);
+      if (!Number.isFinite(min) || min < 0) {
+        throw new Error(`Invalid ${path}: port_min_length requires numeric min >= 0`);
+      }
+      return { type, port: obj.port, min };
+    }
+    case "port_type": {
+      if (typeof obj.port !== "string" || !obj.port.trim()) {
+        throw new Error(`Invalid ${path}: port_type requires non-empty 'port'`);
+      }
+      if (typeof obj.expected !== "string" || !obj.expected.trim()) {
+        throw new Error(`Invalid ${path}: port_type requires non-empty 'expected'`);
+      }
+      return { type, port: obj.port, expected: obj.expected };
+    }
+    case "shell": {
+      if (typeof obj.command !== "string" || !obj.command.trim()) {
+        throw new Error(`Invalid ${path}: shell requires non-empty 'command'`);
+      }
+      return { type, command: obj.command };
+    }
+    case "expr": {
+      if (typeof obj.expression !== "string" || !obj.expression.trim()) {
+        throw new Error(`Invalid ${path}: expr requires non-empty 'expression'`);
+      }
+      return { type, expression: obj.expression };
+    }
+    default:
+      throw new Error(`Invalid ${path}: unknown gate check type '${type}'`);
+  }
 }
 
 function parseGateFailRules(raw: unknown): GateFailRule[] {

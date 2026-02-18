@@ -78,6 +78,53 @@ describe("Block Engine — parseDAG", () => {
       })
     ).toThrow(/unknown output port/i);
   });
+
+  it("rejects invalid gate check type at parse time", () => {
+    expect(() =>
+      engine.parseDAG({
+        name: "bad-gate-type",
+        blocks: [{
+          id: "a",
+          inputs: { x: "string" },
+          outputs: { y: "string" },
+          pre_gates: [{ name: "g1", check: { type: "unknown_gate" }, error: "nope" }],
+          agent: {},
+        }],
+        edges: [],
+      })
+    ).toThrow(/unknown gate check type/i);
+  });
+
+  it("rejects invalid gate regex at parse time", () => {
+    expect(() =>
+      engine.parseDAG({
+        name: "bad-gate-regex",
+        blocks: [{
+          id: "a",
+          inputs: { x: "string" },
+          outputs: { y: "string" },
+          pre_gates: [{ name: "g1", check: { type: "port_matches", port: "x", pattern: "(" }, error: "nope" }],
+          agent: {},
+        }],
+        edges: [],
+      })
+    ).toThrow(/valid regex/i);
+  });
+
+  it("rejects invalid port type at parse time", () => {
+    expect(() =>
+      engine.parseDAG({
+        name: "bad-port-type",
+        blocks: [{
+          id: "a",
+          inputs: { x: "wat" },
+          outputs: { y: "string" },
+          agent: {},
+        }],
+        edges: [],
+      })
+    ).toThrow(/invalid port type/i);
+  });
 });
 
 describe("Block Engine — createRun", () => {
