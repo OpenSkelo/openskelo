@@ -113,7 +113,7 @@ Legend:
 
 ## 11) Performance & Scalability
 - [x] Edge indexing for large DAGs (cached incoming edge lookup map in block engine)
-  - Proof: `pending-commit`
+  - Proof: `40d98c2`
 - [ ] Executor/API isolation strategy (worker thread path)
 - [ ] Hosted-scale queue strategy (future)
 
