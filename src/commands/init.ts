@@ -376,7 +376,7 @@ export async function initProject(name?: string, template: string = "coding", op
   // Write README
   writeFileSync(
     join(dir, "README.md"),
-    `# ${projectName}\n\nPowered by [OpenSkelo](https://github.com/OpenSkelo/openskelo) — give your AI agents a backbone.\n\n## Quick Start\n\n\`\`\`bash\n# Start runtime + dashboard\nnpx openskelo start\n\n# In another terminal, start a DAG run\nnpx openskelo run start --example ${selected.dagFile} --context-json '{"prompt":"hello"}'\n\n# Check run status\nnpx openskelo run list\n\`\`\`\n\n- Project config: \`skelo.yaml\`\n- Starter DAG: \`examples/${selected.dagFile}\`\n\nThis project uses v2 DAG-first templates.\n`
+    `# ${projectName}\n\nPowered by [OpenSkelo](https://github.com/OpenSkelo/openskelo) — give your AI agents a backbone.\n\n## Quick Start\n\n\`\`\`bash\n# Start runtime + dashboard\nnpx openskelo start\n\n# In another terminal, start a DAG run\nnpx openskelo run examples/${selected.dagFile} --input prompt="hello"\n\n# Check run status\nnpx openskelo run list\n\`\`\`\n\n- Project config: \`skelo.yaml\`\n- Starter DAG: \`examples/${selected.dagFile}\`\n\nThis project uses v2 DAG-first templates.\n`
   );
 
   console.log(chalk.green("  ✓ ") + "skelo.yaml" + chalk.dim(" (project config)"));
@@ -387,6 +387,6 @@ export async function initProject(name?: string, template: string = "coding", op
   console.log(chalk.hex("#f97316")(`\n🦴 Done! Next steps:\n`));
   console.log(chalk.dim(`  cd ${projectName}`));
   console.log(chalk.dim("  npx openskelo start"));
-  console.log(chalk.dim(`  npx openskelo run start --example ${selected.dagFile} --context-json '{\"prompt\":\"hello\"}'`));
+  console.log(chalk.dim(`  npx openskelo run examples/${selected.dagFile} --input prompt=\"hello\"`));
   console.log();
 }

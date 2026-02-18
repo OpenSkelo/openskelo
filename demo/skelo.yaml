@@ -1,4 +1,5 @@
-# skelo.yaml — proof of concept: one block
+# skelo.yaml — demo configuration
+# Agents cover all roles used by example pipelines.
 
 name: skelo-demo
 
@@ -6,59 +7,55 @@ providers:
   - name: local
     type: ollama
     url: http://localhost:11434
-  - name: openclaw
-    type: openclaw
+
+  # Uncomment to use OpenAI-compatible API (OpenRouter, etc.)
+  # - name: cloud
+  #   type: openai
+  #   url: https://openrouter.ai/api/v1
+  #   env: OPENROUTER_API_KEY
 
 agents:
+  planner:
+    role: manager
+    capabilities: [planning, writing]
+    provider: local
+    model: llama3:8b
+    max_concurrent: 1
+
   coder:
     role: worker
-    capabilities: [coding]
+    capabilities: [coding, writing, general]
     provider: local
-    model: openai-codex/gpt-5.3-codex
+    model: codellama:13b
     max_concurrent: 1
 
   reviewer:
     role: reviewer
-    capabilities: [coding]
+    capabilities: [coding, writing, qa]
     provider: local
-    model: openai-codex/gpt-5.3-codex
+    model: llama3:8b
     max_concurrent: 1
 
+  # Uncomment when you have an image provider
+  # image-gen:
+  #   role: specialist
+  #   capabilities: [images]
+  #   provider: cloud
+  #   model: dall-e-3
+  #   max_concurrent: 1
+
+# Legacy pipeline config (required by SkeloConfig type, will be deprecated)
 pipelines:
-  coding:
+  default:
     stages:
       - name: PENDING
         transitions: [IN_PROGRESS]
       - name: IN_PROGRESS
-        route: { role: worker, capability: coding }
-        transitions: [REVIEW, BLOCKED]
-      - name: REVIEW
-        route: { role: reviewer, capability: coding }
-        transitions: [DONE, IN_PROGRESS]
+        route: { role: worker }
+        transitions: [DONE]
       - name: DONE
-      - name: BLOCKED
-        transitions: [PENDING]
 
-gates:
-  - name: needs-assignee
-    on: { from: PENDING, to: IN_PROGRESS }
-    check: { type: not_empty, field: assigned }
-    error: "Assign an agent before starting work"
-
-  - name: structured-feedback
-    on: { from: REVIEW, to: IN_PROGRESS }
-    check: { type: contains, field: notes, values: ["WHAT:", "WHERE:", "FIX:"] }
-    error: "Bounce requires WHAT, WHERE, and FIX in notes"
-
-  - name: done-evidence
-    on: { to: DONE }
-    check: { type: min_length, field: notes, min: 10 }
-    error: "Provide evidence of completion in notes (min 10 chars)"
-
-  - name: max-bounces
-    on: { to: IN_PROGRESS }
-    check: { type: max_value, field: bounce_count, max: 3 }
-    error: "Task exceeded max bounce limit — blocked for review"
+gates: []
 
 storage: sqlite
 

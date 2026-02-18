@@ -1,4 +1,5 @@
-# Example: Content pipeline — with parallel branches (outline + images run simultaneously)
+# Content pipeline — linear flow: outline → draft → edit → publish
+# For image generation, see content-pipeline-hybrid.yaml
 name: content-pipeline
 
 blocks:
@@ -46,7 +47,7 @@ blocks:
     outputs:
       draft:
         type: string
-        description: "Full draft content"
+        description: "Full draft content in markdown"
       word_count:
         type: number
         description: "Word count"
@@ -60,52 +61,72 @@ blocks:
         error: "Draft must be at least 500 characters"
     retry: { max_attempts: 1, backoff: none, delay_ms: 0 }
 
-  - id: images
-    name: Generate Images
-    inputs:
-      outline:
-        type: json
-        description: "Content outline for image context"
-    outputs:
-      image_urls:
-        type: json
-        description: "Generated image URLs"
-    agent:
-      role: specialist
-      capability: images
-    pre_gates: []
-    post_gates: []
-    retry: { max_attempts: 2, backoff: linear, delay_ms: 2000 }
-
   - id: edit
     name: Edit & Polish
     inputs:
       draft:
         type: string
         description: "Draft to edit"
-      image_urls:
-        type: json
-        description: "Images to integrate"
-        required: false
     outputs:
-      final:
+      final_markdown:
         type: string
-        description: "Edited final content"
+        description: "Edited final content in markdown"
       changelog:
         type: string
-        description: "What was changed"
+        description: "Summary of edits made"
     agent:
       role: reviewer
       capability: writing
     pre_gates: []
-    post_gates: []
+    post_gates:
+      - name: has-content
+        check: { type: port_not_empty, port: final_markdown }
+        error: "Editor must produce final content"
+    retry: { max_attempts: 0, backoff: none, delay_ms: 0 }
+
+  - id: publish
+    mode: deterministic
+    name: Save to File
+    inputs:
+      final_markdown:
+        type: string
+        description: "Final content to write to disk"
+    outputs:
+      desktop_file_path:
+        type: string
+        description: "Absolute path to written file"
+      desktop_file_name:
+        type: string
+        description: "Filename"
+      bytes_written:
+        type: number
+        description: "Bytes written"
+      save_summary:
+        type: string
+        description: "Write result summary"
+      final_markdown:
+        type: string
+        description: "Markdown that was written"
+    deterministic:
+      handler: builtin:write-file
+      config:
+        content_from: final_markdown
+        default_path_template: "./output/content-{timestamp}.md"
+        timestamp_format: "YYYYMMDD-HHmmss"
+        mkdir: true
+        overwrite: false
+    pre_gates:
+      - name: has-content
+        check: { type: port_not_empty, port: final_markdown }
+        error: "Cannot publish empty content"
+    post_gates:
+      - name: has-output-path
+        check: { type: port_matches, port: desktop_file_path, pattern: "content-[0-9]{8}-[0-9]{6}\\.md$" }
+        error: "Must save markdown with content-YYYYMMDD-HHMMSS.md filename"
     retry: { max_attempts: 0, backoff: none, delay_ms: 0 }
 
 edges:
-  # outline feeds both draft AND images (parallel branches)
   - { from: outline, output: outline, to: draft, input: outline }
   - { from: outline, output: tone, to: draft, input: tone }
-  - { from: outline, output: outline, to: images, input: outline }
-  # draft + images merge into edit
   - { from: draft, output: draft, to: edit, input: draft }
-  - { from: images, output: image_urls, to: edit, input: image_urls }
+  - { from: edit, output: final_markdown, to: publish, input: final_markdown }

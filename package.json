@@ -16,6 +16,7 @@
     }
   },
   "scripts": {
+    "preinstall": "node scripts/check-node.mjs",
     "build": "tsup",
     "dev": "tsup --watch",
     "start": "node dist/cli.js start",
@@ -54,7 +55,7 @@
     "url": "https://github.com/OpenSkelo/openskelo/issues"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": "22.x"
   },
   "dependencies": {
     "@hono/node-server": "^1.0.0",

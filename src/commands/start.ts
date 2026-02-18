@@ -123,5 +123,37 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
 
 async function startNodeServer(app: ReturnType<typeof createAPI>, port: number) {
   const { serve } = await import("@hono/node-server");
-  return serve({ fetch: app.fetch, port });
+
+  const server = serve({ fetch: app.fetch, port });
+
+  // Handle port-in-use gracefully instead of crashing
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(chalk.red(`\n  ✗ Port ${port} is already in use.`));
+      console.error(chalk.dim(`    Kill the existing process:`));
+      console.error(chalk.dim(`    kill -9 $(lsof -t -iTCP:${port} -sTCP:LISTEN) 2>/dev/null`));
+      console.error(chalk.dim(`    Or use a different port: --port ${port + 1}\n`));
+      process.exit(1);
+    }
+    throw err;
+  });
+
+  // Graceful shutdown on SIGTERM/SIGINT
+  const shutdown = () => {
+    console.log(chalk.dim("\n  Shutting down..."));
+    server.close(() => {
+      console.log(chalk.dim("  ✓ Server closed"));
+      process.exit(0);
+    });
+    // Force exit after 5s if connections don't drain
+    setTimeout(() => {
+      console.log(chalk.dim("  ⚠ Force exit (connections didn't drain)"));
+      process.exit(1);
+    }, 5000).unref();
+  };
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+
+  return server;
 }
