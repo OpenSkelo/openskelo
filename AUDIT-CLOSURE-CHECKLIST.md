@@ -48,7 +48,7 @@ Legend:
 - [x] Provider override routing tests (name/type)
   - Proof: `deceee7`
 - [x] Docs support matrix clarity (implemented vs planned) with explicit table in README
-  - Proof: `pending-commit`
+  - Proof: `9895021`
 - [ ] Streaming provider interface
 - [ ] Full model parameter passthrough (temp/top_p/max_tokens/etc.)
 
