@@ -111,6 +111,7 @@ export type BlockGateCheck =
   | { type: "port_matches"; port: string; pattern: string }
   | { type: "port_min_length"; port: string; min: number }
   | { type: "port_type"; port: string; expected: string }
+  | { type: "json_schema"; port: string; schema: Record<string, unknown> }
   | { type: "cost"; max: number; port?: string }
   | { type: "latency"; max_ms: number; port?: string }
   | { type: "shell"; command: string }
@@ -816,6 +817,15 @@ function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
       }
       return { type, port: obj.port, expected: obj.expected };
     }
+    case "json_schema": {
+      if (typeof obj.port !== "string" || !obj.port.trim()) {
+        throw new Error(`Invalid ${path}: json_schema requires non-empty 'port'`);
+      }
+      if (!obj.schema || typeof obj.schema !== "object") {
+        throw new Error(`Invalid ${path}: json_schema requires object 'schema'`);
+      }
+      return { type, port: obj.port, schema: obj.schema as Record<string, unknown> };
+    }
     case "cost": {
       const max = Number(obj.max);
       if (!Number.isFinite(max) || max < 0) {
@@ -936,6 +946,15 @@ function evaluateBlockGate(
         return { name: gate.name, passed: false, reason: `Expected ${gate.check.expected}, got ${actual}` };
       }
       return { name: gate.name, passed: true };
+    }
+
+    case "json_schema": {
+      const val = ports[gate.check.port];
+      const check = validateSimpleJsonSchema(val, gate.check.schema);
+      if (!check.ok) {
+        return { name: gate.name, passed: false, reason: `${gate.error} (${check.error})` };
+      }
+      return { name: gate.name, passed: true, audit: { gate_type: "json_schema" } };
     }
 
     case "cost": {
@@ -1096,6 +1115,49 @@ function levenshtein(a: string, b: string): number {
     }
   }
   return dp[a.length][b.length];
+}
+
+function validateSimpleJsonSchema(value: unknown, schema: Record<string, unknown>): { ok: boolean; error?: string } {
+  const expectedType = String(schema.type ?? "").trim();
+
+  if (expectedType === "object") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { ok: false, error: "expected object" };
+    }
+
+    const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
+    for (const key of required) {
+      if (!(key in (value as Record<string, unknown>))) {
+        return { ok: false, error: `missing required key '${key}'` };
+      }
+    }
+
+    const properties = (schema.properties && typeof schema.properties === "object")
+      ? (schema.properties as Record<string, Record<string, unknown>>)
+      : {};
+
+    for (const [key, propSchema] of Object.entries(properties)) {
+      if (!(key in (value as Record<string, unknown>))) continue;
+      const propVal = (value as Record<string, unknown>)[key];
+      const propType = String(propSchema.type ?? "").trim();
+      if (!propType) continue;
+      const actual = Array.isArray(propVal) ? "array" : typeof propVal;
+      if (actual !== propType) {
+        return { ok: false, error: `property '${key}' expected ${propType}, got ${actual}` };
+      }
+    }
+
+    return { ok: true };
+  }
+
+  if (expectedType) {
+    const actual = Array.isArray(value) ? "array" : typeof value;
+    if (actual !== expectedType) {
+      return { ok: false, error: `expected ${expectedType}, got ${actual}` };
+    }
+  }
+
+  return { ok: true };
 }
 
 function isShellGateEnabled(): boolean {
