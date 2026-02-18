@@ -21,7 +21,6 @@ jobs:
     if: >-
       ${{
         github.event.review.state == 'changes_requested' &&
-        (github.event.review.user.login == 'github-actions[bot]' || github.event.review.user.login == 'github-actions') &&
         github.event.pull_request.base.ref != 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         github.event.pull_request.user.login == 'noraseika' &&
