@@ -41,7 +41,8 @@ Legend:
 
 ## 4) Gate System
 - [x] Core gate system preserved and strengthened
-- [ ] Add semantic/LLM review gate type
+- [x] Add semantic/LLM review gate type baseline (`semantic_review` keyword-coverage gate)
+  - Proof: `pending-commit`
 - [x] Add gate types: `json_schema`, `http`, `diff`, `cost`, `latency`
   - Proof: `826084e`
 - [ ] Add gate composition logic (OR/conditional)

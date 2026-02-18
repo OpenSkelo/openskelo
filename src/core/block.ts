@@ -113,6 +113,7 @@ export type BlockGateCheck =
   | { type: "port_type"; port: string; expected: string }
   | { type: "json_schema"; port: string; schema: Record<string, unknown> }
   | { type: "http"; url: string; method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; expect_status?: number; timeout_ms?: number }
+  | { type: "semantic_review"; port: string; keywords: string[]; min_matches?: number }
   | { type: "diff"; left: string; right: string; mode?: "equal" | "not_equal" }
   | { type: "cost"; max: number; port?: string }
   | { type: "latency"; max_ms: number; port?: string }
@@ -846,6 +847,23 @@ function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
       }
       return { type, url: obj.url, method: method as "GET" | "POST" | "PUT" | "PATCH" | "DELETE", expect_status: expectStatus, timeout_ms: timeoutMs };
     }
+    case "semantic_review": {
+      if (typeof obj.port !== "string" || !obj.port.trim()) {
+        throw new Error(`Invalid ${path}: semantic_review requires non-empty 'port'`);
+      }
+      if (!Array.isArray(obj.keywords) || obj.keywords.length === 0) {
+        throw new Error(`Invalid ${path}: semantic_review requires non-empty keywords[]`);
+      }
+      const keywords = obj.keywords.map((k) => String(k).trim()).filter(Boolean);
+      if (keywords.length === 0) {
+        throw new Error(`Invalid ${path}: semantic_review keywords[] must contain non-empty strings`);
+      }
+      const minMatches = Number(obj.min_matches ?? Math.min(1, keywords.length));
+      if (!Number.isFinite(minMatches) || minMatches < 1) {
+        throw new Error(`Invalid ${path}: semantic_review min_matches must be >= 1`);
+      }
+      return { type, port: obj.port, keywords, min_matches: Math.min(Math.floor(minMatches), keywords.length) };
+    }
     case "diff": {
       if (typeof obj.left !== "string" || !obj.left.trim()) {
         throw new Error(`Invalid ${path}: diff requires non-empty 'left'`);
@@ -1001,6 +1019,22 @@ function evaluateBlockGate(
         };
       }
       return { name: gate.name, passed: true, audit: { gate_type: "http", ...(probe.audit ?? {}) } };
+    }
+
+    case "semantic_review": {
+      const text = String(ports[gate.check.port] ?? "").toLowerCase();
+      const keywords = gate.check.keywords.map((k) => k.toLowerCase());
+      const matched = keywords.filter((k) => text.includes(k));
+      const minMatches = gate.check.min_matches ?? 1;
+      if (matched.length < minMatches) {
+        return {
+          name: gate.name,
+          passed: false,
+          reason: `${gate.error} (matched ${matched.length}/${minMatches})`,
+          audit: { gate_type: "semantic_review", matched, required: minMatches },
+        };
+      }
+      return { name: gate.name, passed: true, audit: { gate_type: "semantic_review", matched, required: minMatches } };
     }
 
     case "diff": {
