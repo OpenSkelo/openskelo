@@ -1046,6 +1046,17 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const roadmapPath = resolve(process.cwd(), "ROADMAP.md");
     let done: string[] = [];
     let todo: string[] = [];
+    const doneByPriority: Record<string, string[]> = { P0: [], P1: [], P2: [], P3: [], untagged: [] };
+    const todoByPriority: Record<string, string[]> = { P0: [], P1: [], P2: [], P3: [], untagged: [] };
+
+    const detectPriority = (s: string): "P0" | "P1" | "P2" | "P3" | "untagged" => {
+      const t = s.toUpperCase();
+      if (/\bP0\b/.test(t) || /\burgent\b/i.test(s)) return "P0";
+      if (/\bP1\b/.test(t)) return "P1";
+      if (/\bP2\b/.test(t)) return "P2";
+      if (/\bP3\b/.test(t)) return "P3";
+      return "untagged";
+    };
 
     if (existsSync(roadmapPath)) {
       const text = readFileSync(roadmapPath, "utf-8");
@@ -1054,14 +1065,20 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         if (!m) continue;
         const item = m[2].trim();
         if (!item) continue;
-        if (m[1].toLowerCase() === "x") done.push(item);
-        else todo.push(item);
+        const p = detectPriority(item);
+        if (m[1].toLowerCase() === "x") {
+          done.push(item);
+          doneByPriority[p].push(item);
+        } else {
+          todo.push(item);
+          todoByPriority[p].push(item);
+        }
       }
     }
 
     const commits: Array<{ sha: string; subject: string }> = [];
     try {
-      const r = spawnSync("git", ["-C", process.cwd(), "log", "--oneline", "-n", "12"], { encoding: "utf-8" });
+      const r = spawnSync("git", ["-C", process.cwd(), "log", "--oneline", "-n", "20"], { encoding: "utf-8" });
       if ((r.status ?? 1) === 0) {
         for (const line of String(r.stdout || "").split(/\r?\n/)) {
           const v = line.trim();
@@ -1075,14 +1092,44 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       // ignore git errors in non-repo cwd
     }
 
+    const tokens = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 4);
+
+    const score = (a: string, b: string) => {
+      const A = new Set(tokens(a));
+      const B = new Set(tokens(b));
+      if (A.size === 0 || B.size === 0) return 0;
+      let inter = 0;
+      for (const w of A) if (B.has(w)) inter++;
+      return inter / Math.max(A.size, B.size);
+    };
+
+    const allItems = [...done, ...todo];
+    const commitMatches = commits.map((c) => {
+      const ranked = allItems
+        .map((item) => ({ item, score: score(c.subject, item) }))
+        .filter((x) => x.score >= 0.2)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3)
+        .map((x) => ({ item: x.item, score: Number(x.score.toFixed(2)) }));
+      return { sha: c.sha, subject: c.subject, matches: ranked };
+    });
+
     return c.json({
       generated_at: new Date().toISOString(),
       roadmap_path: existsSync(roadmapPath) ? roadmapPath : null,
       done_count: done.length,
       todo_count: todo.length,
-      done: done.slice(0, 20),
-      todo: todo.slice(0, 20),
+      done: done.slice(0, 40),
+      todo: todo.slice(0, 40),
+      done_by_priority: doneByPriority,
+      todo_by_priority: todoByPriority,
       recent_commits: commits,
+      commit_matches: commitMatches,
     });
   });
 

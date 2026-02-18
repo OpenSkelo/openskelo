@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>OpenSkelo Status Checklist</title>
   <style>
-    :root{--bg:#0b1020;--card:#131b35;--border:#33406b;--text:#e8eeff;--muted:#aab8e6;--ok:#39d98a;--todo:#ff6b6b}
+    :root{--bg:#0b1020;--card:#131b35;--border:#33406b;--text:#e8eeff;--muted:#aab8e6;--ok:#39d98a;--todo:#ff6b6b;--p0:#ff6b6b;--p1:#ffd166;--p2:#7ad9ff;--p3:#b6b8ff}
     *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui;background:radial-gradient(1200px 700px at 20% -20%, #1f2a56 0%, var(--bg) 60%);color:var(--text)}
-    .wrap{max-width:1200px;margin:16px auto;padding:0 16px 34px}
+    .wrap{max-width:1280px;margin:16px auto;padding:0 16px 34px}
     h1{margin:0 0 6px;font-size:24px}.sub{color:var(--muted);margin-bottom:10px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .card{border:1px solid var(--border);border-radius:12px;background:var(--card);padding:12px;margin-top:10px}
     .row{display:grid;grid-template-columns:120px 1fr;gap:10px;padding:7px 0;border-bottom:1px dashed rgba(90,110,170,.3)}
     .row:last-child{border-bottom:0}
@@ -17,19 +18,30 @@
     .todo{background:rgba(255,107,107,.14);border-color:rgba(255,107,107,.45)}
     .mono{font-family:ui-monospace,Menlo,monospace}
     .muted{color:var(--muted)}
+    .pill{display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;margin-right:6px;border:1px solid var(--border)}
+    .p0{border-color:var(--p0);color:var(--p0)} .p1{border-color:var(--p1);color:var(--p1)} .p2{border-color:var(--p2);color:var(--p2)} .p3{border-color:var(--p3);color:var(--p3)}
   </style>
 </head>
 <body>
 <div class="wrap" id="wrapRoot">
   <div id="localHeader">
     <h1>OpenSkelo — Live status (auto-derived)</h1>
-    <div class="sub">Derived from ROADMAP.md checklist + latest git commits.</div>
+    <div class="sub">Derived from ROADMAP.md checklist + latest git commits + heuristic commit-item matching.</div>
   </div>
 
   <div class="card" id="summaryCard">Loading status summary…</div>
-  <div class="card" id="doneCard"><h3 style="margin:0 0 6px">Shipped</h3><div class="muted">Loading…</div></div>
-  <div class="card" id="todoCard"><h3 style="margin:0 0 6px">Still left</h3><div class="muted">Loading…</div></div>
-  <div class="card" id="commitCard"><h3 style="margin:0 0 6px">Recent commits</h3><div class="muted">Loading…</div></div>
+
+  <div class="grid">
+    <div class="card" id="doneCard"><h3 style="margin:0 0 6px">Shipped</h3><div class="muted">Loading…</div></div>
+    <div class="card" id="todoCard"><h3 style="margin:0 0 6px">Still left</h3><div class="muted">Loading…</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card" id="priorityDoneCard"><h3 style="margin:0 0 6px">Done by priority</h3><div class="muted">Loading…</div></div>
+    <div class="card" id="priorityTodoCard"><h3 style="margin:0 0 6px">Todo by priority</h3><div class="muted">Loading…</div></div>
+  </div>
+
+  <div class="card" id="commitCard"><h3 style="margin:0 0 6px">Recent commits + likely roadmap matches</h3><div class="muted">Loading…</div></div>
 </div>
 
 <script>
@@ -41,6 +53,7 @@
   }
 
   function esc(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}
+  function prPill(p){ const k=(p||'untagged').toLowerCase(); return `<span class="pill ${k}">${esc(p||'untagged')}</span>` }
 
   async function load(){
     try {
@@ -60,8 +73,17 @@
       const todoRows = (d.todo||[]).map((x)=>`<div class="row"><div><span class="tag todo">TODO</span></div><div>${esc(x)}</div></div>`).join('') || '<div class="muted">No pending items found.</div>';
       document.getElementById('todoCard').innerHTML = `<h3 style="margin:0 0 6px">Still left</h3>${todoRows}`;
 
-      const commitRows = (d.recent_commits||[]).map((c)=>`<div class="row"><div class="mono">${esc(c.sha)}</div><div>${esc(c.subject)}</div></div>`).join('') || '<div class="muted">No commits found.</div>';
-      document.getElementById('commitCard').innerHTML = `<h3 style="margin:0 0 6px">Recent commits</h3>${commitRows}`;
+      const order=['P0','P1','P2','P3','untagged'];
+      const pDone = order.map((p)=>`<div class="row"><div>${prPill(p)}</div><div>${(d.done_by_priority?.[p]||[]).length} items</div></div>`).join('');
+      document.getElementById('priorityDoneCard').innerHTML = `<h3 style="margin:0 0 6px">Done by priority</h3>${pDone}`;
+      const pTodo = order.map((p)=>`<div class="row"><div>${prPill(p)}</div><div>${(d.todo_by_priority?.[p]||[]).length} items</div></div>`).join('');
+      document.getElementById('priorityTodoCard').innerHTML = `<h3 style="margin:0 0 6px">Todo by priority</h3>${pTodo}`;
+
+      const commitRows = (d.commit_matches||[]).map((c)=>{
+        const matches=(c.matches||[]).map((m)=>`<div class="muted" style="font-size:11px">↳ ${esc(m.item)} <span class="mono">(${m.score})</span></div>`).join('') || '<div class="muted" style="font-size:11px">↳ no confident roadmap match</div>';
+        return `<div class="row"><div class="mono">${esc(c.sha)}</div><div><div>${esc(c.subject)}</div>${matches}</div></div>`
+      }).join('') || '<div class="muted">No commits found.</div>';
+      document.getElementById('commitCard').innerHTML = `<h3 style="margin:0 0 6px">Recent commits + likely roadmap matches</h3>${commitRows}`;
     } catch (e) {
       document.getElementById('summaryCard').innerHTML = `<span class="tag todo">ERROR</span> Could not load /api/dag/status-summary`;
     }
