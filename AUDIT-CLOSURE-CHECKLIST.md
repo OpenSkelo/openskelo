@@ -29,7 +29,8 @@ Legend:
   - Proof: `a534aa7`
 - [x] Security regression coverage + durable shell audit assertion
   - Proof: `19c6360`, `a534aa7`, `b7be7cc`
-- [ ] Remove hardcoded Telegram approval target default
+- [x] Remove hardcoded Telegram approval target default
+  - Proof: `pending-commit`
 - [ ] Regex ReDoS hardening strategy (RE2/timeout guard)
 
 ## 4) Gate System

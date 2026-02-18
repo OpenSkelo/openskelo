@@ -83,7 +83,12 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   `);
 
   async function notifyApprovalViaTelegram(run: DAGRun, approval: Record<string, unknown>): Promise<void> {
-    const target = process.env.OPENSKELO_APPROVAL_TELEGRAM_TARGET || "5830373538";
+    const target = String(process.env.OPENSKELO_APPROVAL_TELEGRAM_TARGET ?? "").trim();
+    if (!target) {
+      console.warn("[dag-api] approval notify skipped: OPENSKELO_APPROVAL_TELEGRAM_TARGET is not set");
+      return;
+    }
+
     const token = String(approval.token ?? "");
     const blockId = String(approval.block_id ?? "");
     const prompt = String(approval.prompt ?? "Approval required");
