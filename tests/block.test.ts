@@ -207,6 +207,84 @@ describe("Block Engine — executionOrder", () => {
   });
 });
 
+describe("Block Engine — shell gate security", () => {
+  it("rejects shell gates by default", () => {
+    delete process.env.OPENSKELO_ALLOW_SHELL_GATES;
+    const dag = engine.parseDAG({
+      name: "shell-default-deny",
+      blocks: [{
+        id: "a",
+        inputs: { code: "string" },
+        outputs: { out: "string" },
+        pre_gates: [{
+          name: "shell-check",
+          check: { type: "shell", command: 'node -e "process.exit(0)"' },
+          error: "shell failed",
+        }],
+        post_gates: [],
+        agent: {},
+        retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+      }],
+      edges: [],
+    });
+    const res = engine.evaluatePreGates(dag.blocks[0]!, { code: "ok" });
+    expect(res[0]?.passed).toBe(false);
+    expect(res[0]?.reason).toMatch(/shell gates disabled/i);
+    expect(res[0]?.audit?.status).toBe("blocked");
+  });
+
+  it("allows shell gates with explicit opt-in", () => {
+    process.env.OPENSKELO_ALLOW_SHELL_GATES = "true";
+    const dag = engine.parseDAG({
+      name: "shell-opt-in",
+      blocks: [{
+        id: "a",
+        inputs: { code: "string" },
+        outputs: { out: "string" },
+        pre_gates: [{
+          name: "shell-check",
+          check: { type: "shell", command: 'node -e "process.exit(0)"' },
+          error: "shell failed",
+        }],
+        post_gates: [],
+        agent: {},
+        retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+      }],
+      edges: [],
+    });
+    const res = engine.evaluatePreGates(dag.blocks[0]!, { code: "ok" });
+    expect(res[0]?.passed).toBe(true);
+    expect(res[0]?.audit?.status).toBe("passed");
+  });
+
+  it("enforces shell gate timeout", () => {
+    process.env.OPENSKELO_ALLOW_SHELL_GATES = "true";
+    process.env.OPENSKELO_SHELL_GATE_TIMEOUT_MS = "20";
+    const dag = engine.parseDAG({
+      name: "shell-timeout",
+      blocks: [{
+        id: "a",
+        inputs: { code: "string" },
+        outputs: { out: "string" },
+        pre_gates: [{
+          name: "shell-check",
+          check: { type: "shell", command: 'node -e "setTimeout(() => {}, 200)"' },
+          error: "shell failed",
+        }],
+        post_gates: [],
+        agent: {},
+        retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+      }],
+      edges: [],
+    });
+    const res = engine.evaluatePreGates(dag.blocks[0]!, { code: "ok" });
+    expect(res[0]?.passed).toBe(false);
+    expect(res[0]?.audit?.status).toBe("failed");
+    expect((res[0]?.audit?.duration_ms as number) >= 0).toBe(true);
+    delete process.env.OPENSKELO_SHELL_GATE_TIMEOUT_MS;
+  });
+});
+
 describe("Block Engine — expression security", () => {
   it("blocks access to process from expr gate", () => {
     const dag = engine.parseDAG({

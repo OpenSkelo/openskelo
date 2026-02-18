@@ -267,6 +267,7 @@ export interface GateResult {
   name: string;
   passed: boolean;
   reason?: string;
+  audit?: Record<string, unknown>;
 }
 
 export interface RetryState {
@@ -785,12 +786,58 @@ function evaluateBlockGate(
     }
 
     case "shell": {
+      const allowShellGates = isShellGateEnabled();
+      if (!allowShellGates) {
+        return {
+          name: gate.name,
+          passed: false,
+          reason: `${gate.error} (shell gates disabled; set OPENSKELO_ALLOW_SHELL_GATES=true to enable)`,
+          audit: {
+            gate_type: "shell",
+            command: gate.check.command,
+            enabled: false,
+            status: "blocked",
+          },
+        };
+      }
+
+      const timeoutMs = Number(process.env.OPENSKELO_SHELL_GATE_TIMEOUT_MS ?? "10000");
+      const started = Date.now();
       try {
         const { execSync } = require("node:child_process");
-        execSync(gate.check.command, { timeout: 10000, stdio: "pipe" });
-        return { name: gate.name, passed: true };
-      } catch {
-        return { name: gate.name, passed: false, reason: gate.error };
+        execSync(gate.check.command, { timeout: timeoutMs, stdio: "pipe", env: process.env });
+        const durationMs = Date.now() - started;
+        return {
+          name: gate.name,
+          passed: true,
+          audit: {
+            gate_type: "shell",
+            command: gate.check.command,
+            enabled: true,
+            timeout_ms: timeoutMs,
+            duration_ms: durationMs,
+            status: "passed",
+          },
+        };
+      } catch (err) {
+        const durationMs = Date.now() - started;
+        const shellErr = err as { status?: number; signal?: string; message?: string };
+        return {
+          name: gate.name,
+          passed: false,
+          reason: `${gate.error} (${shellErr.message ?? "shell execution failed"})`,
+          audit: {
+            gate_type: "shell",
+            command: gate.check.command,
+            enabled: true,
+            timeout_ms: timeoutMs,
+            duration_ms: durationMs,
+            status: "failed",
+            exit_code: shellErr.status,
+            signal: shellErr.signal,
+            error: shellErr.message,
+          },
+        };
       }
     }
 
@@ -834,6 +881,11 @@ function applyTransform(value: unknown, transform: string): unknown {
 
 function detectCycles(blocks: BlockDef[], edges: Edge[]): void {
   topoSort(blocks, edges); // throws on cycle
+}
+
+function isShellGateEnabled(): boolean {
+  const raw = String(process.env.OPENSKELO_ALLOW_SHELL_GATES ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
 function topoSort(blocks: BlockDef[], edges: Edge[]): string[] {
