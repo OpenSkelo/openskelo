@@ -58,6 +58,7 @@
     "node": "22.x"
   },
   "dependencies": {
+    "@clack/prompts": "^0.11.0",
     "@hono/node-server": "^1.0.0",
     "acorn": "^8.15.0",
     "better-sqlite3": "^11.0.0",

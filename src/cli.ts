@@ -11,6 +11,7 @@ import { validateCommand } from "./commands/validate.js";
 import { explainCommand } from "./commands/explain.js";
 import { newCommand } from "./commands/new.js";
 import { authCommands } from "./commands/auth.js";
+import { onboardCommand } from "./commands/onboard.js";
 
 const VERSION = "0.1.0";
 
@@ -31,10 +32,13 @@ program
   .version(VERSION)
   .addHelpText("beforeAll", chalk.hex("#f97316")(logo));
 
+// ── onboard ──
+onboardCommand(program);
+
 // ── init ──
 program
   .command("init [name]")
-  .description("Create a new OpenSkelo pipeline project")
+  .description("Create a new OpenSkelo pipeline project (advanced/manual setup)")
   .option("-t, --template <template>", "Use a preset template", "coding")
   .action(async (name, opts) => {
     await initProject(name, opts.template);
