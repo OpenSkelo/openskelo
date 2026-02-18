@@ -117,7 +117,7 @@ Legend:
 - [x] Edge indexing for large DAGs (cached incoming edge lookup map in block engine)
   - Proof: `40d98c2`
 - [x] Executor/API isolation strategy baseline (worker-thread path documented)
-  - Proof: `pending-commit`
+  - Proof: `fd2bed0`
 - [ ] Hosted-scale queue strategy (future)
 
 ## 12) Design Philosophy Decisions (to codify)
