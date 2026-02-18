@@ -154,6 +154,42 @@ describe("Block Engine — parseDAG", () => {
       })
     ).toThrow(/invalid port type/i);
   });
+
+  it("rejects malformed on_gate_fail rules instead of silently dropping", () => {
+    expect(() =>
+      engine.parseDAG({
+        name: "bad-gate-fail-rule",
+        blocks: [{
+          id: "a",
+          inputs: { x: "string" },
+          outputs: { y: "string" },
+          post_gates: [{ name: "g1", check: { type: "port_not_empty", port: "y" }, error: "no" }],
+          on_gate_fail: [{ when_gate: "g1", route_to: "a", max_bounces: 0 }],
+          agent: {},
+        }],
+        edges: [],
+      } as Record<string, unknown>)
+    ).toThrow(/max_bounces/i);
+  });
+
+  it("validates on_gate_fail.route_to and when_gate references", () => {
+    expect(() =>
+      engine.parseDAG({
+        name: "bad-gate-fail-ref",
+        blocks: [
+          {
+            id: "a",
+            inputs: { x: "string" },
+            outputs: { y: "string" },
+            post_gates: [{ name: "review-ok", check: { type: "port_not_empty", port: "y" }, error: "no" }],
+            on_gate_fail: [{ when_gate: "review-typo", route_to: "missing", max_bounces: 1 }],
+            agent: {},
+          },
+        ],
+        edges: [],
+      } as Record<string, unknown>)
+    ).toThrow(/unknown block|unknown gate/i);
+  });
 });
 
 describe("Block Engine — createRun", () => {

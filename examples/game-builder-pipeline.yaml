@@ -64,7 +64,10 @@ blocks:
       artifact_html: { type: artifact }
       release_notes: { type: string }
     agent: { role: worker, capability: coding }
-    pre_gates: []
+    pre_gates:
+      - name: qa-approved
+        check: { type: expr, expression: "inputs.approved === true" }
+        error: "QA approval required before polish"
     on_gate_fail:
       - when_gate: qa-approved
         route_to: build

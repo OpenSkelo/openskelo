@@ -336,8 +336,8 @@ export interface DAGRun {
 // ── Edge Indexing (performance helper) ──
 
 type EdgeIndex = {
-  incomingByBlockPort: Map<string, EdgeDef>;
-  incomingByBlock: Map<string, EdgeDef[]>;
+  incomingByBlockPort: Map<string, Edge>;
+  incomingByBlock: Map<string, Edge[]>;
 };
 
 const edgeIndexCache = new WeakMap<DAGDef, EdgeIndex>();
@@ -346,8 +346,8 @@ function getEdgeIndex(dag: DAGDef): EdgeIndex {
   const existing = edgeIndexCache.get(dag);
   if (existing) return existing;
 
-  const incomingByBlockPort = new Map<string, EdgeDef>();
-  const incomingByBlock = new Map<string, EdgeDef[]>();
+  const incomingByBlockPort = new Map<string, Edge>();
+  const incomingByBlock = new Map<string, Edge[]>();
 
   for (const edge of dag.edges) {
     incomingByBlockPort.set(`${edge.to}::${edge.input}`, edge);
@@ -402,6 +402,33 @@ export function createBlockEngine() {
       if (!toBlock.inputs[edge.input]) {
         const hint = suggestClosest(edge.input, Object.keys(toBlock.inputs));
         throw new Error(`Edge references unknown input port: ${edge.to}.${edge.input}${hint ? ` (did you mean '${hint}'?)` : ""}`);
+      }
+    }
+
+    // Validate on_gate_fail references
+    for (const block of blocks) {
+      const availableGates = new Set([
+        ...(block.pre_gates ?? []).map((g) => g.name),
+        ...(block.post_gates ?? []).map((g) => g.name),
+      ]);
+
+      for (const rule of block.on_gate_fail ?? []) {
+        if (!blockMap.has(rule.route_to)) {
+          const hint = suggestClosest(rule.route_to, allBlockIds);
+          throw new Error(
+            `Block '${block.id}' on_gate_fail routes to unknown block '${rule.route_to}'` +
+            (hint ? ` (did you mean '${hint}'?)` : "")
+          );
+        }
+
+        if (!availableGates.has(rule.when_gate)) {
+          const gateNames = Array.from(availableGates);
+          const hint = suggestClosest(rule.when_gate, gateNames);
+          throw new Error(
+            `Block '${block.id}' on_gate_fail references unknown gate '${rule.when_gate}'` +
+            (hint ? ` (did you mean '${hint}'?)` : "")
+          );
+        }
       }
     }
 
@@ -727,7 +754,7 @@ function parseBlockDef(raw: Record<string, unknown>): BlockDef {
     deterministic,
     pre_gates: parseBlockGates(raw.pre_gates),
     post_gates: parseBlockGates(raw.post_gates),
-    on_gate_fail: parseGateFailRules(raw.on_gate_fail),
+    on_gate_fail: parseGateFailRules(raw.on_gate_fail, id),
     gate_composition: parseGateComposition(raw.gate_composition),
     approval: parseApprovalPolicy(raw.approval),
     retry: parseRetryPolicy(raw.retry),
@@ -1012,18 +1039,49 @@ function parseGateComposition(raw: unknown): GateComposition | undefined {
   return { ...(pre ? { pre } : {}), ...(post ? { post } : {}) };
 }
 
-function parseGateFailRules(raw: unknown): GateFailRule[] {
+function parseGateFailRules(raw: unknown, blockId: string): GateFailRule[] {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .map((r: Record<string, unknown>) => ({
-      when_gate: r.when_gate as string,
-      route_to: r.route_to as string,
-      reset_blocks: Array.isArray(r.reset_blocks) ? (r.reset_blocks as string[]) : undefined,
-      max_bounces: Number(r.max_bounces ?? 0),
-      reason: r.reason as string | undefined,
+
+  return raw.map((entry, idx) => {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`Invalid ${blockId}.on_gate_fail[${idx}]: must be an object`);
+    }
+    const r = entry as Record<string, unknown>;
+    const when_gate = typeof r.when_gate === "string" ? r.when_gate.trim() : "";
+    const route_to = typeof r.route_to === "string" ? r.route_to.trim() : "";
+    const max_bounces = Number(r.max_bounces ?? 0);
+
+    if (!when_gate) {
+      throw new Error(`Invalid ${blockId}.on_gate_fail[${idx}]: missing non-empty 'when_gate'`);
+    }
+    if (!route_to) {
+      throw new Error(`Invalid ${blockId}.on_gate_fail[${idx}]: missing non-empty 'route_to'`);
+    }
+    if (!Number.isFinite(max_bounces) || max_bounces <= 0) {
+      throw new Error(`Invalid ${blockId}.on_gate_fail[${idx}]: 'max_bounces' must be > 0`);
+    }
+
+    if (r.reset_blocks !== undefined && !Array.isArray(r.reset_blocks)) {
+      throw new Error(`Invalid ${blockId}.on_gate_fail[${idx}]: 'reset_blocks' must be string[] when provided`);
+    }
+    const reset_blocks = Array.isArray(r.reset_blocks)
+      ? r.reset_blocks.map((v, i) => {
+          if (typeof v !== "string" || !v.trim()) {
+            throw new Error(`Invalid ${blockId}.on_gate_fail[${idx}].reset_blocks[${i}]: must be non-empty string`);
+          }
+          return v;
+        })
+      : undefined;
+
+    return {
+      when_gate,
+      route_to,
+      reset_blocks,
+      max_bounces,
+      reason: typeof r.reason === "string" ? r.reason : undefined,
       feedback_from: r.feedback_from === "gate_verdicts" ? "gate_verdicts" : undefined,
-    }))
-    .filter((r) => r.when_gate && r.route_to && r.max_bounces > 0);
+    };
+  });
 }
 
 function parseRetryPolicy(raw: unknown): RetryPolicy {
