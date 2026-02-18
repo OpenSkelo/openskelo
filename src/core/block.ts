@@ -112,6 +112,7 @@ export type BlockGateCheck =
   | { type: "port_min_length"; port: string; min: number }
   | { type: "port_type"; port: string; expected: string }
   | { type: "json_schema"; port: string; schema: Record<string, unknown> }
+  | { type: "http"; url: string; method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; expect_status?: number; timeout_ms?: number }
   | { type: "diff"; left: string; right: string; mode?: "equal" | "not_equal" }
   | { type: "cost"; max: number; port?: string }
   | { type: "latency"; max_ms: number; port?: string }
@@ -827,6 +828,24 @@ function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
       }
       return { type, port: obj.port, schema: obj.schema as Record<string, unknown> };
     }
+    case "http": {
+      if (typeof obj.url !== "string" || !obj.url.trim()) {
+        throw new Error(`Invalid ${path}: http requires non-empty 'url'`);
+      }
+      const method = String(obj.method ?? "GET").toUpperCase();
+      if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+        throw new Error(`Invalid ${path}: http method must be GET|POST|PUT|PATCH|DELETE`);
+      }
+      const expectStatus = Number(obj.expect_status ?? 200);
+      if (!Number.isInteger(expectStatus) || expectStatus < 100 || expectStatus > 599) {
+        throw new Error(`Invalid ${path}: http expect_status must be integer 100..599`);
+      }
+      const timeoutMs = Number(obj.timeout_ms ?? 5000);
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        throw new Error(`Invalid ${path}: http timeout_ms must be > 0`);
+      }
+      return { type, url: obj.url, method: method as "GET" | "POST" | "PUT" | "PATCH" | "DELETE", expect_status: expectStatus, timeout_ms: timeoutMs };
+    }
     case "diff": {
       if (typeof obj.left !== "string" || !obj.left.trim()) {
         throw new Error(`Invalid ${path}: diff requires non-empty 'left'`);
@@ -969,6 +988,19 @@ function evaluateBlockGate(
         return { name: gate.name, passed: false, reason: `${gate.error} (${check.error})` };
       }
       return { name: gate.name, passed: true, audit: { gate_type: "json_schema" } };
+    }
+
+    case "http": {
+      const probe = evaluateHttpGate(gate.check);
+      if (!probe.ok) {
+        return {
+          name: gate.name,
+          passed: false,
+          reason: `${gate.error} (${probe.error})`,
+          audit: { gate_type: "http", ...(probe.audit ?? {}) },
+        };
+      }
+      return { name: gate.name, passed: true, audit: { gate_type: "http", ...(probe.audit ?? {}) } };
     }
 
     case "diff": {
@@ -1147,6 +1179,36 @@ function levenshtein(a: string, b: string): number {
     }
   }
   return dp[a.length][b.length];
+}
+
+function evaluateHttpGate(check: { url: string; method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; expect_status?: number; timeout_ms?: number }): { ok: boolean; error?: string; audit?: Record<string, unknown> } {
+  // Deterministic mock path for local/offline testing.
+  const mock = check.url.match(/^mock:\/\/status\/(\d{3})$/);
+  if (mock) {
+    const status = Number(mock[1]);
+    const expectStatus = Number(check.expect_status ?? 200);
+    return {
+      ok: status === expectStatus,
+      error: status === expectStatus ? undefined : `expected status ${expectStatus}, got ${status}`,
+      audit: { url: check.url, method: check.method ?? "GET", status, expect_status: expectStatus, mock: true },
+    };
+  }
+
+  const timeoutMs = Number(check.timeout_ms ?? 5000);
+  const expectStatus = Number(check.expect_status ?? 200);
+  try {
+    const { execSync } = require("node:child_process");
+    const cmd = `curl -s -o /dev/null -w "%{http_code}" --max-time ${Math.ceil(timeoutMs / 1000)} -X ${check.method ?? "GET"} ${JSON.stringify(check.url)}`;
+    const out = String(execSync(cmd, { stdio: ["ignore", "pipe", "pipe"] })).trim();
+    const status = Number(out);
+    return {
+      ok: status === expectStatus,
+      error: status === expectStatus ? undefined : `expected status ${expectStatus}, got ${status}`,
+      audit: { url: check.url, method: check.method ?? "GET", status, expect_status: expectStatus, timeout_ms: timeoutMs },
+    };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message, audit: { url: check.url, method: check.method ?? "GET", timeout_ms: timeoutMs } };
+  }
 }
 
 function stableStringify(value: unknown): string {
