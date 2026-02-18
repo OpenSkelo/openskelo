@@ -18,6 +18,7 @@ concurrency:
 jobs:
   notify-review-changes-requested:
     name: notify-review-changes-requested
+    timeout-minutes: 5
     if: >-
       ${{
         github.event_name == 'pull_request_review' &&
@@ -55,18 +56,27 @@ jobs:
             --arg reviewer "$REVIEWER" \
             --arg review_body "$REVIEW_BODY" \
             --arg actor "$ACTOR" \
-            '{event:$event,repo:$repo,pr_number:($pr_number|tonumber),pr_url:$pr_url,base:$base,head:$head,reviewer:$reviewer,review_body:$review_body,actor:$actor}')
+            '{event:$event,repo:$repo,pr_number:($pr_number|tonumber),pr_url:$pr_url,base:$base,head:$head,reviewer:$reviewer,review_body:($review_body[0:4000]),actor:$actor}')
 
-          curl --fail --show-error --silent \
+          http_code=$(curl --silent --output /tmp/nora_notify_resp.txt --write-out "%{http_code}" \
             --max-time 20 \
             --retry 2 --retry-delay 2 --retry-connrefused \
             -X POST "$WEBHOOK_URL" \
             -H "Authorization: Bearer $WEBHOOK_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "$payload"
+            -d "$payload")
+
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "Webhook sent successfully (review_changes_requested)."
+          else
+            echo "::error::Webhook failed (HTTP $http_code)"
+            cat /tmp/nora_notify_resp.txt || true
+            exit 1
+          fi
 
   notify-workflow-failure:
     name: notify-workflow-failure
+    timeout-minutes: 5
     if: >-
       ${{
         github.event_name == 'workflow_run' &&
@@ -87,12 +97,19 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${WEBHOOK_URL:-}" ] || [ -z "${WEBHOOK_TOKEN:-}" ]; then
             echo "NORA_WEBHOOK_URL or NORA_WEBHOOK_TOKEN is not set; skipping."
             exit 0
           fi
+
+          pr_number=$(curl --silent --show-error \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits/$HEAD_SHA/pulls" \
+            | jq -r '.[0].number // empty')
 
           payload=$(jq -n \
             --arg event "workflow_failure" \
@@ -104,12 +121,21 @@ jobs:
             --arg head_sha "$HEAD_SHA" \
             --arg conclusion "$CONCLUSION" \
             --arg actor "$ACTOR" \
-            '{event:$event,repo:$repo,workflow:$workflow,run_id:($run_id|tonumber),run_url:$run_url,head_branch:$head_branch,head_sha:$head_sha,conclusion:$conclusion,actor:$actor}')
+            --arg pr_number "$pr_number" \
+            '{event:$event,repo:$repo,workflow:$workflow,run_id:($run_id|tonumber),run_url:$run_url,head_branch:$head_branch,head_sha:$head_sha,conclusion:$conclusion,actor:$actor,pr_number:(if $pr_number == "" then null else ($pr_number|tonumber) end)}')
 
-          curl --fail --show-error --silent \
+          http_code=$(curl --silent --output /tmp/nora_notify_resp.txt --write-out "%{http_code}" \
             --max-time 20 \
             --retry 2 --retry-delay 2 --retry-connrefused \
             -X POST "$WEBHOOK_URL" \
             -H "Authorization: Bearer $WEBHOOK_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "$payload"
+            -d "$payload")
+
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "Webhook sent successfully (workflow_failure)."
+          else
+            echo "::error::Webhook failed (HTTP $http_code)"
+            cat /tmp/nora_notify_resp.txt || true
+            exit 1
+          fi
