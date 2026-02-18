@@ -107,10 +107,14 @@ Legend:
 - [ ] Hosted-scale queue strategy (future)
 
 ## 12) Design Philosophy Decisions (to codify)
-- [ ] Static vs dynamic DAG scope statement
-- [ ] Single-shot vs multi-turn block scope statement
-- [ ] Library/framework/platform primary posture statement
-- [ ] OpenClaw-coupled vs provider-agnostic strategy statement
+- [x] Static vs dynamic DAG scope statement
+  - Proof: `pending-commit`
+- [x] Single-shot vs multi-turn block scope statement
+  - Proof: `pending-commit`
+- [x] Library/framework/platform primary posture statement
+  - Proof: `pending-commit`
+- [x] OpenClaw-coupled vs provider-agnostic strategy statement
+  - Proof: `pending-commit`
 
 ## 13) Market/Positioning Alignment
 - [~] Messaging improved to DAG-canonical
