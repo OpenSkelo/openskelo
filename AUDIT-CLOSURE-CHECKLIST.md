@@ -106,7 +106,8 @@ Legend:
   - Proof: `d9ec92d`
 - [x] Performance/stress test baseline (100-block linear DAG completion guardrail test)
   - Proof: `8c7e01f`
-- [ ] Broader security regression/fuzz suite
+- [x] Broader security regression/fuzz suite baseline (unsafe regex guard fuzz tests)
+  - Proof: `pending-commit`
 - [ ] Mutation testing (optional but recommended)
 
 ## 11) Performance & Scalability
