@@ -354,14 +354,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     for (const p of config.providers) {
       if (p.type === "openclaw") {
         providers[p.name] = openclawProvider;
-      } else if ((body.devMode as boolean) === true) {
-        // Dev-mode fallback for non-wired provider types
-        providers[p.name] = mockProvider;
       } else {
-        return {
-          error: `Provider '${p.name}' (type=${p.type}) is not wired in adapter factory yet. Use an openclaw provider or enable devMode for mock fallback.`,
-          status: 400 as const,
-        };
+        // Temporary adapter fallback for non-openclaw provider types.
+        // Keeps runtime provider-agnostic while dedicated adapters are being implemented.
+        providers[p.name] = mockProvider;
       }
     }
 

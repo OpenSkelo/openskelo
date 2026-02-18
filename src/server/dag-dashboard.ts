@@ -574,6 +574,11 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           <div><span class="label">Elapsed:</span> <span id="runElapsed">—</span></div>
           <div><span class="label">Cycle:</span> <span id="runCycle">1/—</span></div>
           <div><span class="label">Run chain:</span> <span id="runChain">—</span></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            <button id="jumpRootBtn" style="padding:4px 8px;font-size:11px">root</button>
+            <button id="jumpParentBtn" style="padding:4px 8px;font-size:11px">parent</button>
+            <button id="jumpLatestBtn" style="padding:4px 8px;font-size:11px">latest</button>
+          </div>
           <div style="margin-top:4px"><label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:4px"><input type="checkbox" id="followLatestIterated" checked /> follow latest iterated run</label></div>
         </div>
         <div id="iterationHistory" style="margin-top:8px;font-size:11px;color:var(--text-dim);max-height:120px;overflow:auto;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
@@ -736,6 +741,9 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     document.getElementById('runBtn').addEventListener('click', runDAG);
     document.getElementById('stopBtn').addEventListener('click', stopDAG);
     document.getElementById('refreshRunBtn').addEventListener('click', () => refreshRunData());
+    document.getElementById('jumpRootBtn').addEventListener('click', () => jumpRunByChain('root'));
+    document.getElementById('jumpParentBtn').addEventListener('click', () => jumpRunByChain('parent'));
+    document.getElementById('jumpLatestBtn').addEventListener('click', () => jumpRunByChain('latest'));
     document.getElementById('topicInput').addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
@@ -938,6 +946,21 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           addEventLog({ type: 'transport:warn', run_id: currentRunId, data: { status: 'SSE stale, fallback polling enabled' }, timestamp: new Date().toISOString() });
         }
       }, 1500);
+    }
+
+    function jumpRunByChain(kind) {
+      const run = currentRunData?.run;
+      if (!run) return;
+      const root = run?.context?.__iteration_root_run_id;
+      const parent = run?.context?.__iteration_parent_run_id;
+      const latest = run?.context?.__latest_iterated_run_id;
+      const target = kind === 'root' ? root : kind === 'parent' ? parent : latest;
+      if (!target || target === currentRunId) return;
+      currentRunId = String(target);
+      document.getElementById('runId').textContent = currentRunId;
+      setupSSE(currentRunId);
+      refreshRunData();
+      addEventLog({ type: 'run:start', run_id: currentRunId, data: { status: 'Jumped to ' + kind + ' run' }, timestamp: new Date().toISOString() });
     }
 
     async function runDAG() {

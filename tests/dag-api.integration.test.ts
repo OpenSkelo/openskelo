@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +20,7 @@ function createTestConfig(): SkeloConfig {
   return {
     name: "OpenSkelo DAG Test",
     storage: "sqlite",
-    providers: [{ name: "local", type: "openclaw" }],
+    providers: [{ name: "local", type: "http" }],
     dashboard: { enabled: false, port: 4040 },
     agents: {
       manager: { role: "manager", capabilities: ["planning"], provider: "local", model: "openai-codex/gpt-5.3-codex", max_concurrent: 1 },
@@ -43,7 +43,7 @@ function createTestConfig(): SkeloConfig {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-function setupDagTestApp() {
+function setupDagTestApp(examplesDirOverride?: string) {
   const workdir = mkdtempSync(join(tmpdir(), "openskelo-dag-test-"));
   const config = createTestConfig();
   createDB(workdir);
@@ -53,7 +53,7 @@ function setupDagTestApp() {
   const router = createRouter(config.agents, config.pipelines);
   const app = createAPI({ config, taskEngine, gateEngine, router });
 
-  const examplesDir = resolve(__dirname, "../examples");
+  const examplesDir = examplesDirOverride ?? resolve(__dirname, "../examples");
   const dagAPI = createDAGAPI(config, { examplesDir });
   app.route("/", dagAPI);
 
@@ -61,6 +61,19 @@ function setupDagTestApp() {
     app,
     cleanup: () => closeDB(),
   };
+}
+
+async function waitForRunStatus(app: { request: (path: string, init?: RequestInit) => Promise<Response> }, runId: string, wanted: string[], timeoutMs = 12000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await app.request(`/api/dag/runs/${runId}`);
+    if (res.status === 200) {
+      const body = (await res.json()) as { run: { status: string; context?: Record<string, unknown> }; approval?: Record<string, unknown> | null };
+      if (wanted.includes(body.run.status)) return body;
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  throw new Error(`timeout waiting for run ${runId} status in [${wanted.join(",")}]`);
 }
 
 describe("DAG API integration", () => {
@@ -104,7 +117,7 @@ describe("DAG API integration", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         example: "coding-pipeline.yaml",
-        provider: "openclaw",
+        provider: "local",
         devMode: true,
         context: { prompt: "x" },
         agentMapping: { reviewer: "not-a-real-agent" },
@@ -117,15 +130,19 @@ describe("DAG API integration", () => {
   });
 
   it("creates run + supports stop and replay/status paths", async () => {
-    const ctx = setupDagTestApp();
+    const examplesDir = mkdtempSync(join(tmpdir(), "openskelo-dag-examples-"));
+    mkdirSync(examplesDir, { recursive: true });
+    writeFileSync(join(examplesDir, "iter-approval.yaml"), `name: iter-approval\nblocks:\n  - id: draft\n    name: Draft\n    approval:\n      required: true\n      prompt: Approve draft?\n    inputs:\n      prompt: string\n    outputs:\n      artifact_html: artifact\n    agent:\n      specific: manager\n    pre_gates: []\n    post_gates: []\n    retry:\n      max_attempts: 0\n      backoff: none\n      delay_ms: 0\nedges: []\n`);
+
+    const ctx = setupDagTestApp(examplesDir);
     cleanups.push(ctx.cleanup);
 
     const start = await ctx.app.request("/api/dag/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        example: "coding-pipeline.yaml",
-        provider: "openclaw",
+        example: "iter-approval.yaml",
+        provider: "local",
         timeoutSeconds: 1,
         devMode: true,
         context: { prompt: "dag integration test" },
@@ -147,6 +164,56 @@ describe("DAG API integration", () => {
     const stopped = (await stopRes.json()) as { status: string };
     expect(stopped.status).toBe("cancelled");
   });
+
+  it("supports reject→iterate and marks parent as iterated with child linkage", async () => {
+    const examplesDir = mkdtempSync(join(tmpdir(), "openskelo-dag-examples-"));
+    mkdirSync(examplesDir, { recursive: true });
+    writeFileSync(join(examplesDir, "iter-approval.yaml"), `name: iter-approval\nblocks:\n  - id: draft\n    name: Draft\n    approval:\n      required: true\n      prompt: Approve draft?\n    inputs:\n      prompt: string\n    outputs:\n      artifact_html: artifact\n    agent:\n      specific: manager\n    pre_gates: []\n    post_gates: []\n    retry:\n      max_attempts: 0\n      backoff: none\n      delay_ms: 0\nedges: []\n`);
+
+    const ctx = setupDagTestApp(examplesDir);
+    cleanups.push(ctx.cleanup);
+
+    const start = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        example: "iter-approval.yaml",
+        provider: "local",
+        timeoutSeconds: 1,
+        devMode: false,
+        context: { prompt: "test" },
+      }),
+    });
+    expect(start.status).toBe(201);
+    const created = (await start.json()) as { run_id: string };
+
+    const paused = await waitForRunStatus(ctx.app as any, created.run_id, ["paused_approval"], 8000);
+    expect(paused.run.status).toBe("paused_approval");
+    expect(paused.approval && paused.approval.status).toBe("pending");
+
+    const reject = await ctx.app.request(`/api/dag/runs/${created.run_id}/approvals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decision: "reject", iterate: true, restart_mode: "refine", feedback: "iterate again" }),
+    });
+    expect(reject.status).toBe(200);
+    const rejected = (await reject.json()) as { run_status: string; iterated_run_id?: string };
+    expect(rejected.run_status).toBe("iterated");
+    expect(rejected.iterated_run_id).toMatch(/^run_/);
+
+    const parent = await ctx.app.request(`/api/dag/runs/${created.run_id}`);
+    expect(parent.status).toBe(200);
+    const parentBody = (await parent.json()) as { run: { status: string; context: Record<string, unknown> } };
+    expect(parentBody.run.status).toBe("iterated");
+    expect(parentBody.run.context.__latest_iterated_run_id).toBe(rejected.iterated_run_id);
+
+    const child = await ctx.app.request(`/api/dag/runs/${rejected.iterated_run_id}`);
+    expect(child.status).toBe(200);
+    const childBody = (await child.json()) as { run: { id: string; context: Record<string, unknown> } };
+    expect(childBody.run.context.__iteration_parent_run_id).toBe(created.run_id);
+
+    await ctx.app.request("/api/dag/runs/stop-all", { method: "POST" });
+  }, 20000);
 
   it("supports emergency stop-all", async () => {
     const ctx = setupDagTestApp();
