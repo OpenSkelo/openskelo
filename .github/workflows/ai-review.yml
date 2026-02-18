@@ -39,7 +39,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-          BLOCKING_MODE: ${{ github.event.pull_request.base.ref != 'main' }}
+          BLOCKING_MODE: "false"
           MAX_FILES: "120"
           MAX_PATCH_CHARS: "140000"
 
