@@ -11,8 +11,8 @@ Legend:
 ---
 
 ## 1) Architecture Analysis
-- [~] Dual architecture (legacy + DAG) deprecation path complete; hard removal pending
-  - Proof: `376cd2e`, `16ab25f`, `66738d3`, `53b0710`
+- [x] Dual architecture cleanup: legacy task/runtime path removed from CLI/API/core/schema/docs
+  - Proof: `65153c6`, `e172277`, `1488fa5`, `d8f0ea0`, `b5c4d49`, `819c2ca`
 - [ ] Monolithic decomposition (`dag-api.ts`, `dag-dashboard.ts` split)
 - [ ] Final dependency/ID strategy review (UUIDv7/sortable IDs optional)
 
@@ -123,8 +123,8 @@ Legend:
 ## 15) Prioritized Action Plan Closure
 - [x] Security holes closed
 - [x] Provider v1 shipped (Ollama + OpenAI-compatible)
-- [~] Cleanup started (deprecations complete; hard cut pending)
-- [~] YAML validation improved (line/column diagnostics pending)
+- [x] Cleanup completed (legacy hard-cut executed across runtime surface)
+- [x] YAML validation improved (file:line:col diagnostics + typo hints)
 - [x] 60-second demo artifact documented (`docs/DEMO-60S.md`)
   - Proof: `c51a0ab`
 
