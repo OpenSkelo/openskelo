@@ -69,7 +69,7 @@ Legend:
 - [~] Store-first/event reconstruction advanced: durable `GET /api/dag/runs/:id` now reconstructs state from event stream on fallback (full event-sourced completion pending)
 - [ ] Remove legacy DB schema paths/tables in hard-cut release
 - [x] Numbered migration framework baseline (`schema_migrations` + ordered migration runner)
-  - Proof: `pending-commit`
+  - Proof: `6c896ac`
 
 ## 8) API & Server
 - [x] Legacy `/api/tasks*` deprecation headers
