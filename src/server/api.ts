@@ -17,6 +17,13 @@ export function createAPI(ctx: APIContext) {
   const app = new Hono();
   const { config, taskEngine, gateEngine } = ctx;
 
+  const markLegacyTaskApiDeprecation = (c: { header: (name: string, value: string) => void }) => {
+    c.header("Deprecation", "true");
+    c.header("Sunset", "next-release");
+    c.header("Link", '</api/dag>; rel="successor-version"');
+    c.header("Warning", '299 - "Legacy /api/tasks* endpoints are deprecated; use /api/dag/*"');
+  };
+
   app.use("*", cors());
 
   app.get("/api/health", (c) => {
@@ -44,6 +51,7 @@ export function createAPI(ctx: APIContext) {
   });
 
   app.get("/api/tasks", (c) => {
+    markLegacyTaskApiDeprecation(c);
     const status = c.req.query("status");
     const pipeline = c.req.query("pipeline");
     const tasks = taskEngine.list({ status, pipeline });
@@ -51,12 +59,14 @@ export function createAPI(ctx: APIContext) {
   });
 
   app.get("/api/tasks/:id", (c) => {
+    markLegacyTaskApiDeprecation(c);
     const task = taskEngine.getById(c.req.param("id"));
     if (!task) return c.json({ error: "Not found" }, 404);
     return c.json({ task });
   });
 
   app.post("/api/tasks", async (c) => {
+    markLegacyTaskApiDeprecation(c);
     const body = await c.req.json();
     if (!body.pipeline) return c.json({ error: "pipeline is required" }, 400);
     if (!body.title) return c.json({ error: "title is required" }, 400);
@@ -77,6 +87,7 @@ export function createAPI(ctx: APIContext) {
   });
 
   app.patch("/api/tasks/:id", async (c) => {
+    markLegacyTaskApiDeprecation(c);
     const id = c.req.param("id");
     const body = await c.req.json();
 
@@ -115,7 +126,10 @@ export function createAPI(ctx: APIContext) {
     return c.json({ error: "No status change provided" }, 400);
   });
 
-  app.get("/api/tasks/counts", (c) => c.json(taskEngine.counts()));
+  app.get("/api/tasks/counts", (c) => {
+    markLegacyTaskApiDeprecation(c);
+    return c.json(taskEngine.counts());
+  });
 
   app.get("/api/agents", (c) => {
     const agents = Object.entries(config.agents).map(([id, agent]) => ({ id, ...agent }));

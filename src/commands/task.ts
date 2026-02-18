@@ -5,6 +5,11 @@ import { createDB } from "../core/db.js";
 import { createTaskEngine } from "../core/task-engine.js";
 import { createGateEngine } from "../core/gate-engine.js";
 
+function printLegacyDeprecationNotice(): void {
+  console.log(chalk.yellow("⚠ task/* legacy workflow is deprecated and will be removed in the next release."));
+  console.log(chalk.dim("  Use /api/dag/* runtime and /dag dashboard for new execution flows."));
+}
+
 export function taskCommands(parent: Command) {
   parent
     .command("create")
@@ -15,6 +20,7 @@ export function taskCommands(parent: Command) {
     .option("--priority <priority>", "Priority (P0-P3)", "P2")
     .option("--description <desc>", "Task description")
     .action(async (opts) => {
+      printLegacyDeprecationNotice();
       const config = loadConfig();
       createDB();
       const engine = createTaskEngine(config.pipelines);
@@ -43,6 +49,7 @@ export function taskCommands(parent: Command) {
     .option("--status <status>", "Filter by status")
     .option("--pipeline <pipeline>", "Filter by pipeline")
     .action(async (opts) => {
+      printLegacyDeprecationNotice();
       const config = loadConfig();
       createDB();
       const engine = createTaskEngine(config.pipelines);
@@ -77,6 +84,7 @@ export function taskCommands(parent: Command) {
     .command("show <taskId>")
     .description("Show task detail with history")
     .action(async (taskId) => {
+      printLegacyDeprecationNotice();
       const config = loadConfig();
       const db = createDB();
       const engine = createTaskEngine(config.pipelines);
@@ -127,6 +135,7 @@ export function taskCommands(parent: Command) {
     .option("--notes <notes>", "Update notes")
     .option("--agent <agent>", "Acting agent (for attribution)")
     .action(async (taskId, opts) => {
+      printLegacyDeprecationNotice();
       const config = loadConfig();
       createDB();
       const taskEngine = createTaskEngine(config.pipelines);
