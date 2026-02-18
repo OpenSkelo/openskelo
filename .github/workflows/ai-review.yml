@@ -35,11 +35,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_MODEL: claude-sonnet-4-5
+          ANTHROPIC_MODEL: claude-opus-4-6
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-          BLOCKING_MODE: ${{ github.event.pull_request.base.ref != 'main' }}
+          BLOCKING_MODE: ${{ github.event.pull_request.base.ref != 'main' && !contains(join(github.event.pull_request.labels.*.name, ','), 'ai-review-advisory') }}
           MAX_FILES: "120"
           MAX_PATCH_CHARS: "140000"
 
