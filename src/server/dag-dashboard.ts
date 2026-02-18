@@ -659,6 +659,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     let currentFilter = 'all';
     let followSwitchInFlight = false;
     let toastTimer = null;
+    let lastPreviewSignature = null;
 
     function setApprovalBanner(show, blockId) {
       const bar = document.getElementById('approvalBanner');
@@ -1374,18 +1375,23 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       hint.style.display = 'none';
       source.textContent = artifact.source;
 
+      // Prevent constant iframe/image reload while polling: only update media when artifact changed.
+      const nextSignature = artifact.kind + '|' + artifact.source + '|' + String(artifact.value || '').slice(0, 1600);
+      const changed = nextSignature !== lastPreviewSignature;
+      lastPreviewSignature = nextSignature;
+
       if (artifact.kind === 'url') {
         frame.style.display = 'block';
-        frame.src = artifact.value;
+        if (changed && frame.src !== artifact.value) frame.src = artifact.value;
       } else if (artifact.kind === 'html') {
         frame.style.display = 'block';
-        frame.srcdoc = artifact.value;
+        if (changed) frame.srcdoc = artifact.value;
       } else if (artifact.kind === 'image') {
         img.style.display = 'block';
-        img.src = artifact.value;
+        if (changed && img.src !== artifact.value) img.src = artifact.value;
       } else {
         txt.style.display = 'block';
-        txt.textContent = artifact.value;
+        if (changed) txt.textContent = artifact.value;
       }
     }
 
