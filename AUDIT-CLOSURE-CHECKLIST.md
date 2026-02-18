@@ -67,7 +67,8 @@ Legend:
 ## 7) State Management & Durability
 - [~] Durable tables + replay endpoint implemented (durable run reads and list views now reconstruct from event stream)
 - [~] Store-first/event reconstruction advanced: durable `GET /api/dag/runs/:id` now reconstructs state from event stream on fallback (full event-sourced completion pending)
-- [ ] Remove legacy DB schema paths/tables in hard-cut release
+- [x] Remove legacy DB schema paths/tables in hard-cut release
+  - Proof: `d8f0ea0`
 - [x] Numbered migration framework baseline (`schema_migrations` + ordered migration runner)
   - Proof: `6c896ac`
 
