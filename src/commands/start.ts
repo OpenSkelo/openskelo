@@ -60,6 +60,7 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   const configPath = findConfigFile();
   const projectRoot = configPath ? pathResolve(configPath, "..") : process.cwd();
   const examplesDir = pathResolve(projectRoot, "examples");
+  const docsDir = pathResolve(projectRoot, "docs", "visual");
   const dagAPI = createDAGAPI(config, { examplesDir });
   app.route("/", dagAPI);
 
@@ -67,6 +68,35 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   app.get("/dag", (c) => c.html(getDAGDashboardHTML(config.name, opts.port, { liveMode: true })));
   // Backward-compatible alias
   app.get("/dag/live", (c) => c.redirect('/dag'));
+
+  // Visual docs (optional, observer-only docs pages)
+  const docsAliases: Record<string, string> = {
+    visualizer: "generic-block-visualizer.html",
+    overview: "overview.html",
+    explainer: "generic-block-explainer.html",
+    architecture: "full-stack-architecture.html",
+    roadmap: "visual-roadmap.html",
+  };
+
+  app.get("/docs", (c) => c.redirect("/docs/visualizer"));
+  app.get("/docs/:name", async (c) => {
+    const { readFile } = await import("node:fs/promises");
+    const { basename } = await import("node:path");
+
+    const name = c.req.param("name");
+    const resolved = docsAliases[name] ?? name;
+
+    if (!resolved.endsWith(".html") || basename(resolved) !== resolved) {
+      return c.text("Not found", 404);
+    }
+
+    try {
+      const html = await readFile(pathResolve(docsDir, resolved), "utf8");
+      return c.html(html);
+    } catch {
+      return c.text("Not found", 404);
+    }
+  });
 
   await startNodeServer(app, opts.port);
 
@@ -78,6 +108,7 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
     console.log(chalk.dim("  Dashboard: ") + `http://localhost:${opts.port}/dashboard`);
   }
   console.log(chalk.dim("  DAG Runner:") + `http://localhost:${opts.port}/dag`);
+  console.log(chalk.dim("  Docs:      ") + `http://localhost:${opts.port}/docs`);
   console.log(chalk.dim("  API:       ") + `http://localhost:${opts.port}/api`);
   console.log();
 
