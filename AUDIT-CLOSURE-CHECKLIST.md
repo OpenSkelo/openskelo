@@ -116,7 +116,7 @@ Legend:
 - [~] Cleanup started (deprecations complete; hard cut pending)
 - [~] YAML validation improved (line/column diagnostics pending)
 - [x] 60-second demo artifact documented (`docs/DEMO-60S.md`)
-  - Proof: `pending-commit`
+  - Proof: `c51a0ab`
 
 ---
 
