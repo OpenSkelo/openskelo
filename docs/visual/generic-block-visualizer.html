@@ -13,7 +13,7 @@
     *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui;background:radial-gradient(1200px 600px at 20% -10%, #1e2a52 0%, var(--bg) 55%);color:var(--text)}
     .wrap{max-width:1160px;margin:14px auto;padding:0 16px 28px} h1{margin:0 0 2px;font-size:22px;line-height:1.2}.sub{color:var(--muted);margin-bottom:8px;font-size:14px;line-height:1.35}
     .top-tabs{display:flex;gap:6px;margin:0 0 10px;padding:5px;border:1px solid #364c89;border-radius:12px;background:linear-gradient(180deg,#121b39,#101733);width:fit-content;max-width:100%;overflow:auto}
-    .top-tab{background:transparent;border:1px solid transparent;color:#b8c8f8;border-radius:9px;padding:7px 11px;cursor:pointer;font-size:12px;white-space:nowrap;transition:all .18s ease}
+    .top-tab{background:transparent;border:1px solid transparent;color:#b8c8f8;border-radius:9px;padding:7px 11px;cursor:pointer;font-size:12px;white-space:nowrap;transition:all .18s ease;text-decoration:none;display:inline-block}
     .top-tab:hover{color:#e7eeff;background:rgba(122,162,255,.12)}
     .top-tab.active{background:linear-gradient(180deg,#2b437f,#253a6f);border-color:#7ea0f2;color:#ffffff;box-shadow:0 0 0 1px rgba(126,160,242,.28) inset, 0 2px 8px rgba(0,0,0,.22)}
     .layout{display:grid;grid-template-columns:320px 1fr;gap:14px}@media (max-width:980px){.layout{grid-template-columns:1fr}}
@@ -81,11 +81,11 @@
   <h1>OpenSkelo — Generic Block</h1>
   <div class="sub">Single reusable block contract. This is the core blueprint you can instantiate repeatedly across any workflow stage.</div>
   <div class="top-tabs">
-    <button class="top-tab active" id="tabVisualizer">🧩 Block Visualizer</button>
-    <button class="top-tab" id="tabOverview">🧭 Overview</button>
-    <button class="top-tab" id="tabExplainer">📘 Explainer</button>
-    <button class="top-tab" id="tabArchitecture">🏗️ Architecture</button>
-    <button class="top-tab" id="tabRoadmap">🗺️ Roadmap</button>
+    <a class="top-tab active" id="tabVisualizer" href="/doc/visualizer">🧩 Block Visualizer</a>
+    <a class="top-tab" id="tabOverview" href="/doc/overview">🧭 Overview</a>
+    <a class="top-tab" id="tabExplainer" href="/doc/explainer">📘 Explainer</a>
+    <a class="top-tab" id="tabArchitecture" href="/doc/architecture">🏗️ Architecture</a>
+    <a class="top-tab" id="tabRoadmap" href="/doc/roadmap">🗺️ Roadmap</a>
   </div>
 
   <div id="visualizerPanel" class="layout" style="margin-top:2px">

@@ -19,7 +19,24 @@
     .pipeline{margin-top:8px;padding:10px;border:1px dashed #4762a8;border-radius:10px;background:#0f1730}
     .steps{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px}
     .node{padding:6px 9px;border:1px solid #3f568f;border-radius:8px;background:#1a274f}
+    .n-input{background:rgba(122,162,255,.18);border-color:rgba(122,162,255,.55)}
+    .n-work{background:rgba(255,209,102,.16);border-color:rgba(255,209,102,.55)}
+    .n-gate{background:rgba(255,107,107,.16);border-color:rgba(255,107,107,.55)}
+    .n-human{background:rgba(191,122,255,.18);border-color:rgba(191,122,255,.55)}
+    .n-output{background:rgba(57,217,138,.18);border-color:rgba(57,217,138,.55)}
     .arrow{opacity:.75}
+    .legend{margin-top:8px;font-size:11px;color:#b9c8f8;display:flex;gap:8px;flex-wrap:wrap}
+    .lane{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}
+    .lane-label{min-width:64px;font-size:11px;color:#9eb0e6;text-transform:uppercase;letter-spacing:.5px}
+    .split{display:grid;grid-template-columns:1fr;gap:4px}
+    .join{font-size:11px;color:#9eb0e6;margin:2px 0 0 72px}
+    .mini-graph{margin-top:8px;border:1px dashed #4b63a7;border-radius:10px;padding:8px;background:#0c142b}
+    .mini-graph svg{width:100%;height:auto;display:block}
+    .g-edge{stroke:#7f94cc;stroke-width:2;fill:none;marker-end:url(#arrow)}
+    .g-edge-loop{stroke:#d99dff;stroke-width:2;fill:none;marker-end:url(#arrow)}
+    .g-node{rx:10;ry:10;stroke-width:1.5}
+    .g-label{font-size:12px;fill:#e8eeff;font-weight:600}
+    .g-lane{font-size:10px;fill:#9eb0e6;letter-spacing:.5px}
     ul{margin:6px 0 0 18px;color:#c7d5ff;font-size:13px}
     .mono{font-family:ui-monospace,Menlo,monospace}
   </style>
@@ -60,10 +77,16 @@
       <h3>Simple pipeline (starter)</h3>
       <div class="pipeline">
         <div class="steps">
-          <span class="node">Input</span><span class="arrow">→</span>
-          <span class="node">Generate</span><span class="arrow">→</span>
-          <span class="node">Validate</span><span class="arrow">→</span>
-          <span class="node">Done</span>
+          <span class="node n-input">Input</span><span class="arrow">→</span>
+          <span class="node n-work">Generate</span><span class="arrow">→</span>
+          <span class="node n-gate">Validate</span><span class="arrow">→</span>
+          <span class="node n-output">Done</span>
+        </div>
+        <div class="legend">
+          <span class="chip info">Blue = input/context</span>
+          <span class="chip warn">Yellow = work block</span>
+          <span class="chip" style="background:rgba(255,107,107,.14);border-color:rgba(255,107,107,.45)">Red = gate/risk</span>
+          <span class="chip ok">Green = output/release</span>
         </div>
       </div>
       <ul>
@@ -92,33 +115,88 @@
     <div class="card">
       <h3>Complex pipeline (multi-branch)</h3>
       <div class="pipeline">
-        <div class="steps">
-          <span class="node">Plan</span><span class="arrow">→</span>
-          <span class="node">Build A</span>
-          <span class="node">Build B</span><span class="arrow">→</span>
-          <span class="node">Merge</span><span class="arrow">→</span>
-          <span class="node">Review Gate</span>
+        <div class="mini-graph">
+          <svg viewBox="0 0 560 220" role="img" aria-label="Multi-branch DAG with split and join">
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L8,4 L0,8 z" fill="#7f94cc"></path>
+              </marker>
+            </defs>
+            <text x="8" y="28" class="g-lane">TRUNK</text>
+            <text x="8" y="88" class="g-lane">BRANCH A</text>
+            <text x="8" y="148" class="g-lane">BRANCH B</text>
+            <text x="8" y="202" class="g-lane">MERGE</text>
+
+            <rect class="g-node" x="70" y="10" width="86" height="32" fill="rgba(122,162,255,.2)" stroke="rgba(122,162,255,.7)"/><text class="g-label" x="94" y="31">Plan</text>
+            <rect class="g-node" x="200" y="10" width="86" height="32" fill="rgba(255,209,102,.18)" stroke="rgba(255,209,102,.7)"/><text class="g-label" x="223" y="31">Split</text>
+
+            <rect class="g-node" x="320" y="70" width="98" height="32" fill="rgba(255,209,102,.18)" stroke="rgba(255,209,102,.7)"/><text class="g-label" x="338" y="91">Build API</text>
+            <rect class="g-node" x="442" y="70" width="98" height="32" fill="rgba(255,107,107,.18)" stroke="rgba(255,107,107,.7)"/><text class="g-label" x="462" y="91">API Test</text>
+
+            <rect class="g-node" x="320" y="130" width="98" height="32" fill="rgba(255,209,102,.18)" stroke="rgba(255,209,102,.7)"/><text class="g-label" x="344" y="151">Build UI</text>
+            <rect class="g-node" x="442" y="130" width="98" height="32" fill="rgba(255,107,107,.18)" stroke="rgba(255,107,107,.7)"/><text class="g-label" x="465" y="151">UI Test</text>
+
+            <rect class="g-node" x="320" y="184" width="86" height="32" fill="rgba(255,209,102,.18)" stroke="rgba(255,209,102,.7)"/><text class="g-label" x="343" y="205">Merge</text>
+            <rect class="g-node" x="430" y="184" width="110" height="32" fill="rgba(57,217,138,.18)" stroke="rgba(57,217,138,.7)"/><text class="g-label" x="454" y="205">Release</text>
+
+            <path class="g-edge" d="M156 26 L200 26"/>
+            <path class="g-edge" d="M286 26 C305 26, 302 86, 320 86"/>
+            <path class="g-edge" d="M286 26 C305 26, 302 146, 320 146"/>
+            <path class="g-edge" d="M418 86 L442 86"/>
+            <path class="g-edge" d="M418 146 L442 146"/>
+            <path class="g-edge" d="M540 86 C552 86, 555 200, 406 200"/>
+            <path class="g-edge" d="M540 146 C552 146, 555 200, 406 200"/>
+            <path class="g-edge" d="M406 200 L430 200"/>
+          </svg>
         </div>
       </div>
       <ul>
         <li>Use case: parallel workstreams + merge validation.</li>
-        <li>Needs explicit handoff contracts and stronger gate strategy.</li>
+        <li>Read top-down: trunk splits into A/B branches, both must pass before merge/release.</li>
       </ul>
     </div>
 
     <div class="card">
-      <h3>Advanced pipeline (human-in-loop continuous iteration)</h3>
+      <h3>Advanced pipeline (human-in-loop + escalation)</h3>
       <div class="pipeline">
-        <div class="steps">
-          <span class="node">Create</span><span class="arrow">→</span>
-          <span class="node">Review</span><span class="arrow">→</span>
-          <span class="node">Approve/Reject</span><span class="arrow">↺</span>
-          <span class="node">Next Cycle</span>
+        <div class="mini-graph">
+          <svg viewBox="0 0 560 240" role="img" aria-label="Advanced iterative DAG with approve path, reject loop, and safety escalation">
+            <defs>
+              <marker id="arrow2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L8,4 L0,8 z" fill="#7f94cc"></path>
+              </marker>
+            </defs>
+            <text x="8" y="28" class="g-lane">CYCLE N</text>
+            <text x="8" y="122" class="g-lane">DECISION</text>
+            <text x="8" y="214" class="g-lane">SAFETY</text>
+
+            <rect class="g-node" x="86" y="10" width="94" height="32" fill="rgba(255,209,102,.18)" stroke="rgba(255,209,102,.7)"/><text class="g-label" x="114" y="31">Create</text>
+            <rect class="g-node" x="214" y="10" width="94" height="32" fill="rgba(255,107,107,.18)" stroke="rgba(255,107,107,.7)"/><text class="g-label" x="237" y="31">Auto QA</text>
+            <rect class="g-node" x="342" y="10" width="122" height="32" fill="rgba(191,122,255,.2)" stroke="rgba(191,122,255,.75)"/><text class="g-label" x="366" y="31">Human Review</text>
+
+            <rect class="g-node" x="214" y="104" width="94" height="32" fill="rgba(57,217,138,.18)" stroke="rgba(57,217,138,.7)"/><text class="g-label" x="236" y="125">Approve</text>
+            <rect class="g-node" x="342" y="104" width="86" height="32" fill="rgba(57,217,138,.18)" stroke="rgba(57,217,138,.7)"/><text class="g-label" x="370" y="125">Ship</text>
+            <rect class="g-node" x="214" y="154" width="94" height="32" fill="rgba(255,107,107,.18)" stroke="rgba(255,107,107,.7)"/><text class="g-label" x="242" y="175">Reject</text>
+            <rect class="g-node" x="342" y="154" width="170" height="32" fill="rgba(255,209,102,.18)" stroke="rgba(255,209,102,.7)"/><text class="g-label" x="358" y="175">Refine / From Scratch</text>
+
+            <rect class="g-node" x="214" y="196" width="104" height="32" fill="rgba(255,107,107,.18)" stroke="rgba(255,107,107,.7)"/><text class="g-label" x="228" y="217">Max Cycles</text>
+            <rect class="g-node" x="352" y="196" width="100" height="32" fill="rgba(191,122,255,.2)" stroke="rgba(191,122,255,.75)"/><text class="g-label" x="375" y="217">Escalate</text>
+
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M180 26 L214 26"/>
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M308 26 L342 26"/>
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M403 42 L261 104"/>
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M308 120 L342 120"/>
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M403 42 L261 154"/>
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M308 170 L342 170"/>
+            <path class="g-edge-loop" style="marker-end:url(#arrow2)" d="M512 170 C540 170, 540 20, 180 20"/>
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M261 186 L261 196"/>
+            <path class="g-edge" style="marker-end:url(#arrow2)" d="M318 212 L352 212"/>
+          </svg>
         </div>
       </div>
       <ul>
         <li>Use case: operator-guided refinement until approval.</li>
-        <li>Uses shared memory (<span class="mono">__shared_memory</span>) and restart modes (<span class="mono">refine/from_scratch</span>).</li>
+        <li>Reject loops back into next cycle; max-cycle breach escalates to human owner.</li>
       </ul>
     </div>
   </div>

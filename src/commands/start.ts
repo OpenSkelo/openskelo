@@ -60,7 +60,13 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   const configPath = findConfigFile();
   const projectRoot = configPath ? pathResolve(configPath, "..") : process.cwd();
   const examplesDir = pathResolve(projectRoot, "examples");
-  const docsDir = pathResolve(projectRoot, "docs", "visual");
+  const { existsSync } = await import("node:fs");
+  const docsCandidates = [
+    pathResolve(projectRoot, "docs", "visual"),
+    pathResolve(projectRoot, "docs"),
+    pathResolve(projectRoot, "..", "docs", "visual"),
+  ];
+  const docsDir = docsCandidates.find((d) => existsSync(d)) ?? docsCandidates[0];
   const dagAPI = createDAGAPI(config, { examplesDir });
   app.route("/", dagAPI);
 
@@ -78,24 +84,35 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
     roadmap: "visual-roadmap.html",
   };
 
-  app.get("/docs", (c) => c.redirect("/docs/visualizer"));
-  app.get("/docs/:name", async (c) => {
+  const serveDoc = async (name: string) => {
     const { readFile } = await import("node:fs/promises");
     const { basename } = await import("node:path");
 
-    const name = c.req.param("name");
     const resolved = docsAliases[name] ?? name;
-
     if (!resolved.endsWith(".html") || basename(resolved) !== resolved) {
-      return c.text("Not found", 404);
+      return null;
     }
 
     try {
-      const html = await readFile(pathResolve(docsDir, resolved), "utf8");
-      return c.html(html);
+      return await readFile(pathResolve(docsDir, resolved), "utf8");
     } catch {
-      return c.text("Not found", 404);
+      return null;
     }
+  };
+
+  app.get("/docs", (c) => c.redirect("/doc/visualizer"));
+  app.get("/doc", (c) => c.redirect("/doc/visualizer"));
+
+  app.get("/docs/:name", async (c) => {
+    const html = await serveDoc(c.req.param("name"));
+    if (!html) return c.text("Not found", 404);
+    return c.html(html);
+  });
+
+  app.get("/doc/:name", async (c) => {
+    const html = await serveDoc(c.req.param("name"));
+    if (!html) return c.text("Not found", 404);
+    return c.html(html);
   });
 
   await startNodeServer(app, opts.port);
