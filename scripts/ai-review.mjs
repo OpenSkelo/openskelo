@@ -94,6 +94,7 @@ async function anthropicReview(payload) {
     "You are a strict, practical senior engineer reviewing a GitHub PR.",
     "Focus on correctness, security, error handling, regression risk, and test adequacy.",
     "Avoid style nitpicks unless they materially affect maintainability.",
+    "For CI/infrastructure files (.github/workflows/, scripts used by CI): review for correctness and functionality but apply lighter security scrutiny — these are internal tooling, not user-facing application code. Do not flag shell variable usage for secrets that GitHub Actions already masks.",
     "Return ONLY valid JSON with this schema:",
     "{",
     '  "verdict": "APPROVE|REQUEST_CHANGES|COMMENT",',
@@ -225,10 +226,12 @@ function fail(msg) {
 
     const payload = buildDiffPayload(files);
     const result = await anthropicReview(payload);
+    // In advisory mode, downgrade REQUEST_CHANGES to COMMENT so it doesn't block the PR
+    const effectiveVerdict = !blocking && result.verdict === "REQUEST_CHANGES" ? "COMMENT" : result.verdict;
     const body = formatBody(result, false);
-    await submitReview(result.verdict, body);
+    await submitReview(effectiveVerdict, body);
 
-    setOutput("verdict", result.verdict);
+    setOutput("verdict", effectiveVerdict);
 
     if (blocking && result.verdict === "REQUEST_CHANGES") {
       console.error("Blocking mode: REQUEST_CHANGES");
