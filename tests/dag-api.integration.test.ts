@@ -6,9 +6,6 @@ import { fileURLToPath } from "node:url";
 import { createDB, closeDB } from "../src/core/db";
 import { createAPI } from "../src/server/api";
 import { createDAGAPI } from "../src/server/dag-api";
-import { createTaskEngine } from "../src/core/task-engine";
-import { createGateEngine } from "../src/core/gate-engine";
-import { createRouter } from "../src/core/router";
 import type { SkeloConfig } from "../src/types";
 
 const cleanups: Array<() => void> = [];
@@ -59,10 +56,7 @@ function setupDagTestAppWithConfig(config: SkeloConfig, examplesDirOverride?: st
   const workdir = mkdtempSync(join(tmpdir(), "openskelo-dag-test-"));
   createDB(workdir);
 
-  const taskEngine = createTaskEngine(config.pipelines);
-  const gateEngine = createGateEngine(config.gates);
-  const router = createRouter(config.agents, config.pipelines);
-  const app = createAPI({ config, taskEngine, gateEngine, router });
+  const app = createAPI({ config });
 
   const examplesDir = examplesDirOverride ?? resolve(__dirname, "../examples");
   const dagAPI = createDAGAPI(config, { examplesDir });
