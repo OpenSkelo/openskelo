@@ -22,7 +22,7 @@ Legend:
   - Proof: `37c4392`
 - [ ] Structured error hierarchy (`SkeloError` family)
 - [x] Mutable-state contract clarity (explicit mutable vs immutable semantics)
-  - Proof: `pending-commit`
+  - Proof: `fb2833f`
 
 ## 3) Security Audit
 - [x] Remove `new Function()` in expr/transform
