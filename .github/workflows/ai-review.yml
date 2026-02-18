@@ -33,7 +33,7 @@ jobs:
         if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: node scripts/ai-review.mjs
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_MODEL: claude-opus-4-6
           GITHUB_REPOSITORY: ${{ github.repository }}
