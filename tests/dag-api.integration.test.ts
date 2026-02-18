@@ -109,8 +109,9 @@ describe("DAG API integration", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
+    const body = (await res.json()) as { error: string; code?: string };
     expect(body.error).toContain("Unknown provider");
+    expect(typeof body.code).toBe("string");
   });
 
   it("enforces max request size on dag endpoints", async () => {

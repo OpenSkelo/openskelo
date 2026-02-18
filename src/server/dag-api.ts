@@ -58,6 +58,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   const engine = createBlockEngine();
   const examplesBaseDir = opts?.examplesDir ?? resolve(process.cwd(), "examples");
 
+  const jsonError = (
+    c: { json: (body: unknown, status?: number) => Response },
+    status: number,
+    error: string,
+    code: string,
+    details?: Record<string, unknown>
+  ) => c.json({ error, code, ...(details ? { details } : {}) }, status);
+
   const safety = {
     maxConcurrentRuns: Number(process.env.OPENSKELO_MAX_CONCURRENT_RUNS ?? "2"),
     maxRunDurationMs: Number(process.env.OPENSKELO_MAX_RUN_DURATION_MS ?? String(30 * 60 * 1000)),
@@ -299,14 +307,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       const xApiKey = String(c.req.header("x-api-key") ?? "").trim();
       const presented = bearer || xApiKey;
       if (presented !== configuredApiKey) {
-        return c.json({ error: "Unauthorized" }, 401);
+        return jsonError(c, 401, "Unauthorized", "UNAUTHORIZED");
       }
     }
     const lenHeader = c.req.header("content-length");
     if (lenHeader) {
       const n = Number(lenHeader);
       if (Number.isFinite(n) && n > maxRequestBytes) {
-        return c.json({ error: `Request too large. Max ${maxRequestBytes} bytes` }, 413);
+        return jsonError(c, 413, `Request too large. Max ${maxRequestBytes} bytes`, "REQUEST_TOO_LARGE", { maxRequestBytes });
       }
     }
 
@@ -318,7 +326,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     } else {
       existing.count += 1;
       if (existing.count > rateLimitMax) {
-        return c.json({ error: "Rate limit exceeded", retryAfterMs: Math.max(0, existing.resetAt - now) }, 429);
+        return jsonError(c, 429, "Rate limit exceeded", "RATE_LIMITED", { retryAfterMs: Math.max(0, existing.resetAt - now) });
       }
     }
 
@@ -365,14 +373,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   app.get("/api/dag/examples/:file", (c) => {
     const file = c.req.param("file");
     const path = resolve(examplesBaseDir, file);
-    if (!existsSync(path)) return c.json({ error: "Not found" }, 404);
+    if (!existsSync(path)) return jsonError(c, 404, "Not found", "NOT_FOUND");
 
     try {
       const raw = parseYamlWithDiagnostics<Record<string, unknown>>(readFileSync(path, "utf-8"), path);
       const dag = engine.parseDAG(raw);
       return c.json({ dag, order: engine.executionOrder(dag) });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 400);
+      return jsonError(c, 400, (err as Error).message, "BAD_REQUEST");
     }
   });
 
@@ -694,20 +702,23 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     try {
       if (file) {
         const path = resolve(examplesBaseDir, file);
-        if (!existsSync(path)) return c.json({ error: "Example not found" }, 404);
+        if (!existsSync(path)) return jsonError(c, 404, "Example not found", "EXAMPLE_NOT_FOUND");
         const raw = parseYamlWithDiagnostics<Record<string, unknown>>(readFileSync(path, "utf-8"), path);
         dag = engine.parseDAG(raw);
       } else if (body.dag) {
         dag = engine.parseDAG(body.dag);
       } else {
-        return c.json({ error: "Provide 'example' filename or 'dag' definition" }, 400);
+        return jsonError(c, 400, "Provide 'example' filename or 'dag' definition", "INVALID_INPUT");
       }
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 400);
+      return jsonError(c, 400, (err as Error).message, "BAD_REQUEST");
     }
 
     const started = await startDagExecution(dag, context, body as Record<string, unknown>);
-    if ((started as { error?: string }).error) return c.json({ error: (started as { error: string }).error }, (started as { status?: number }).status ?? 400);
+    if ((started as { error?: string }).error) {
+      const status = (started as { status?: number }).status ?? 400;
+      return jsonError(c, status, (started as { error: string }).error, "START_FAILED");
+    }
     return c.json(started, 201);
   });
 
@@ -752,7 +763,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     // Fallback to durable store (Phase A)
     reconcileOrphanedRun(runId);
     const row = db.prepare("SELECT * FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
-    if (!row) return c.json({ error: "Not found" }, 404);
+    if (!row) return jsonError(c, 404, "Not found", "NOT_FOUND");
     const events = db.prepare("SELECT rowid as seq, event_type, run_id, block_id, data_json, timestamp FROM dag_events WHERE run_id = ? ORDER BY rowid ASC").all(runId) as Array<Record<string, unknown>>;
     const approval = db.prepare("SELECT * FROM dag_approvals WHERE run_id = ? AND status = 'pending' ORDER BY requested_at DESC LIMIT 1").get(runId) as Record<string, unknown> | undefined;
 
@@ -960,7 +971,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const since = Number(c.req.query("since") ?? "0") || 0;
 
     const row = db.prepare("SELECT id, status, updated_at FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
-    if (!row) return c.json({ error: "Not found" }, 404);
+    if (!row) return jsonError(c, 404, "Not found", "NOT_FOUND");
 
     const events = selectDagEventsSince.all(runId, since) as Array<Record<string, unknown>>;
     return c.json({
@@ -986,7 +997,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     const hasActive = activeRuns.has(runId);
     const existsDurable = db.prepare("SELECT 1 FROM dag_runs WHERE id = ? LIMIT 1").get(runId);
-    if (!hasActive && !existsDurable) return c.json({ error: "Not found" }, 404);
+    if (!hasActive && !existsDurable) return jsonError(c, 404, "Not found", "NOT_FOUND");
 
     const lastEventIdRaw = c.req.header("last-event-id") ?? c.req.query("since") ?? "0";
     const rawSince = Number(lastEventIdRaw);
@@ -1125,7 +1136,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     // Durable-only fallback: mark persisted run as cancelled even if not active in memory
     const row = db.prepare("SELECT id, run_json, trace_json, created_at, updated_at FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
-    if (!row) return c.json({ error: "Not found" }, 404);
+    if (!row) return jsonError(c, 404, "Not found", "NOT_FOUND");
 
     const run = JSON.parse(String(row.run_json ?? "{}"));
     run.status = "cancelled";
@@ -1191,7 +1202,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   // Decide latest pending approval without run/token (chat UX)
   app.post("/api/dag/approvals/latest", async (c) => {
     const latest = getLatestPendingApproval();
-    if (!latest) return c.json({ error: "No pending approval" }, 404);
+    if (!latest) return jsonError(c, 404, "No pending approval", "NO_PENDING_APPROVAL");
     const body = await c.req.json().catch(() => ({}));
     const result = await resolveApproval(latest.run.id, null, body as Record<string, unknown>);
     return c.json(result.payload, result.status);
