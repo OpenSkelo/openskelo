@@ -5,6 +5,7 @@ import { startServer } from "./commands/start.js";
 import { statusCommand } from "./commands/status.js";
 import { runCommands } from "./commands/run.js";
 import { autopilotCommand } from "./commands/autopilot.js";
+import { killCommand } from "./commands/kill.js";
 
 const VERSION = "0.1.0";
 
@@ -48,6 +49,15 @@ program
   });
 
 // legacy task commands removed
+
+// ── kill ──
+program
+  .command("kill")
+  .description("Emergency stop: kill all running DAG pipelines")
+  .option("--api <url>", "API base URL", process.env.OPENSKELO_API ?? "http://localhost:4040")
+  .action(async (opts) => {
+    await killCommand(opts);
+  });
 
 // ── status ──
 program

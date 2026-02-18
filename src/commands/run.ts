@@ -202,4 +202,19 @@ export function runCommands(parent: Command): void {
       }
       console.log(chalk.green(`✓ Stopped ${runId}`));
     });
+
+  parent
+    .command("kill")
+    .description("Emergency stop: kill all running DAG pipelines")
+    .option("--api <url>", "API base URL", DEFAULT_API)
+    .action(async (opts) => {
+      const res = await fetch(`${opts.api}/api/dag/runs/stop-all`, { method: "POST" });
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        console.error(chalk.red(`✗ ${String(data.error ?? `HTTP ${res.status}`)}`));
+        process.exit(1);
+      }
+      const stopped = Number(data.stopped ?? 0);
+      console.log(chalk.green(`✓ Emergency stop complete. Stopped ${stopped} run${stopped === 1 ? "" : "s"}.`));
+    });
 }
