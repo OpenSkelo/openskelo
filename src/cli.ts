@@ -46,7 +46,7 @@ program
     });
   });
 
-// legacy task commands removed in hard-cut phase
+// legacy task commands removed
 
 // ── status ──
 program

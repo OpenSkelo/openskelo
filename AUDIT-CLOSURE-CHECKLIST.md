@@ -123,11 +123,12 @@ Legend:
 ### P0-Remaining
 1. Legacy hard cut (remove legacy task engine/routes/db usage)
    - Plan committed: `LEGACY-HARD-CUT-PLAN.md`
+   - ✅ COMPLETE: CLI/API/core/schema/docs migrated to DAG-only runtime surface
    - Slice A complete: DAG-first API startup path no longer requires task engine wiring
    - Slice B complete: legacy task CLI removed from command surface; legacy /api tasks/log routes removed
-   - Slice C progress: legacy core modules (`task-engine`, `gate-engine`, `router`) removed from active codebase
-   - Slice C progress: DB init now creates DAG tables only
-   - Slice D progress: README/docs API references updated to DAG-only surface
+   - Slice C complete: legacy core modules (`task-engine`, `gate-engine`, `router`) removed from active codebase
+   - Slice C complete: DB init now creates DAG tables only
+   - Slice D complete: README/docs API references updated to DAG-only surface
 2. Remove hardcoded Telegram target default
 3. Regex ReDoS hardening
 4. YAML line/column diagnostics
