@@ -300,6 +300,34 @@ export interface DAGRun {
   updated_at: string;
 }
 
+// ── Edge Indexing (performance helper) ──
+
+type EdgeIndex = {
+  incomingByBlockPort: Map<string, EdgeDef>;
+  incomingByBlock: Map<string, EdgeDef[]>;
+};
+
+const edgeIndexCache = new WeakMap<DAGDef, EdgeIndex>();
+
+function getEdgeIndex(dag: DAGDef): EdgeIndex {
+  const existing = edgeIndexCache.get(dag);
+  if (existing) return existing;
+
+  const incomingByBlockPort = new Map<string, EdgeDef>();
+  const incomingByBlock = new Map<string, EdgeDef[]>();
+
+  for (const edge of dag.edges) {
+    incomingByBlockPort.set(`${edge.to}::${edge.input}`, edge);
+    const arr = incomingByBlock.get(edge.to) ?? [];
+    arr.push(edge);
+    incomingByBlock.set(edge.to, arr);
+  }
+
+  const built = { incomingByBlockPort, incomingByBlock };
+  edgeIndexCache.set(dag, built);
+  return built;
+}
+
 // ── Block Engine ──
 
 export function createBlockEngine() {
@@ -411,6 +439,7 @@ export function createBlockEngine() {
    */
   function resolveReady(dag: DAGDef, run: DAGRun): string[] {
     const ready: string[] = [];
+    const edgeIndex = getEdgeIndex(dag);
 
     for (const blockDef of dag.blocks) {
       const instance = run.blocks[blockDef.id];
@@ -422,7 +451,7 @@ export function createBlockEngine() {
         if (portDef.required === false) return true;
 
         // Check if there's an edge wiring to this input
-        const incomingEdge = dag.edges.find(e => e.to === blockDef.id && e.input === portName);
+        const incomingEdge = edgeIndex.incomingByBlockPort.get(`${blockDef.id}::${portName}`);
         if (!incomingEdge) {
           // No edge — check context or default
           return instance.inputs[portName] !== undefined
@@ -450,6 +479,7 @@ export function createBlockEngine() {
     if (!blockDef) throw new Error(`Unknown block: ${blockId}`);
 
     const inputs: Record<string, unknown> = {};
+    const edgeIndex = getEdgeIndex(dag);
 
     for (const [portName, portDef] of Object.entries(blockDef.inputs)) {
       // Priority: explicit per-block input override > upstream edge > run context > default
@@ -459,7 +489,7 @@ export function createBlockEngine() {
         continue;
       }
 
-      const edge = dag.edges.find(e => e.to === blockId && e.input === portName);
+      const edge = edgeIndex.incomingByBlockPort.get(`${blockId}::${portName}`);
 
       if (edge) {
         const source = run.blocks[edge.from];
