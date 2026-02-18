@@ -8,9 +8,12 @@ import { createAPI } from "../src/server/api";
 import { createDAGAPI } from "../src/server/dag-api";
 import type { SkeloConfig } from "../src/types";
 
-const cleanups: Array<() => void> = [];
-afterEach(() => {
-  while (cleanups.length) cleanups.pop()?.();
+const cleanups: Array<() => Promise<void> | void> = [];
+afterEach(async () => {
+  while (cleanups.length) {
+    const fn = cleanups.pop();
+    if (fn) await fn();
+  }
 });
 
 function withFetchMock(mock: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
@@ -64,7 +67,14 @@ function setupDagTestAppWithConfig(config: SkeloConfig, examplesDirOverride?: st
 
   return {
     app,
-    cleanup: () => closeDB(),
+    cleanup: async () => {
+      try {
+        await app.request("/api/dag/runs/stop-all", { method: "POST" });
+        await new Promise((r) => setTimeout(r, 25));
+      } finally {
+        closeDB();
+      }
+    },
   };
 }
 
