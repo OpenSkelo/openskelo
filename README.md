@@ -287,6 +287,7 @@ OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 - Mutation testing plan (optional lane): `docs/MUTATION-TESTING-PLAN.md`
 - Executor/API isolation strategy: `docs/EXECUTOR-ISOLATION-PLAN.md`
 - Hosted queue strategy (future): `docs/HOSTED-QUEUE-STRATEGY.md`
+- Audit closure report: `docs/AUDIT-CLOSURE-REPORT.md`
 
 ## Testing & Reports
 
