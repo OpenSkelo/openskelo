@@ -1452,19 +1452,19 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           applyViewFilter();
           updateIterationUI(run);
 
-          if (run.status === 'failed' || run.status === 'completed' || run.status === 'cancelled' || run.status === 'iterated') {
-            const follow = document.getElementById('followLatestIterated')?.checked === true;
-            const latestIterated = run?.context?.__latest_iterated_run_id;
-            if (follow && latestIterated && latestIterated !== currentRunId && !followSwitchInFlight) {
-              followSwitchInFlight = true;
-              currentRunId = latestIterated;
-              document.getElementById('runId').textContent = currentRunId;
-              setupSSE(currentRunId);
-              addEventLog({ type: 'run:start', run_id: currentRunId, data: { status: 'Followed latest iterated run' }, timestamp: new Date().toISOString() });
-              setTimeout(() => { followSwitchInFlight = false; }, 400);
-              return;
-            }
+          const follow = document.getElementById('followLatestIterated')?.checked === true;
+          const latestIterated = run?.context?.__latest_iterated_run_id;
+          if (follow && latestIterated && latestIterated !== currentRunId && !followSwitchInFlight) {
+            followSwitchInFlight = true;
+            currentRunId = latestIterated;
+            document.getElementById('runId').textContent = currentRunId;
+            setupSSE(currentRunId);
+            addEventLog({ type: 'run:start', run_id: currentRunId, data: { status: 'Followed latest iterated run' }, timestamp: new Date().toISOString() });
+            setTimeout(() => { followSwitchInFlight = false; }, 400);
+            return;
+          }
 
+          if (run.status === 'failed' || run.status === 'completed' || run.status === 'cancelled' || run.status === 'iterated') {
             const btn = document.getElementById('runBtn');
             btn.disabled = false;
             btn.textContent = '▶ Run DAG';
@@ -1481,6 +1481,18 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           setApprovalBanner(true, pendingApproval.block_id || 'unknown');
           document.getElementById('approvalPanel').style.display = 'block';
           document.getElementById('approvalText').textContent = (pendingApproval.prompt || 'Approval needed') + ' [' + (pendingApproval.block_id || '') + ']';
+
+          // When paused on approval, force-highlight the approval block as paused to avoid stale "running" emphasis.
+          if (run?.status === 'paused_approval' && pendingApproval.block_id) {
+            const id = String(pendingApproval.block_id);
+            const node = document.getElementById('block-' + id);
+            if (node) {
+              node.className = 'block-node status-paused_approval';
+              const statusEl = node.querySelector('.block-status');
+              if (statusEl) statusEl.innerHTML = '<span class="status-dot"></span>paused_approval';
+              showInspector(id);
+            }
+          }
         } else {
           setApprovalBanner(false);
         }
