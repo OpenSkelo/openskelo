@@ -108,13 +108,13 @@ Legend:
 
 ## 12) Design Philosophy Decisions (to codify)
 - [x] Static vs dynamic DAG scope statement
-  - Proof: `pending-commit`
+  - Proof: `25cb1eb`
 - [x] Single-shot vs multi-turn block scope statement
-  - Proof: `pending-commit`
+  - Proof: `25cb1eb`
 - [x] Library/framework/platform primary posture statement
-  - Proof: `pending-commit`
+  - Proof: `25cb1eb`
 - [x] OpenClaw-coupled vs provider-agnostic strategy statement
-  - Proof: `pending-commit`
+  - Proof: `25cb1eb`
 
 ## 13) Market/Positioning Alignment
 - [~] Messaging improved to DAG-canonical
