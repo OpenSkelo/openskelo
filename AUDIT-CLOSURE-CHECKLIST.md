@@ -102,7 +102,8 @@ Legend:
 ## 10) Testing & QA
 - [x] Expanded integration/security coverage (now 40/40)
   - Proof: `deceee7`, `b7be7cc`
-- [ ] Real provider integration test profile (optional/skippable in CI)
+- [x] Real provider integration test profile (optional/skippable in CI)
+  - Proof: `pending-commit`
 - [ ] Performance/stress test baseline
 - [ ] Broader security regression/fuzz suite
 - [ ] Mutation testing (optional but recommended)
