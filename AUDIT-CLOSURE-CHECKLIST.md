@@ -122,6 +122,7 @@ Legend:
 
 ### P0-Remaining
 1. Legacy hard cut (remove legacy task engine/routes/db usage)
+   - Plan committed: `LEGACY-HARD-CUT-PLAN.md`
 2. Remove hardcoded Telegram target default
 3. Regex ReDoS hardening
 4. YAML line/column diagnostics
