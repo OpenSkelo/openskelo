@@ -44,7 +44,7 @@ Legend:
 - [ ] Add semantic/LLM review gate type
 - [~] Add gate types: `json_schema`, `http`, `diff`, `cost`, `latency`
   - Progress: `json_schema` + `diff` + `cost` + `latency` implemented; `http` pending
-  - Proof: `pending-commit`
+  - Proof: `aaf40ea`
 - [ ] Add gate composition logic (OR/conditional)
 
 ## 5) Provider Layer
