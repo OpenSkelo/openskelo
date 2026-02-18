@@ -1329,17 +1329,21 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const durableOnly = durableRows
       .filter((r) => !activeIds.has(String(r.id)))
       .map((r) => {
-        const run = JSON.parse(String(r.run_json ?? "{}"));
+        const runId = String(r.id);
+        const baseRun = JSON.parse(String(r.run_json ?? "{}")) as Record<string, unknown>;
+        const evs = db.prepare("SELECT event_type, block_id, data_json FROM dag_events WHERE run_id = ? ORDER BY rowid ASC").all(runId) as Array<Record<string, unknown>>;
+        const run = reconstructRunFromEvents(baseRun, evs);
         const blocks = run?.blocks && typeof run.blocks === "object"
           ? Object.fromEntries(Object.entries(run.blocks as Record<string, Record<string, unknown>>).map(([k, v]) => [k, String(v.status ?? "unknown")]))
           : {};
         return {
-          id: String(r.id),
+          id: runId,
           dag_name: String(r.dag_name ?? run?.dag_name ?? "unknown"),
           status: String(r.status ?? run?.status ?? "unknown"),
           blocks,
           created_at: String(r.created_at ?? run?.created_at ?? ""),
           durable: true,
+          reconstructed: true,
         };
       });
 

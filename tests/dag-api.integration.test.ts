@@ -445,13 +445,16 @@ describe("DAG API integration", () => {
 
     const res = await ctx.app.request("/api/dag/runs?limit=1&offset=0");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { runs: unknown[]; pagination: { limit: number; offset: number; total: number; has_more: boolean } };
+    const body = (await res.json()) as { runs: Array<Record<string, unknown>>; pagination: { limit: number; offset: number; total: number; has_more: boolean } };
     expect(Array.isArray(body.runs)).toBe(true);
     expect(body.runs.length).toBeLessThanOrEqual(1);
     expect(body.pagination.limit).toBe(1);
     expect(body.pagination.offset).toBe(0);
     expect(typeof body.pagination.total).toBe("number");
     expect(typeof body.pagination.has_more).toBe("boolean");
+    if (body.runs.length > 0 && body.runs[0]?.durable === true) {
+      expect(body.runs[0]?.reconstructed).toBe(true);
+    }
   });
 
   it("supports emergency stop-all", async () => {
