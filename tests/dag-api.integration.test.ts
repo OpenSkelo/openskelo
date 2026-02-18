@@ -106,20 +106,21 @@ describe("DAG API integration", () => {
     expect(examples.examples.length).toBeGreaterThan(0);
   });
 
-  it("rejects unknown provider override on run start", async () => {
+  it("falls back to local provider when unknown provider override is requested", async () => {
     const ctx = setupDagTestApp();
     cleanups.push(ctx.cleanup);
 
     const res = await ctx.app.request("/api/dag/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ example: "coding-pipeline.yaml", provider: "does-not-exist", context: { prompt: "x" } }),
+      body: JSON.stringify({ example: "coding-pipeline.yaml", provider: "does-not-exist", context: { prompt: "x" }, devMode: true }),
     });
 
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; code?: string };
-    expect(body.error).toContain("Unknown provider");
-    expect(typeof body.code).toBe("string");
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { run_id: string; warning?: string; provider_mode?: string };
+    expect(body.run_id).toMatch(/^run_/);
+    expect(String(body.warning ?? "")).toContain("Falling back to 'local'");
+    expect(body.provider_mode).toBe("local");
   });
 
   it("adds CORS headers for DAG routes and handles preflight", async () => {

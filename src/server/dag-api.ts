@@ -444,16 +444,26 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
 
     // Optional provider override by name or type: route all agent providers to selected adapter
+    let providerWarning: string | undefined;
+    let effectiveProviderMode = providerMode;
     if (providerMode) {
       const byName = config.providers.find((p) => p.name === providerMode);
       const byType = config.providers.find((p) => p.type === providerMode);
-      const selected = byName ?? byType;
+      let selected = byName ?? byType;
+
       if (!selected) {
-        return {
-          error: `Unknown provider '${providerMode}'. Available: ${config.providers.map((p) => p.name).join(", ")}`,
-          status: 400 as const,
-        };
+        const fallback = config.providers.find((p) => p.name === "local");
+        if (!fallback) {
+          return {
+            error: `Unknown provider '${providerMode}'. Available: ${config.providers.map((p) => p.name).join(", ")}`,
+            status: 400 as const,
+          };
+        }
+        selected = fallback;
+        effectiveProviderMode = selected.name;
+        providerWarning = `Unknown provider '${providerMode}' requested. Falling back to '${selected.name}'.`;
       }
+
       const selectedAdapter = providers[selected.name];
       for (const key of Object.keys(providers)) providers[key] = selectedAdapter;
     }
@@ -652,6 +662,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       blocks: dag.blocks.map(b => ({ id: b.id, name: b.name })),
       edges: dag.edges,
       sse_url: `/api/dag/runs/${initialRun.id}/events`,
+      provider_mode: effectiveProviderMode,
+      warning: providerWarning,
     };
   }
 

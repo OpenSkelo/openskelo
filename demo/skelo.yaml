@@ -6,6 +6,8 @@ providers:
   - name: local
     type: ollama
     url: http://localhost:11434
+  - name: openclaw
+    type: openclaw
 
 agents:
   coder:
