@@ -105,7 +105,8 @@ Legend:
   - Proof: `53b0710`
 - [x] DAG-only template verification and cleanup (example corpus parse test + legacy-key guardrails)
   - Proof: `7734b90`
-- [~] YAML line/column diagnostics (parse errors now include file:line:col); typo hints added for unknown block/port edge references
+- [x] YAML line/column diagnostics (parse errors now include file:line:col); typo hints added for unknown block/port edge references
+  - Proof: `bf6d6bc`, `589a8d4`
 
 ## 10) Testing & QA
 - [x] Expanded integration/security coverage (now 40/40)
