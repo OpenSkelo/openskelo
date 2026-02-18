@@ -285,6 +285,7 @@ OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 - Mutable-state contract: `docs/MUTABILITY-CONTRACT.md`
 - Error model baseline: `src/core/errors.ts`
 - Mutation testing plan (optional lane): `docs/MUTATION-TESTING-PLAN.md`
+- Executor/API isolation strategy: `docs/EXECUTOR-ISOLATION-PLAN.md`
 
 ## Testing & Reports
 
