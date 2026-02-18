@@ -246,10 +246,10 @@ skelo run status <runId>       # DAG run status
 skelo run approve <runId>      # Approve pending gate
 skelo run reject <runId> --feedback "..."   # Reject pending gate
 skelo run stop <runId>         # Stop a run
-skelo task create              # Legacy-deprecated
-skelo task list                # Legacy-deprecated
-skelo task show <id>           # Legacy-deprecated
-skelo task update <id>         # Legacy-deprecated
+skelo legacy task create       # Legacy-deprecated (explicit namespace)
+skelo legacy task list         # Legacy-deprecated (explicit namespace)
+skelo legacy task show <id>    # Legacy-deprecated (explicit namespace)
+skelo legacy task update <id>  # Legacy-deprecated (explicit namespace)
 skelo agents                   # List registered agents
 skelo gates                    # List pipeline gates
 skelo logs                     # Stream audit log

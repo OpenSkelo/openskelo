@@ -47,12 +47,16 @@ program
     });
   });
 
-// ── task ──
-const task = program
-  .command("task")
-  .description("Manage pipeline tasks");
+// ── legacy task (visible deprecation path) ──
+const legacy = program
+  .command("legacy")
+  .description("Legacy surfaces scheduled for removal next release");
 
-taskCommands(task);
+const legacyTask = legacy
+  .command("task")
+  .description("[legacy-deprecated] Manage pipeline tasks");
+
+taskCommands(legacyTask);
 
 // ── status ──
 program
