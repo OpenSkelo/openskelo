@@ -14,7 +14,8 @@ Legend:
 - [x] Dual architecture cleanup: legacy task/runtime path removed from CLI/API/core/schema/docs
   - Proof: `65153c6`, `e172277`, `1488fa5`, `d8f0ea0`, `b5c4d49`, `819c2ca`
 - [ ] Monolithic decomposition (`dag-api.ts`, `dag-dashboard.ts` split)
-- [ ] Final dependency/ID strategy review (UUIDv7/sortable IDs optional)
+- [x] Final dependency/ID strategy review (UUIDv7/sortable IDs optional)
+  - Proof: `pending-commit`
 
 ## 2) Code Quality & Implementation
 - [x] Parse-time validation hardening for gates/ports
