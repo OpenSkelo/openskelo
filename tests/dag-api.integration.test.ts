@@ -16,6 +16,14 @@ afterEach(() => {
   while (cleanups.length) cleanups.pop()?.();
 });
 
+function withFetchMock(mock: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
+  const prev = globalThis.fetch;
+  globalThis.fetch = mock as typeof fetch;
+  return () => {
+    globalThis.fetch = prev;
+  };
+}
+
 function createTestConfig(): SkeloConfig {
   return {
     name: "OpenSkelo DAG Test",
@@ -44,8 +52,11 @@ function createTestConfig(): SkeloConfig {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function setupDagTestApp(examplesDirOverride?: string) {
+  return setupDagTestAppWithConfig(createTestConfig(), examplesDirOverride);
+}
+
+function setupDagTestAppWithConfig(config: SkeloConfig, examplesDirOverride?: string) {
   const workdir = mkdtempSync(join(tmpdir(), "openskelo-dag-test-"));
-  const config = createTestConfig();
   createDB(workdir);
 
   const taskEngine = createTaskEngine(config.pipelines);
@@ -106,6 +117,66 @@ describe("DAG API integration", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain("Unknown provider");
+  });
+
+  it("routes provider override by name/type to the correct adapter endpoints", async () => {
+    const examplesDir = mkdtempSync(join(tmpdir(), "openskelo-dag-examples-"));
+    mkdirSync(examplesDir, { recursive: true });
+    writeFileSync(join(examplesDir, "single-step.yaml"), `name: single-step\nblocks:\n  - id: draft\n    name: Draft\n    inputs:\n      prompt: string\n    outputs: {}\n    agent:\n      specific: manager\n    pre_gates: []\n    post_gates: []\n    retry:\n      max_attempts: 0\n      backoff: none\n      delay_ms: 0\nedges: []\n`);
+
+    const cfg = createTestConfig();
+    cfg.providers = [
+      { name: "ollamaLocal", type: "ollama", url: "http://fake-ollama:11434" },
+      { name: "cloud", type: "http", url: "http://fake-openai/v1", env: "TEST_API_KEY", config: { authHeader: "Authorization" } },
+    ];
+    cfg.agents.manager.provider = "cloud";
+
+    process.env.TEST_API_KEY = "test-key";
+
+    const fetchCalls: string[] = [];
+    const restoreFetch = withFetchMock(async (input) => {
+      const url = String(input);
+      fetchCalls.push(url);
+      if (url.includes("/api/chat")) {
+        return new Response(JSON.stringify({ model: "llama3", message: { content: "ok" }, prompt_eval_count: 1, eval_count: 1 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/chat/completions")) {
+        return new Response(JSON.stringify({ model: "gpt-4o-mini", choices: [{ message: { content: "ok" } }], usage: { total_tokens: 2 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const ctx = setupDagTestAppWithConfig(cfg, examplesDir);
+    cleanups.push(() => {
+      restoreFetch();
+      delete process.env.TEST_API_KEY;
+      ctx.cleanup();
+    });
+
+    const byType = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ example: "single-step.yaml", provider: "ollama", context: { prompt: "x" }, devMode: true }),
+    });
+    expect(byType.status).toBe(201);
+
+    const byName = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ example: "single-step.yaml", provider: "cloud", context: { prompt: "x" }, devMode: true }),
+    });
+    expect(byName.status).toBe(201);
+
+    const sawOllama = fetchCalls.some((u) => u.includes("fake-ollama") && u.includes("/api/chat"));
+    const sawOpenAICompat = fetchCalls.some((u) => u.includes("fake-openai") && u.includes("/chat/completions"));
+    expect(sawOllama).toBe(true);
+    expect(sawOpenAICompat).toBe(true);
   });
 
   it("rejects invalid agentMapping targets", async () => {
