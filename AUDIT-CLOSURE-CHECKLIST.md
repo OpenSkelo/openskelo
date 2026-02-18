@@ -57,7 +57,7 @@ Legend:
 - [x] Replace approval busy-wait with event/promise wait (`waitForApproval` + approval signal wake)
   - Proof: `4fbf7dd`
 - [x] Improve scheduling beyond batch `Promise.allSettled` (dynamic in-flight race scheduling)
-  - Proof: `pending-commit`
+  - Proof: `63dd573`
 - [ ] Add richer stuck diagnostics
 - [~] Per-block timeout enforcement (safety caps present; strict end-to-end proof pending)
 - [ ] Cost/budget enforcement
