@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
-import { parse as parseYaml } from "yaml";
 import type { SkeloConfig } from "../types.js";
+import { parseYamlWithDiagnostics } from "./yaml-utils.js";
 
 const CONFIG_FILES = ["skelo.yaml", "skelo.yml", "openskelo.yaml", "openskelo.yml"];
 
@@ -22,7 +22,7 @@ export function loadConfig(dir?: string): SkeloConfig {
   }
 
   const raw = readFileSync(configPath, "utf-8");
-  const parsed = parseYaml(raw);
+  const parsed = parseYamlWithDiagnostics(raw, configPath);
 
   return validateConfig(parsed);
 }

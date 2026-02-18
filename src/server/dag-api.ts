@@ -7,7 +7,7 @@ import { streamSSE } from "hono/streaming";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { parse as parseYaml } from "yaml";
+import { parseYamlWithDiagnostics } from "../core/yaml-utils.js";
 import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
 import { createOpenClawProvider } from "../core/openclaw-provider.js";
@@ -274,8 +274,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       const path = resolve(examplesBaseDir, file);
       if (!existsSync(path)) continue;
       try {
-        const raw = parseYaml(readFileSync(path, "utf-8"));
-        examples.push({ name: raw.name ?? file, file });
+        const raw = parseYamlWithDiagnostics(readFileSync(path, "utf-8"), path) as Record<string, unknown>;
+        examples.push({ name: (raw.name as string | undefined) ?? file, file });
       } catch {
         // skip malformed files
       }
@@ -292,7 +292,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     if (!existsSync(path)) return c.json({ error: "Not found" }, 404);
 
     try {
-      const raw = parseYaml(readFileSync(path, "utf-8"));
+      const raw = parseYamlWithDiagnostics<Record<string, unknown>>(readFileSync(path, "utf-8"), path);
       const dag = engine.parseDAG(raw);
       return c.json({ dag, order: engine.executionOrder(dag) });
     } catch (err) {
@@ -614,7 +614,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       if (file) {
         const path = resolve(examplesBaseDir, file);
         if (!existsSync(path)) return c.json({ error: "Example not found" }, 404);
-        const raw = parseYaml(readFileSync(path, "utf-8"));
+        const raw = parseYamlWithDiagnostics<Record<string, unknown>>(readFileSync(path, "utf-8"), path);
         dag = engine.parseDAG(raw);
       } else if (body.dag) {
         dag = engine.parseDAG(body.dag);

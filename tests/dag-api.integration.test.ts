@@ -325,6 +325,25 @@ describe("DAG API integration", () => {
     expect(typeof audit.command).toBe("string");
   });
 
+  it("returns YAML line/column diagnostics for malformed DAG example", async () => {
+    const examplesDir = mkdtempSync(join(tmpdir(), "openskelo-dag-examples-"));
+    mkdirSync(examplesDir, { recursive: true });
+    writeFileSync(join(examplesDir, "bad.yaml"), `name: bad\nblocks:\n  - id: a\n    inputs: [\n`);
+
+    const ctx = setupDagTestApp(examplesDir);
+    cleanups.push(ctx.cleanup);
+
+    const res = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ example: "bad.yaml", context: { prompt: "x" } }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/bad\.yaml:\d+:\d+/);
+  });
+
   it("supports emergency stop-all", async () => {
     const ctx = setupDagTestApp();
     cleanups.push(ctx.cleanup);
