@@ -10,6 +10,7 @@ import { watchCommand } from "./commands/watch.js";
 import { validateCommand } from "./commands/validate.js";
 import { explainCommand } from "./commands/explain.js";
 import { newCommand } from "./commands/new.js";
+import { authCommands } from "./commands/auth.js";
 
 const VERSION = "0.1.0";
 
@@ -150,5 +151,7 @@ program
   .action(async () => {
     console.log(chalk.yellow("logs command is coming in v0.2. Use /dag event log or /api/dag/runs/<id>/events for now."));
   });
+
+authCommands(program);
 
 program.parse();
