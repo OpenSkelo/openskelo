@@ -112,6 +112,7 @@ export type BlockGateCheck =
   | { type: "port_min_length"; port: string; min: number }
   | { type: "port_type"; port: string; expected: string }
   | { type: "json_schema"; port: string; schema: Record<string, unknown> }
+  | { type: "diff"; left: string; right: string; mode?: "equal" | "not_equal" }
   | { type: "cost"; max: number; port?: string }
   | { type: "latency"; max_ms: number; port?: string }
   | { type: "shell"; command: string }
@@ -826,6 +827,19 @@ function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
       }
       return { type, port: obj.port, schema: obj.schema as Record<string, unknown> };
     }
+    case "diff": {
+      if (typeof obj.left !== "string" || !obj.left.trim()) {
+        throw new Error(`Invalid ${path}: diff requires non-empty 'left'`);
+      }
+      if (typeof obj.right !== "string" || !obj.right.trim()) {
+        throw new Error(`Invalid ${path}: diff requires non-empty 'right'`);
+      }
+      const mode = String(obj.mode ?? "equal").trim();
+      if (mode !== "equal" && mode !== "not_equal") {
+        throw new Error(`Invalid ${path}: diff mode must be 'equal' or 'not_equal'`);
+      }
+      return { type, left: obj.left, right: obj.right, mode: mode as "equal" | "not_equal" };
+    }
     case "cost": {
       const max = Number(obj.max);
       if (!Number.isFinite(max) || max < 0) {
@@ -955,6 +969,24 @@ function evaluateBlockGate(
         return { name: gate.name, passed: false, reason: `${gate.error} (${check.error})` };
       }
       return { name: gate.name, passed: true, audit: { gate_type: "json_schema" } };
+    }
+
+    case "diff": {
+      const leftVal = ports[gate.check.left];
+      const rightVal = ports[gate.check.right];
+      const left = stableStringify(leftVal);
+      const right = stableStringify(rightVal);
+      const mode = gate.check.mode ?? "equal";
+      const ok = mode === "equal" ? left === right : left !== right;
+      if (!ok) {
+        return {
+          name: gate.name,
+          passed: false,
+          reason: `${gate.error} (diff ${mode} check failed for '${gate.check.left}' vs '${gate.check.right}')`,
+          audit: { gate_type: "diff", mode },
+        };
+      }
+      return { name: gate.name, passed: true, audit: { gate_type: "diff", mode } };
     }
 
     case "cost": {
@@ -1115,6 +1147,14 @@ function levenshtein(a: string, b: string): number {
     }
   }
   return dp[a.length][b.length];
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((v) => stableStringify(v)).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
 
 function validateSimpleJsonSchema(value: unknown, schema: Record<string, unknown>): { ok: boolean; error?: string } {
