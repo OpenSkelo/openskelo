@@ -15,7 +15,7 @@ Legend:
   - Proof: `65153c6`, `e172277`, `1488fa5`, `d8f0ea0`, `b5c4d49`, `819c2ca`
 - [~] Monolithic decomposition (`dag-api.ts`, `dag-dashboard.ts` split)
   - Progress: extracted shared error-envelope utility and approval-notification text builder (`src/server/dag-api-errors.ts`, `src/server/dag-api-approval-text.ts`)
-  - Proof: `pending-commit`
+  - Proof: `6dbfe49`
 - [x] Final dependency/ID strategy review (UUIDv7/sortable IDs optional)
   - Proof: `9f12ce0`
 
