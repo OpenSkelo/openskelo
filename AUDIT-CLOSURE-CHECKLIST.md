@@ -32,7 +32,7 @@ Legend:
 - [x] Remove hardcoded Telegram approval target default
   - Proof: `0bf9d44`
 - [x] Regex ReDoS hardening strategy (parse-time unsafe pattern guard)
-  - Proof: `pending-commit`
+  - Proof: `b616a52`
 
 ## 4) Gate System
 - [x] Core gate system preserved and strengthened
