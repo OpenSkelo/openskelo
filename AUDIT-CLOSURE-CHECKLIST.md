@@ -105,7 +105,7 @@ Legend:
 - [x] Real provider integration test profile (optional/skippable in CI)
   - Proof: `d9ec92d`
 - [x] Performance/stress test baseline (100-block linear DAG completion guardrail test)
-  - Proof: `pending-commit`
+  - Proof: `8c7e01f`
 - [ ] Broader security regression/fuzz suite
 - [ ] Mutation testing (optional but recommended)
 
