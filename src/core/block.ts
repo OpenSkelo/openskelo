@@ -122,6 +122,7 @@ export type BlockGateCheck =
   | { type: "json_schema"; port: string; schema: Record<string, unknown> }
   | { type: "http"; url: string; method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; expect_status?: number; timeout_ms?: number }
   | { type: "semantic_review"; port: string; keywords: string[]; min_matches?: number }
+  | { type: "llm_review"; port: string; criteria: string[]; provider?: string; model?: string; pass_threshold?: number; timeout_ms?: number }
   | { type: "diff"; left: string; right: string; mode?: "equal" | "not_equal" }
   | { type: "cost"; max: number; port?: string }
   | { type: "latency"; max_ms: number; port?: string }
@@ -874,6 +875,35 @@ function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
       }
       return { type, port: obj.port, keywords, min_matches: Math.min(Math.floor(minMatches), keywords.length) };
     }
+    case "llm_review": {
+      if (typeof obj.port !== "string" || !obj.port.trim()) {
+        throw new Error(`Invalid ${path}: llm_review requires non-empty 'port'`);
+      }
+      if (!Array.isArray(obj.criteria) || obj.criteria.length === 0) {
+        throw new Error(`Invalid ${path}: llm_review requires non-empty criteria[]`);
+      }
+      const criteria = obj.criteria.map((c) => String(c).trim()).filter(Boolean);
+      if (criteria.length === 0) {
+        throw new Error(`Invalid ${path}: llm_review criteria[] must contain non-empty strings`);
+      }
+      const passThreshold = Number(obj.pass_threshold ?? 1);
+      if (!Number.isFinite(passThreshold) || passThreshold < 0 || passThreshold > 1) {
+        throw new Error(`Invalid ${path}: llm_review pass_threshold must be between 0 and 1`);
+      }
+      const timeoutMs = Number(obj.timeout_ms ?? 15000);
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        throw new Error(`Invalid ${path}: llm_review timeout_ms must be > 0`);
+      }
+      return {
+        type,
+        port: obj.port,
+        criteria,
+        provider: typeof obj.provider === "string" && obj.provider.trim() ? obj.provider : undefined,
+        model: typeof obj.model === "string" && obj.model.trim() ? obj.model : undefined,
+        pass_threshold: passThreshold,
+        timeout_ms: timeoutMs,
+      };
+    }
     case "diff": {
       if (typeof obj.left !== "string" || !obj.left.trim()) {
         throw new Error(`Invalid ${path}: diff requires non-empty 'left'`);
@@ -977,7 +1007,7 @@ function parseEdge(raw: Record<string, unknown>): Edge {
   };
 }
 
-function evaluateBlockGate(
+export function evaluateBlockGate(
   gate: BlockGate,
   inputs: Record<string, unknown>,
   outputs: Record<string, unknown>
@@ -1054,6 +1084,15 @@ function evaluateBlockGate(
         };
       }
       return { name: gate.name, passed: true, audit: { gate_type: "semantic_review", matched, required: minMatches } };
+    }
+
+    case "llm_review": {
+      return {
+        name: gate.name,
+        passed: false,
+        reason: `${gate.error} (llm_review requires executor evaluation path)`,
+        audit: { gate_type: "llm_review", status: "deferred" },
+      };
     }
 
     case "diff": {

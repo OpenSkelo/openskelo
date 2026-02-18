@@ -27,13 +27,13 @@ Exit criteria:
 ## Phase 1A — CORS on DAG API (P0)
 
 ### Build
-- [ ] Add CORS middleware coverage for DAG routes (`/api/dag/*`)
-- [ ] Ensure preflight handling for `OPTIONS`
-- [ ] Verify allowed methods/headers match expected browser usage
+- [x] Add CORS middleware coverage for DAG routes (`/api/dag/*`)
+- [x] Ensure preflight handling for `OPTIONS`
+- [x] Verify allowed methods/headers match expected browser usage
 
 ### Tests
-- [ ] Add integration test for cross-origin preflight on DAG route
-- [ ] Add integration test for standard DAG call from cross-origin client
+- [x] Add integration test for cross-origin preflight on DAG route
+- [x] Add integration test for standard DAG call from cross-origin client
 
 ### Docs
 - [ ] Note CORS behavior in API docs
@@ -47,14 +47,14 @@ Exit criteria:
 ## Phase 1B — `skelo init` Template Graduation to DAG (P0)
 
 ### Build
-- [ ] Replace legacy pipeline/stage template emitters with DAG block templates
-- [ ] Ensure templates `coding|research|content|custom` emit DAG-compatible YAML
-- [ ] Remove legacy schema keys from generated templates (`pipelines`, `stages`, etc.)
+- [x] Replace legacy pipeline/stage template emitters with DAG block templates
+- [x] Ensure templates `coding|research|content|custom` emit DAG-compatible YAML
+- [x] Remove legacy schema keys from generated templates (`pipelines`, `stages`, etc.)
 
 ### Tests
-- [ ] Add/upgrade init-template tests
-- [ ] Parse generated templates via DAG parser (`parseDAG`) in tests
-- [ ] Add guard test that generated templates contain no legacy schema keys
+- [x] Add/upgrade init-template tests
+- [x] Parse generated templates via DAG parser (`parseDAG`) in tests
+- [x] Add guard test that generated templates contain no legacy schema keys
 
 ### Docs
 - [ ] Update README examples to match generated output exactly
@@ -70,26 +70,26 @@ Exit criteria:
 ## Phase 2 — `llm_review` Gate (P0 Differentiator)
 
 ### Build
-- [ ] Add new gate type: `llm_review`
-- [ ] Keep `semantic_review` as keyword-coverage baseline (backward-compatible)
-- [ ] Support gate config fields:
-  - [ ] review provider/model selection
-  - [ ] criteria list
-  - [ ] pass threshold
-  - [ ] structured decision + rationale
-- [ ] Fail closed on malformed judge outputs
-- [ ] Persist review metadata into durable events
+- [x] Add new gate type: `llm_review`
+- [x] Keep `semantic_review` as keyword-coverage baseline (backward-compatible)
+- [x] Support gate config fields:
+  - [x] review provider/model selection
+  - [x] criteria list
+  - [x] pass threshold
+  - [x] structured decision + rationale
+- [x] Fail closed on malformed judge outputs
+- [x] Persist review metadata into durable events
 
 ### Tests
-- [ ] pass case
-- [ ] fail case
+- [x] pass case
+- [x] fail case
 - [ ] provider error case
 - [ ] timeout case
-- [ ] malformed output fail-closed case
-- [ ] deterministic parsing contract case
+- [x] malformed output fail-closed case
+- [x] deterministic parsing contract case
 
 ### Docs
-- [ ] Explicitly distinguish `semantic_review` vs `llm_review`
+- [x] Explicitly distinguish `semantic_review` vs `llm_review`
 - [ ] Add minimal `llm_review` YAML example
 
 Exit criteria:

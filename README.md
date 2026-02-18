@@ -154,9 +154,9 @@ sequenceDiagram
 
 Gates are rules that **cannot be bypassed silently**. Block execution and progression fail when gates fail.
 
-**Current gate checks include:** `contains`, `matches`, `min_length`, `max_value`, `valid_json`, `valid_url`, `shell`, `json_schema`, `http`, `diff`, `cost`, `latency`, and `semantic_review`.
+**Current gate checks include:** `contains`, `matches`, `min_length`, `max_value`, `valid_json`, `valid_url`, `shell`, `json_schema`, `http`, `diff`, `cost`, `latency`, `semantic_review`, and `llm_review`.
 
-> Important: current `semantic_review` is a deterministic keyword-coverage baseline. A true second-model review gate (`llm_review`) is planned and tracked as a top product priority.
+> `semantic_review` is the deterministic keyword-coverage baseline. `llm_review` is the second-model semantic judge gate with structured criterion scoring.
 
 The `shell` check remains an escape hatch (explicitly opt-in) for environment-specific validation.
 
@@ -237,7 +237,7 @@ OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 ## Known Gaps (Post-audit follow-up)
 
 - `skelo init` templates are being migrated to DAG block format (currently legacy-shaped output).
-- `semantic_review` is keyword coverage today; `llm_review` (second-model judge) is the planned semantic gate.
+- `semantic_review` remains keyword coverage baseline; `llm_review` is now available for second-model semantic judging.
 - DAG-route CORS hardening is tracked as a priority for browser-first integrations.
 
 ## 60-Second Demo
