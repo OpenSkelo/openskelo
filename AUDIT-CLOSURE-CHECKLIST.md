@@ -54,7 +54,7 @@ Legend:
   - Proof: `9895021`
 - [ ] Streaming provider interface
 - [x] Full model parameter passthrough baseline (`model_params` in DAG agent config -> provider payload)
-  - Proof: `pending-commit`
+  - Proof: `a1e9e81`
 
 ## 6) DAG Executor
 - [x] Contract/repair path present and tested
