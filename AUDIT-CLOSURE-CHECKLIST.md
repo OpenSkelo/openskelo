@@ -43,7 +43,7 @@ Legend:
 - [x] Core gate system preserved and strengthened
 - [ ] Add semantic/LLM review gate type
 - [x] Add gate types: `json_schema`, `http`, `diff`, `cost`, `latency`
-  - Proof: `pending-commit`
+  - Proof: `826084e`
 - [ ] Add gate composition logic (OR/conditional)
 
 ## 5) Provider Layer
