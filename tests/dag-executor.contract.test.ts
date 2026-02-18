@@ -181,6 +181,38 @@ describe("DAG executor output contract", () => {
     expect(failures[0]?.err).toContain("Token budget exceeded for block");
   });
 
+  it("records stuck diagnostics when run cannot make progress", async () => {
+    const stuckDag: DAGDef = {
+      name: "stuck",
+      blocks: [
+        {
+          id: "build",
+          name: "Build",
+          inputs: { game_spec: { type: "json", required: true } },
+          outputs: { artifact_html: { type: "artifact", required: true } },
+          agent: { role: "worker" },
+          pre_gates: [],
+          post_gates: [],
+          retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+        },
+      ],
+      edges: [],
+      entrypoints: ["build"],
+      terminals: ["build"],
+    };
+
+    const provider = makeProvider(() => ({ success: true, output: JSON.stringify({ artifact_html: "<html></html>" }) }));
+    const ex = createDAGExecutor({ providers: { local: provider }, agents });
+    const { run } = await ex.execute(stuckDag, {});
+
+    expect(run.status).toBe("failed");
+    expect(run.context.__failure_code).toBe("RUN_STUCK");
+    const diag = run.context.__stuck_diagnostics as { blocked_count: number; blocked: Array<{ block_id: string; missing_required_inputs: string[] }> };
+    expect(diag.blocked_count).toBeGreaterThan(0);
+    expect(diag.blocked[0]?.block_id).toBe("build");
+    expect(diag.blocked[0]?.missing_required_inputs).toContain("game_spec");
+  });
+
   it("continues from spec to build across repeated runs", async () => {
     for (let i = 0; i < 5; i++) {
       let call = 0;

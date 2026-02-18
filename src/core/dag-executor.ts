@@ -187,7 +187,11 @@ export function createDAGExecutor(opts: ExecutorOpts) {
           continue;
         }
 
-        // Truly stuck — fail the run
+        // Truly stuck — fail the run with diagnostics
+        const stuck = buildStuckDiagnostics(dag, run);
+        run.context.__stuck_diagnostics = stuck;
+        run.context.__failure_code = "RUN_STUCK";
+        run.context.__failure_reason = "No executable blocks and run is not complete";
         run.status = "failed";
         opts.onRunFail?.(run);
         break;
@@ -934,6 +938,38 @@ function parseAgentOutputs(blockDef: BlockDef, rawOutput: string): Record<string
   }
 
   return outputs;
+}
+
+function buildStuckDiagnostics(dag: DAGDef, run: DAGRun): Record<string, unknown> {
+  const blocked = dag.blocks
+    .filter((b) => {
+      const st = run.blocks[b.id]?.status;
+      return st !== "completed" && st !== "failed" && st !== "skipped";
+    })
+    .map((b) => {
+      const wiredInputs = run.blocks[b.id]?.inputs ?? {};
+      const missingRequiredInputs = Object.entries(b.inputs)
+        .filter(([name, def]) => Boolean((def as { required?: boolean }).required) && !Object.prototype.hasOwnProperty.call(wiredInputs, name))
+        .map(([name]) => name);
+
+      const unmetUpstream = dag.edges
+        .filter((e) => e.to === b.id)
+        .filter((e) => run.blocks[e.from]?.status !== "completed")
+        .map((e) => ({ from: e.from, output: e.output, input: e.input, upstream_status: run.blocks[e.from]?.status ?? "unknown" }));
+
+      return {
+        block_id: b.id,
+        status: run.blocks[b.id]?.status ?? "unknown",
+        missing_required_inputs: missingRequiredInputs,
+        unmet_upstream: unmetUpstream,
+      };
+    });
+
+  return {
+    blocked_count: blocked.length,
+    blocked,
+    timestamp: new Date().toISOString(),
+  };
 }
 
 async function dispatchWithTimeout(
