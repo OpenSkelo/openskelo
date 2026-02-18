@@ -115,7 +115,8 @@ Legend:
 - [x] Provider v1 shipped (Ollama + OpenAI-compatible)
 - [~] Cleanup started (deprecations complete; hard cut pending)
 - [~] YAML validation improved (line/column diagnostics pending)
-- [ ] 60-second demo artifact pending
+- [x] 60-second demo artifact documented (`docs/DEMO-60S.md`)
+  - Proof: `pending-commit`
 
 ---
 
