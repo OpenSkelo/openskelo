@@ -235,6 +235,7 @@ function buildAuthorizeUrl(params: {
 export async function loginOpenAIOAuth(params: {
   onAuthUrl: (url: string) => Promise<void> | void;
   onPrompt: (message: string) => Promise<string>;
+  onProgress?: (message: string) => void;
   timeoutMs?: number;
 }): Promise<OpenAIOAuthTokens> {
   const { verifier, challenge } = createPkce();
@@ -245,7 +246,17 @@ export async function loginOpenAIOAuth(params: {
     const authUrl = buildAuthorizeUrl({ redirectUri: server.redirectUri, challenge, state });
     await params.onAuthUrl(authUrl);
 
-    const callbackResult = await server.waitForCode(params.timeoutMs ?? 120_000);
+    const totalTimeoutMs = params.timeoutMs ?? 120_000;
+    const prePromptWaitMs = Math.min(30_000, totalTimeoutMs);
+    const hintAtMs = Math.min(12_000, Math.max(2_000, prePromptWaitMs - 1_000));
+
+    const hintTimer = setTimeout(() => {
+      params.onProgress?.("Still waiting for browser redirect... You can also paste the redirect URL below soon.");
+    }, hintAtMs);
+
+    const callbackResult = await server.waitForCode(prePromptWaitMs);
+    clearTimeout(hintTimer);
+
     let code: string | undefined;
 
     if (callbackResult) {

@@ -70,6 +70,7 @@ async function runOnboard(opts: OnboardOpts): Promise<void> {
           await open(url);
           console.log(chalk.dim(`If browser did not open, visit:\n${url}`));
         },
+        onProgress: (message) => oauthSpin.update(message),
         onPrompt: async (message) => {
           const input = await text({ message, placeholder: "http://127.0.0.1:1455/auth/callback?code=...&state=..." });
           if (isCancel(input)) throw new Error("OAuth login cancelled");

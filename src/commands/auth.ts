@@ -1,7 +1,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import { text, isCancel, spinner } from "@clack/prompts";
+import open from "open";
 import { existsSync } from "node:fs";
 import { getAuthPath, loadAuthStore, saveAuthStore } from "../core/auth.js";
+import { loginOpenAIOAuth } from "../core/oauth.js";
 
 export function authCommands(parent: Command): void {
   const auth = parent
@@ -41,6 +44,53 @@ export function authCommands(parent: Command): void {
         } else {
           console.log(`${name.padEnd(14)} API key  ${chalk.green("✓ active")}`);
         }
+      }
+    });
+
+  auth
+    .command("login <provider>")
+    .description("Login a provider (currently supports: openai)")
+    .action(async (provider: string) => {
+      if (provider !== "openai") {
+        console.error(chalk.red(`✗ Unsupported provider '${provider}'. Use: openai`));
+        process.exit(1);
+      }
+
+      const spin = spinner();
+      spin.start("Starting OpenAI OAuth login...");
+      try {
+        const tokens = await loginOpenAIOAuth({
+          onAuthUrl: async (url) => {
+            spin.update("Opening browser for OpenAI sign-in...");
+            await open(url);
+            console.log(chalk.dim(`If browser did not open, visit:\n${url}`));
+          },
+          onProgress: (message) => spin.update(message),
+          onPrompt: async (message) => {
+            const input = await text({ message, placeholder: "http://127.0.0.1:1455/auth/callback?code=...&state=..." });
+            if (isCancel(input)) throw new Error("OAuth login cancelled");
+            return String(input);
+          },
+        });
+
+        const store = loadAuthStore() ?? { version: 1 as const, providers: {} };
+        store.providers.openai = {
+          type: "oauth",
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          token_type: tokens.token_type,
+          expires_at: tokens.expires_at,
+          account_id: tokens.account_id,
+          created_at: new Date().toISOString(),
+        };
+        saveAuthStore(store);
+
+        spin.stop("OpenAI OAuth complete");
+        console.log(chalk.green(`✓ Connected to OpenAI${tokens.account_id ? ` (${tokens.account_id})` : ""}`));
+      } catch (err) {
+        spin.stop("OpenAI OAuth failed");
+        console.error(chalk.red(`✗ ${String((err as Error).message ?? err)}`));
+        process.exit(2);
       }
     });
 
