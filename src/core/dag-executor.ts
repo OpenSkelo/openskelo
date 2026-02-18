@@ -113,6 +113,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     run.status = "running";
 
     // Main execution loop
+    const inFlight = new Map<string, Promise<void>>();
     while (true) {
       if (run.status === "iterated" || run.status === "completed" || run.status === "failed") {
         break;
@@ -132,8 +133,8 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         continue;
       }
 
-      // Find blocks ready to execute
-      const ready = engine.resolveReady(dag, run);
+      // Find blocks ready to execute (excluding in-flight)
+      const ready = engine.resolveReady(dag, run).filter((id) => !inFlight.has(id));
 
       if (ready.length === 0) {
         // No blocks ready — either done or stuck
@@ -167,10 +168,16 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         }
 
         // Check for any running blocks
+        if (inFlight.size > 0) {
+          // Wait for one running block to finish, then re-evaluate readiness.
+          await Promise.race(inFlight.values());
+          continue;
+        }
+
         const running = Object.values(run.blocks).filter(b => b.status === "running");
         if (running.length > 0) {
-          // Still executing — wait a tick
-          await sleep(100);
+          // Fallback safety for any externally marked running blocks.
+          await sleep(50);
           continue;
         }
 
@@ -180,20 +187,21 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         break;
       }
 
-      // Execute ready blocks (up to maxParallel)
-      const batch = ready.slice(0, maxParallel);
-      const results = await Promise.allSettled(
-        batch.map(blockId => executeBlock(dag, run, blockId, trace))
-      );
+      // Execute ready blocks with dynamic concurrency (start next as soon as one finishes).
+      for (const blockId of ready) {
+        if (inFlight.size >= maxParallel) break;
+        const p = executeBlock(dag, run, blockId, trace)
+          .catch((err) => {
+            console.error(`[dag-executor] Block '${blockId}' crashed:`, err);
+          })
+          .finally(() => {
+            inFlight.delete(blockId);
+          });
+        inFlight.set(blockId, p);
+      }
 
-      // Check for catastrophic failures
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        if (result.status === "rejected") {
-          console.error(`[dag-executor] Block '${batch[i]}' crashed:`, result.reason);
-        } else if (result.status === "fulfilled") {
-          // Log successful block execution
-        }
+      if (inFlight.size > 0) {
+        await Promise.race(inFlight.values());
       }
     }
 
