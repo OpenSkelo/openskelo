@@ -2,21 +2,24 @@
 
 Goal: produce a shareable 60–90 second terminal demo where an agent run shows gate-enforced quality and visible progression.
 
-## One-command setup
+## One-command demo flow
+
+With runtime already running (`npx openskelo start`):
 
 ```bash
-npx openskelo start
+npm run demo:viral
 ```
 
-In another terminal:
+Optional custom goal:
+
+```bash
+npm run demo:viral -- "Add input validation to registration"
+```
+
+Manual equivalent:
 
 ```bash
 npx openskelo autopilot "Add rate limiting to the API"
-```
-
-Then watch it:
-
-```bash
 npx openskelo run watch <RUN_ID>
 ```
 

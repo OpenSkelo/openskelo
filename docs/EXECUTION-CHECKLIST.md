@@ -138,6 +138,10 @@ Exit criteria:
 - One-command reproducible demo
 - Polished shareable artifact published internally
 
+Progress:
+- [x] One-command reproducible demo flow added (`npm run demo:viral`)
+- [ ] Recorded video artifact still pending manual capture
+
 ---
 
 ## Reporting Protocol (every phase)

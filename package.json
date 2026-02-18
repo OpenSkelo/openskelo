@@ -24,7 +24,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:report": "npm run test:coverage && vitest run --reporter=json --outputFile=docs/reports/vitest-results.json && node scripts/generate-test-report.mjs",
-    "check:genericity": "bash scripts/check-genericity.sh"
+    "check:genericity": "bash scripts/check-genericity.sh",
+    "demo:viral": "bash scripts/run-viral-demo.sh"
   },
   "keywords": [
     "ai",
