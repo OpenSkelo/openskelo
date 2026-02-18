@@ -45,7 +45,6 @@ export function createAPI(ctx: APIContext) {
 
 
   if (config.dashboard.enabled) {
-    app.get("/dashboard", (c) => c.redirect("/dag"));
     app.get("/", (c) => c.redirect("/dag"));
   }
 

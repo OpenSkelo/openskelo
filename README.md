@@ -23,7 +23,7 @@ OpenSkelo is different. It's not another agent framework — it's the **skeleton
 - 🔒 **Deterministic gates** — transitions are validated, not hoped for
 - ⚙️ **Config-driven** — your entire pipeline in one YAML file
 - 🏠 **Local-first** — runs on your laptop with Ollama, zero API costs
-- 👁️ **Observable** — built-in dashboard, audit logs, gate logs
+- 👁️ **Observable** — built-in DAG UI, audit logs, gate logs
 - 🔌 **Pluggable** — OpenClaw + Ollama + OpenAI-compatible adapters supported today
 
 ## Runtime Status (Important)
@@ -199,7 +199,7 @@ npx openskelo run start --example coding
 
 ```bash
 skelo init [name]              # Create new project
-skelo start                    # Start pipeline server + dashboard
+skelo start                    # Start OpenSkelo runtime server
 skelo status                   # Pipeline health overview
 skelo run start --example ...  # Start DAG run (canonical)
 skelo run list                 # List DAG runs

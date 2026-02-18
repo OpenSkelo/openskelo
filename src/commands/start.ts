@@ -107,11 +107,8 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   console.log();
   console.log(chalk.hex("#f97316")("  🔥 OpenSkelo running"));
   console.log();
-  console.log(chalk.dim("  Pipeline:  ") + `http://localhost:${opts.port}`);
-  if (opts.dashboard) {
-    console.log(chalk.dim("  Dashboard: ") + `http://localhost:${opts.port}/dashboard`);
-  }
-  console.log(chalk.dim("  DAG Runner:") + `http://localhost:${opts.port}/dag`);
+  console.log(chalk.dim("  Runtime:   ") + `http://localhost:${opts.port}`);
+  console.log(chalk.dim("  DAG UI:    ") + `http://localhost:${opts.port}/dag`);
   console.log(chalk.dim("  Docs:      ") + `http://localhost:${opts.port}/docs`);
   console.log(chalk.dim("  API:       ") + `http://localhost:${opts.port}/api`);
   console.log();

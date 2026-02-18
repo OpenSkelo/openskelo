@@ -82,6 +82,14 @@ async function waitForRunStatus(app: { request: (path: string, init?: RequestIni
 }
 
 describe("DAG API integration", () => {
+  it("does not expose legacy /dashboard path", async () => {
+    const ctx = setupDagTestApp();
+    cleanups.push(ctx.cleanup);
+
+    const res = await ctx.app.request("/dashboard");
+    expect(res.status).toBe(404);
+  });
+
   it("exposes safety + examples endpoints", async () => {
     const ctx = setupDagTestApp();
     cleanups.push(ctx.cleanup);

@@ -37,7 +37,7 @@ program
 // ── start ──
 program
   .command("start")
-  .description("Start the pipeline server + dashboard")
+  .description("Start the OpenSkelo runtime server")
   .option("-p, --port <port>", "Server port", "4040")
   .option("--no-dashboard", "API only, no dashboard UI")
   .action(async (opts) => {
