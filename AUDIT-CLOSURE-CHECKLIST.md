@@ -115,7 +115,7 @@ Legend:
 ## 13) Market/Positioning Alignment
 - [~] Messaging improved to DAG-canonical
 - [x] Full claim alignment package (feature matrix + roadmap notes)
-  - Proof: `pending-commit`
+  - Proof: `52ff697`
 - [x] 60-second demo deliverable (explicit launch artifact)
   - Proof: `c51a0ab`
 
