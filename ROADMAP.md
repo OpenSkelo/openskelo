@@ -214,3 +214,38 @@ A v0 release is only valid if **all** checks below pass.
 **Next:** Phase A Checkpoint 2
 - add sequence IDs + replay endpoint semantics
 - advance store-driven reconstruction toward full in-memory independence
+
+---
+
+## 9) Audit Remediation Board (2026-02 External Review)
+
+This board maps 1:1 to the external audit and tracks binary done states with git proof.
+
+### Lane A — Security (ship blocker)
+- [x] Remove `new Function()` in `expr` gates and edge transforms (safe AST evaluator)
+  - Proof: `19c6360`
+- [x] Shell gates default-deny + explicit opt-in + timeout + audit metadata
+  - Proof: `a534aa7`
+- [ ] Add explicit audit-persistence assertion for shell gate executions (API-level durable log check)
+
+### Lane B — Providers (parallel)
+- [x] Add real Ollama adapter
+  - Proof: `1b5bbb2`
+- [x] Add OpenAI-compatible adapter (base URL + auth header + env key)
+  - Proof: `1b5bbb2`
+- [ ] Add provider-routing integration tests for name/type overrides
+
+### Lane C — Cleanup / Validation
+- [x] Parse-time validation for gate checks + port types
+  - Proof: `37c4392`
+- [x] Legacy deprecation notices (`/api/tasks*`, CLI)
+  - Proof: `376cd2e`
+- [x] README clarity: DAG runtime canonical, legacy marked deprecated
+  - Proof: `16ab25f`
+- [x] DAG-first CLI commands + explicit legacy namespace
+  - Proof: `66738d3`, `53b0710`
+- [ ] Next release hard cut (remove legacy task engine/routes/db paths)
+
+### Release policy
+- No public release until Lane A is fully complete.
+- Legacy removal: deprecation release (current) → hard-cut release (next).
