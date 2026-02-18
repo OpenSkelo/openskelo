@@ -9,3 +9,10 @@ dist/
 coverage/
 .turbo/
 demo/.skelo/
+
+# Local patch bundles / ad-hoc scaffolds
+openskelo-patches/
+my-skelo-pipeline/
+
+# Local run artifacts
+demo/output/
