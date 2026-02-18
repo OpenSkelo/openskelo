@@ -207,6 +207,73 @@ describe("Block Engine — executionOrder", () => {
   });
 });
 
+describe("Block Engine — expression security", () => {
+  it("blocks access to process from expr gate", () => {
+    const dag = engine.parseDAG({
+      name: "expr-security",
+      blocks: [{
+        id: "a",
+        inputs: { code: "string" },
+        outputs: { out: "string" },
+        pre_gates: [{
+          name: "safe-expr",
+          check: { type: "expr", expression: "process.env.OPENAI_API_KEY" },
+          error: "bad",
+        }],
+        post_gates: [],
+        agent: {},
+        retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+      }],
+      edges: [],
+    });
+    const block = dag.blocks[0]!;
+    const res = engine.evaluatePreGates(block, { code: "hello" });
+    expect(res[0]?.passed).toBe(false);
+    expect(res[0]?.reason).toMatch(/Expression error/);
+  });
+
+  it("allows safe expr gates", () => {
+    const dag = engine.parseDAG({
+      name: "expr-safe",
+      blocks: [{
+        id: "a",
+        inputs: { code: "string" },
+        outputs: { out: "string" },
+        pre_gates: [{
+          name: "safe-expr",
+          check: { type: "expr", expression: "inputs.code.length > 3" },
+          error: "too short",
+        }],
+        post_gates: [],
+        agent: {},
+        retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+      }],
+      edges: [],
+    });
+    const block = dag.blocks[0]!;
+    const pass = engine.evaluatePreGates(block, { code: "hello" });
+    expect(pass[0]?.passed).toBe(true);
+    const fail = engine.evaluatePreGates(block, { code: "no" });
+    expect(fail[0]?.passed).toBe(false);
+  });
+
+  it("blocks unsafe transform and falls back to original value", () => {
+    const dag = engine.parseDAG({
+      name: "transform-security",
+      blocks: [
+        { id: "a", inputs: {}, outputs: { out: "string" }, pre_gates: [], post_gates: [], agent: {}, retry: { max_attempts: 0, backoff: "none", delay_ms: 0 } },
+        { id: "b", inputs: { in: "string" }, outputs: { out2: "string" }, pre_gates: [], post_gates: [], agent: {}, retry: { max_attempts: 0, backoff: "none", delay_ms: 0 } },
+      ],
+      edges: [{ from: "a", output: "out", to: "b", input: "in", transform: "process.exit(1)" }],
+    });
+    const run = engine.createRun(dag, {});
+    engine.startBlock(run, "a", {});
+    engine.completeBlock(run, "a", { out: "safe" }, mockExecution());
+    const inputs = engine.wireInputs(dag, run, "b");
+    expect(inputs.in).toBe("safe");
+  });
+});
+
 describe("Block Engine — hashBlockDef", () => {
   it("produces deterministic hashes", () => {
     const dag = engine.parseDAG(loadExample("coding-pipeline.yaml"));
