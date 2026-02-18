@@ -59,7 +59,7 @@ Legend:
 - [x] Improve scheduling beyond batch `Promise.allSettled` (dynamic in-flight race scheduling)
   - Proof: `63dd573`
 - [x] Add richer stuck diagnostics (`RUN_STUCK` with blocked/missing-input diagnostics in run context)
-  - Proof: `pending-commit`
+  - Proof: `96c7865`
 - [x] Per-block timeout enforcement with strict timeout failure path coverage (`DISPATCH_TIMEOUT`)
   - Proof: `543d8e0`
 - [x] Cost/budget enforcement baseline via token budgets (`OPENSKELO_MAX_TOKENS_PER_RUN` / `OPENSKELO_MAX_TOKENS_PER_BLOCK`)
