@@ -24,12 +24,22 @@ OpenSkelo is different. It's not another agent framework — it's the **skeleton
 - ⚙️ **Config-driven** — your entire pipeline in one YAML file
 - 🏠 **Local-first** — runs on your laptop with Ollama, zero API costs
 - 👁️ **Observable** — built-in dashboard, audit logs, gate logs
-- 🔌 **Pluggable** — works with Ollama, OpenAI, Anthropic, OpenClaw, or any HTTP endpoint
+- 🔌 **Pluggable** — OpenClaw + Ollama + OpenAI-compatible adapters supported today
 
 ## Runtime Status (Important)
 
 - ✅ **Canonical runtime:** `/api/dag/*` (DAG engine, approvals, replay, durability)
 - ✅ **Legacy surface removed from CLI default path**; migration targets DAG runtime APIs/commands
+
+### Provider Support Matrix (Current)
+
+| Provider Type | Status | Notes |
+|---|---|---|
+| `openclaw` | ✅ Implemented | Native OpenClaw adapter |
+| `ollama` | ✅ Implemented | Uses Ollama `/api/chat` |
+| `openai` | ✅ Implemented via openai-compatible | Uses `/chat/completions` |
+| `http` | ✅ Implemented via openai-compatible | Configurable base URL + auth header/env |
+| `anthropic` | 🟨 Routed via openai-compatible path | Native Anthropic adapter planned |
 
 ## Quick Start
 
