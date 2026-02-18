@@ -70,7 +70,7 @@ Legend:
 - [x] Legacy `/api/tasks*` deprecation headers
   - Proof: `376cd2e`
 - [x] Rate limiting on `/api/dag/*` (configurable window/max)
-  - Proof: `pending-commit`
+  - Proof: `62e87d1`
 - [x] Request size limits on `/api/dag/*` (configurable `OPENSKELO_MAX_REQUEST_BYTES`)
   - Proof: `5eaf696`
 - [ ] Optional auth model
