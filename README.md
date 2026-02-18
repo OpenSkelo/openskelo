@@ -280,6 +280,7 @@ OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 ## 60-Second Demo
 
 - Quick walkthrough: `docs/DEMO-60S.md`
+- Claim alignment: `docs/CLAIM-ALIGNMENT.md`
 
 ## Testing & Reports
 

@@ -114,8 +114,10 @@ Legend:
 
 ## 13) Market/Positioning Alignment
 - [~] Messaging improved to DAG-canonical
-- [ ] Full claim alignment package (feature matrix + roadmap notes)
-- [ ] 60-second demo deliverable (explicit launch artifact)
+- [x] Full claim alignment package (feature matrix + roadmap notes)
+  - Proof: `pending-commit`
+- [x] 60-second demo deliverable (explicit launch artifact)
+  - Proof: `c51a0ab`
 
 ## 14) Recommended Architecture Changes
 - [~] P0/P1 subset done; remaining structural items tracked above
