@@ -46,7 +46,7 @@ Legend:
 - [x] Add gate types: `json_schema`, `http`, `diff`, `cost`, `latency`
   - Proof: `826084e`
 - [x] Add gate composition logic (OR/conditional baseline via `gate_composition` pre/post = `all|any`)
-  - Proof: `pending-commit`
+  - Proof: `7d90e40`
 
 ## 5) Provider Layer
 - [x] Ollama adapter implemented
