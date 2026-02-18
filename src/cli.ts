@@ -91,6 +91,7 @@ program
   .command("watch [runId]")
   .description("Graphically watch DAG progress in terminal (no dashboard UI)")
   .option("--interval-ms <ms>", "Poll interval", "900")
+  .option("--no-follow", "Do not follow iterated child runs")
   .option("--api <url>", "API base URL", process.env.OPENSKELO_API ?? "http://localhost:4040")
   .action(async (runId, opts) => {
     await watchCommand(runId, opts);

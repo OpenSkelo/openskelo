@@ -143,9 +143,12 @@ export function runCommands(parent: Command): void {
     .command("watch <runId>")
     .description("Watch DAG run progress in terminal (shareable view)")
     .option("--interval-ms <ms>", "Poll interval", "900")
+    .option("--no-follow", "Do not follow iterated child runs")
     .option("--api <url>", "API base URL", DEFAULT_API)
-    .action(async (runId, opts) => {
+    .action(async (initialRunId, opts) => {
       const intervalMs = Math.max(250, Number(opts.intervalMs ?? 900));
+      const follow = opts.follow !== false;
+      let runId = initialRunId;
 
       while (true) {
         const res = await fetch(`${opts.api}/api/dag/runs/${encodeURIComponent(runId)}`);
@@ -178,8 +181,16 @@ export function runCommands(parent: Command): void {
           console.log(`${statusIcon(row.st)} ${chalk.bold(row.id)} ${chalk.dim(row.st)}${retryNote}${gateNote}`);
         }
 
+        const latestIterated = String((run.context as Record<string, unknown> | undefined)?.__latest_iterated_run_id ?? "");
         const done = ["completed", "failed", "cancelled", "iterated"].includes(runStatus);
         if (done) {
+          if (follow && latestIterated && latestIterated !== runId) {
+            console.log();
+            console.log(chalk.cyan(`↪ following iterated run: ${latestIterated}`));
+            runId = latestIterated;
+            await sleep(150);
+            continue;
+          }
           console.log();
           console.log(chalk.bold(done && runStatus === "completed" ? "✅ Run complete" : `🧾 Terminal status: ${runStatus}`));
           break;

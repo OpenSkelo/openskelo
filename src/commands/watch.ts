@@ -33,11 +33,12 @@ async function resolveRunId(api: string): Promise<string | null> {
   return String(runs[0]?.id ?? "");
 }
 
-export async function watchCommand(runIdArg: string | undefined, opts: { api?: string; intervalMs?: string | number }): Promise<void> {
+export async function watchCommand(runIdArg: string | undefined, opts: { api?: string; intervalMs?: string | number; follow?: boolean }): Promise<void> {
   const api = opts.api ?? DEFAULT_API;
   const intervalMs = Math.max(250, Number(opts.intervalMs ?? 900));
+  const follow = opts.follow !== false;
 
-  const runId = runIdArg && runIdArg.trim().length > 0 ? runIdArg : await resolveRunId(api);
+  let runId = runIdArg && runIdArg.trim().length > 0 ? runIdArg : await resolveRunId(api);
   if (!runId) {
     console.error(chalk.red("✗ No DAG runs found to watch."));
     process.exit(1);
@@ -74,8 +75,16 @@ export async function watchCommand(runIdArg: string | undefined, opts: { api?: s
       console.log(`${statusIcon(row.st)} ${chalk.bold(row.id)} ${chalk.dim(row.st)}${retryNote}${gateNote}`);
     }
 
+    const latestIterated = String((run.context as Record<string, unknown> | undefined)?.__latest_iterated_run_id ?? "");
     const done = ["completed", "failed", "cancelled", "iterated"].includes(runStatus);
     if (done) {
+      if (follow && latestIterated && latestIterated !== runId) {
+        console.log();
+        console.log(chalk.cyan(`↪ following iterated run: ${latestIterated}`));
+        runId = latestIterated;
+        await sleep(150);
+        continue;
+      }
       console.log();
       console.log(chalk.bold(done && runStatus === "completed" ? "✅ Run complete" : `🧾 Terminal status: ${runStatus}`));
       break;
