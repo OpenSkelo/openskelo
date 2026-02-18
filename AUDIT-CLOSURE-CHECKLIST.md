@@ -74,7 +74,7 @@ Legend:
 - [x] Request size limits on `/api/dag/*` (configurable `OPENSKELO_MAX_REQUEST_BYTES`)
   - Proof: `5eaf696`
 - [x] Optional auth model (`OPENSKELO_API_KEY` via Bearer or `x-api-key`)
-  - Proof: `pending-commit`
+  - Proof: `31320cc`
 - [ ] SSE client lifecycle hardening (IDs/dedupe)
 - [ ] Error contract/pagination consistency polish
 
