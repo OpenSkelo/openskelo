@@ -489,14 +489,11 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     <div class="controls">
       <select id="dagSelect">
         <option value="">Select a DAG...</option>
-        <option value="coding-pipeline.yaml">coding-pipeline</option>
-        <option value="research-pipeline.yaml">research-pipeline</option>
-        <option value="content-pipeline.yaml">content-pipeline</option>
       </select>
       <select id="providerSelect" disabled>
         <option value="openclaw">🦞 OpenClaw (real agents)</option>
       </select>
-      <input id="topicInput" class="topic-input" placeholder="Enter pipeline input (e.g., research about cats vs dogs)" />
+      <div id="entryInputs" class="topic-input" style="display:flex;gap:6px;flex-wrap:wrap"></div>
       <label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:6px"><input type="checkbox" id="devModeToggle" /> dev mode</label>
       <label style="font-size:11px;color:var(--text-dim)">filter
         <select id="viewFilter" style="margin-left:4px;padding:4px 6px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:11px">
@@ -574,6 +571,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           <div><span class="label">Elapsed:</span> <span id="runElapsed">—</span></div>
           <div><span class="label">Cycle:</span> <span id="runCycle">1/—</span></div>
           <div><span class="label">Run chain:</span> <span id="runChain">—</span></div>
+          <div id="downloadInfo" style="margin-top:6px;font-size:11px;color:var(--text-dim);padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface2)">Saved file: —</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
             <button id="jumpRootBtn" style="padding:4px 8px;font-size:11px">root</button>
             <button id="jumpParentBtn" style="padding:4px 8px;font-size:11px">parent</button>
@@ -582,6 +580,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           <div style="margin-top:4px"><label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:4px"><input type="checkbox" id="followLatestIterated" checked /> follow latest iterated run</label></div>
           <div id="blockStallBanner" style="display:none;margin-top:8px;padding:7px 8px;border:1px solid var(--yellow);border-radius:6px;background:rgba(234,179,8,0.10);font-size:11px;color:#fde68a"></div>
         </div>
+        <div id="stuckDiagnostics" style="display:none;margin-top:8px;font-size:11px;color:#fecaca;background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.4);border-radius:6px;padding:6px 8px"></div>
         <div id="iterationHistory" style="margin-top:8px;font-size:11px;color:var(--text-dim);max-height:120px;overflow:auto;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
           No iteration history yet
         </div>
@@ -693,6 +692,44 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       if (el) el.textContent = text;
     }
 
+    function setConfigLocked(locked) {
+      const dagSel = document.getElementById('dagSelect');
+      const dev = document.getElementById('devModeToggle');
+      if (dagSel) dagSel.disabled = !!locked;
+      if (dev) dev.disabled = !!locked;
+      const host = document.getElementById('entryInputs');
+      if (host) {
+        host.querySelectorAll('input,select,textarea,button').forEach((el) => {
+          el.disabled = !!locked;
+        });
+      }
+    }
+
+    function updateDownloadInfo(run) {
+      const el = document.getElementById('downloadInfo');
+      if (!el) return;
+      const blocks = Object.entries(run?.blocks || {});
+      const candidates = [];
+      for (const [blockId, inst] of blocks) {
+        const outputs = inst?.outputs || {};
+        for (const [k, v] of Object.entries(outputs)) {
+          if (typeof v !== 'string') continue;
+          const lk = String(k).toLowerCase();
+          const looksPath = lk.includes('path') || lk.includes('file') || lk.includes('download');
+          if (!looksPath) continue;
+          const looksLocal = v.startsWith('/') || v.startsWith('./') || v.startsWith('../');
+          if (!looksLocal) continue;
+          candidates.push({ blockId, key: k, value: v });
+        }
+      }
+      if (!candidates.length) {
+        el.textContent = 'Saved file: —';
+        return;
+      }
+      const hit = candidates[candidates.length - 1];
+      el.textContent = 'Saved file: ' + hit.value + ' (' + hit.blockId + '.' + hit.key + ')';
+    }
+
     function markEventSeen(ts) {
       const t = ts ? new Date(ts) : new Date();
       const el = document.getElementById('lastEventAt');
@@ -769,24 +806,38 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       currentDag = { ...dag, order, file };
       document.getElementById('runBtn').disabled = false;
       renderDAG(dag);
+      renderEntryInputs(dag);
     }
 
     async function loadExamples() {
       const res = await apiFetch(API + '/api/dag/examples');
+      if (!res.ok) throw new Error('Failed to load examples list (' + res.status + ')');
       const { examples } = await res.json();
       const sel = document.getElementById('dagSelect');
-      const existing = new Set(Array.from(sel.options).map(o => o.value));
+      const prev = sel.value;
+
+      // Rebuild list each time to avoid stale/missing options.
+      sel.innerHTML = '';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Select a DAG...';
+      sel.appendChild(placeholder);
+
       for (const ex of examples) {
-        if (existing.has(ex.file)) continue;
         const opt = document.createElement('option');
         opt.value = ex.file;
         opt.textContent = ex.name;
         sel.appendChild(opt);
       }
 
-      // Auto-load currently selected DAG (important when browser restores select state)
-      if (sel.value) {
-        await loadDagByFile(sel.value).catch((err) => {
+      const files = new Set((examples || []).map((e) => e.file));
+      const next = (prev && files.has(prev))
+        ? prev
+        : ((examples && examples.length > 0) ? examples[0].file : '');
+
+      sel.value = next;
+      if (next) {
+        await loadDagByFile(next).catch((err) => {
           addEventLog({ type: 'run:fail', run_id: 'ui', data: { status: err.message }, timestamp: new Date().toISOString() });
         });
       }
@@ -804,13 +855,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     document.getElementById('jumpRootBtn').addEventListener('click', () => jumpRunByChain('root'));
     document.getElementById('jumpParentBtn').addEventListener('click', () => jumpRunByChain('parent'));
     document.getElementById('jumpLatestBtn').addEventListener('click', () => jumpRunByChain('latest'));
-    document.getElementById('topicInput').addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      const runBtn = document.getElementById('runBtn');
-      const stopBtn = document.getElementById('stopBtn');
-      if (!runBtn.disabled && stopBtn.style.display === 'none') runDAG();
-    });
+    // entry input fields are rendered dynamically from DAG schema
     document.getElementById('approveBtn').addEventListener('click', () => decideApproval('approve'));
     document.getElementById('rejectBtn').addEventListener('click', () => decideApproval('reject'));
     document.getElementById('copyInspectorBtn').addEventListener('click', copyInspectorJson);
@@ -906,6 +951,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       document.getElementById('runBtn').disabled = false;
       document.getElementById('runBtn').textContent = '▶ Run DAG';
       document.getElementById('stopBtn').style.display = 'none';
+      setConfigLocked(false);
       const panel = document.getElementById('approvalPanel');
       if (panel) panel.style.display = 'none';
       clearInterval(elapsedInterval);
@@ -923,6 +969,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('runBtn').disabled = false;
       document.getElementById('runBtn').textContent = '▶ Run DAG';
+      setConfigLocked(false);
       clearInterval(elapsedInterval);
     }
 
@@ -1059,6 +1106,9 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         btn.disabled = true;
         btn.textContent = '⏳ Running...';
         document.getElementById('stopBtn').style.display = 'inline-block';
+        setConfigLocked(true);
+        const dl = document.getElementById('downloadInfo');
+        if (dl) dl.textContent = 'Saved file: —';
 
       // Reset UI
       latestBlockErrors = {};
@@ -1083,12 +1133,15 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       elapsedInterval = setInterval(updateElapsed, 100);
 
       const providerMode = 'openclaw';
-      const userTopic = (document.getElementById('topicInput').value || '').trim();
+      const { context, missing } = collectRunContext(currentDag);
+      if (missing.length) {
+        throw new Error('Missing required inputs: ' + missing.join(', ') + '. Fill fields in the header input form.');
+      }
 
       // Build request body (OpenClaw real-agent mode only)
       const reqBody = {
         example: currentDag.file,
-        context: buildContext(currentDag.name, userTopic),
+        context,
         provider: providerMode,
         timeoutSeconds: 300,
       };
@@ -1121,6 +1174,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         btn.disabled = false;
         btn.textContent = '▶ Run DAG';
         document.getElementById('stopBtn').style.display = 'none';
+        setConfigLocked(false);
         setStreamStatus('disconnected');
         clearInterval(elapsedInterval);
         const msg = err?.message || String(err);
@@ -1229,10 +1283,12 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         runBtn.disabled = true;
         runBtn.textContent = '⏳ Waiting for iterate...';
         stopBtn.style.display = 'inline-block';
+        setConfigLocked(true);
       } else {
         runBtn.disabled = false;
         runBtn.textContent = '▶ Run DAG';
         stopBtn.style.display = 'none';
+        setConfigLocked(false);
       }
 
       refreshRunData().then(() => {
@@ -1488,6 +1544,29 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       }
     }
 
+    function updateStuckDiagnostics(run) {
+      const el = document.getElementById('stuckDiagnostics');
+      if (!el) return;
+      const diag = run?.context?.__stuck_diagnostics;
+      if (!diag || run?.status !== 'failed') {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+      const blocked = Array.isArray(diag.blocked) ? diag.blocked : [];
+      if (!blocked.length) {
+        el.style.display = 'none';
+        el.textContent = '';
+        return;
+      }
+      const lines = blocked.map((b) => {
+        const miss = Array.isArray(b.missing_required_inputs) ? b.missing_required_inputs.join(', ') : 'unknown';
+        return '• ' + b.block_id + ': missing required inputs -> ' + miss;
+      });
+      el.style.display = 'block';
+      el.textContent = 'Input mismatch: ' + '\\n' + lines.join('\\n');
+    }
+
     function updateIterationUI(run) {
       const shared = run?.context?.__shared_memory || {};
       const cycle = Number(shared.cycle || 1);
@@ -1535,6 +1614,9 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         if (run?.status) {
           setRunStatus(run.status);
           updateBlockStallBanner(run);
+          updateDownloadInfo(run);
+          const activeRun = run.status === 'running' || run.status === 'pending' || run.status === 'paused_approval';
+          setConfigLocked(activeRun);
           Object.entries(run.blocks || {}).forEach(([id, b]) => {
             const node = document.getElementById('block-' + id);
             if (!node) return;
@@ -1551,6 +1633,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           updateStats();
           applyViewFilter();
           updateIterationUI(run);
+          updateStuckDiagnostics(run);
 
           const follow = document.getElementById('followLatestIterated')?.checked === true;
           const latestIterated = run?.context?.__latest_iterated_run_id;
@@ -1740,26 +1823,92 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       return layers;
     }
 
-    function buildContext(dagName, userText) {
-      const text = userText && userText.length ? userText : null;
-      switch (dagName) {
-        case 'coding-pipeline':
-          return { prompt: text || 'Build a real-time chat widget with WebSocket support' };
-        case 'game-builder-pipeline':
-          return { prompt: text || 'Build a flappy bird style game with one creative mechanic' };
-        case 'research-pipeline':
-          return { query: text || 'What are the emerging trends in AI agent frameworks in 2026?' };
-        case 'content-pipeline':
-          return { topic: text || 'The SaaSpocalypse: How AI Agents Are Replacing Traditional Software' };
-        case 'website-builder-pipeline':
-          return { topic: text || 'A landing page for OpenSkelo with strong CTA' };
-        default:
-          return text ? { input: text } : {};
+    function getEntryInputDefs(dag) {
+      const incoming = new Set((dag.edges || []).map(e => e.to));
+      const entries = (dag.blocks || []).filter(b => !incoming.has(b.id));
+      const map = new Map();
+      for (const block of entries) {
+        const ins = block.inputs || {};
+        for (const [name, def] of Object.entries(ins)) {
+          if (!map.has(name)) map.set(name, def || {});
+        }
       }
+      return Array.from(map.entries()).map(([name, def]) => ({
+        name,
+        required: def.required !== false,
+        description: def.description || name,
+        type: def.type || 'string',
+        default: def.default,
+      }));
+    }
+
+    function renderEntryInputs(dag) {
+      const host = document.getElementById('entryInputs');
+      if (!host) return;
+      const defs = getEntryInputDefs(dag);
+      host.innerHTML = '';
+      if (!defs.length) {
+        host.innerHTML = '<input id="entryInput_fallback" class="topic-input" placeholder="No entry inputs required" disabled />';
+        return;
+      }
+      defs.forEach((d) => {
+        const wrap = document.createElement('div');
+        wrap.style.display = 'flex';
+        wrap.style.flexDirection = 'column';
+        wrap.style.gap = '2px';
+        wrap.style.minWidth = '180px';
+
+        const label = document.createElement('label');
+        label.textContent = d.name + (d.required ? ' *' : '');
+        label.style.fontSize = '11px';
+        label.style.color = 'var(--text-dim)';
+
+        const input = document.createElement('input');
+        input.id = 'entryInput_' + d.name;
+        input.dataset.port = d.name;
+        input.placeholder = d.description || d.name;
+        input.value = d.default !== undefined ? String(d.default) : '';
+        input.style.padding = '6px 8px';
+        input.style.border = '1px solid var(--border)';
+        input.style.borderRadius = '6px';
+        input.style.background = 'var(--surface2)';
+        input.style.color = 'var(--text)';
+        input.style.fontSize = '12px';
+        input.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+          const runBtn = document.getElementById('runBtn');
+          const stopBtn = document.getElementById('stopBtn');
+          if (!runBtn.disabled && stopBtn.style.display === 'none') runDAG();
+        });
+
+        wrap.appendChild(label);
+        wrap.appendChild(input);
+        host.appendChild(wrap);
+      });
+    }
+
+    function collectRunContext(dag) {
+      const defs = getEntryInputDefs(dag);
+      const context = {};
+      const missing = [];
+      defs.forEach((d) => {
+        const el = document.getElementById('entryInput_' + d.name);
+        const val = (el && typeof el.value === 'string') ? el.value.trim() : '';
+        if (!val && d.required && d.default === undefined) {
+          missing.push(d.name);
+          return;
+        }
+        if (val) context[d.name] = val;
+        else if (d.default !== undefined) context[d.name] = d.default;
+      });
+      return { context, missing };
     }
 
     loadSafetyConfig();
-    loadExamples();
+    loadExamples().catch((err) => {
+      addEventLog({ type: 'run:fail', run_id: 'ui', data: { status: 'Failed to initialize DAG list: ' + (err?.message || err) }, timestamp: new Date().toISOString() });
+    });
   </script>
 </body>
 </html>`;

@@ -30,14 +30,14 @@ describe("Block Engine — parseDAG", () => {
     expect(dag.terminals).toEqual(["fact-check"]);
   });
 
-  it("parses content pipeline with parallel branches", () => {
+  it("parses default content pipeline (linear)", () => {
     const dag = engine.parseDAG(loadExample("content-pipeline.yaml"));
     expect(dag.name).toBe("content-pipeline");
     expect(dag.blocks).toHaveLength(4);
     // outline has no incoming edges → entrypoint
     expect(dag.entrypoints).toEqual(["outline"]);
-    // edit has no outgoing edges → terminal
-    expect(dag.terminals).toEqual(["edit"]);
+    // publish has no outgoing edges → terminal
+    expect(dag.terminals).toEqual(["publish"]);
   });
 
   it("detects cycles", () => {
@@ -192,8 +192,8 @@ describe("Block Engine — resolveReady", () => {
     expect(ready).not.toContain("deploy");
   });
 
-  it("resolves parallel blocks when shared upstream completes", () => {
-    const dag = engine.parseDAG(loadExample("content-pipeline.yaml"));
+  it("resolves parallel blocks in hybrid content pipeline", () => {
+    const dag = engine.parseDAG(loadExample("content-pipeline-hybrid.yaml"));
     const run = engine.createRun(dag, { topic: "AI agents" });
 
     // Initially only outline is ready
@@ -271,8 +271,8 @@ describe("Block Engine — executionOrder", () => {
     expect(order.indexOf("review")).toBeLessThan(order.indexOf("deploy"));
   });
 
-  it("allows parallel blocks in content pipeline", () => {
-    const dag = engine.parseDAG(loadExample("content-pipeline.yaml"));
+  it("allows parallel blocks in hybrid content pipeline", () => {
+    const dag = engine.parseDAG(loadExample("content-pipeline-hybrid.yaml"));
     const order = engine.executionOrder(dag);
 
     expect(order.indexOf("outline")).toBeLessThan(order.indexOf("draft"));
