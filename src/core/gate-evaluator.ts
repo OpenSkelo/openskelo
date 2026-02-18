@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import type { BlockGate, GateResult } from "./block-types.js";
 import { evaluateSafeExpression } from "./expression-eval.js";
 
@@ -150,7 +151,6 @@ export function evaluateBlockGate(
       const timeoutMs = Number(process.env.OPENSKELO_SHELL_GATE_TIMEOUT_MS ?? "10000");
       const started = Date.now();
       try {
-        const { execSync } = require("node:child_process");
         execSync(gate.check.command, { timeout: timeoutMs, stdio: "pipe", env: process.env });
         const durationMs = Date.now() - started;
         return {
@@ -217,7 +217,6 @@ function evaluateHttpGate(check: { url: string; method?: "GET" | "POST" | "PUT" 
   const timeoutMs = Number(check.timeout_ms ?? 5000);
   const expectStatus = Number(check.expect_status ?? 200);
   try {
-    const { execSync } = require("node:child_process");
     const cmd = `curl -s -o /dev/null -w "%{http_code}" --max-time ${Math.ceil(timeoutMs / 1000)} -X ${check.method ?? "GET"} ${JSON.stringify(check.url)}`;
     const out = String(execSync(cmd, { stdio: ["ignore", "pipe", "pipe"] })).trim();
     const status = Number(out);
