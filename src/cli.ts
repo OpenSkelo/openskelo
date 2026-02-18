@@ -131,7 +131,7 @@ program
   .command("agents")
   .description("List registered agents with current status")
   .action(async () => {
-    console.log(chalk.yellow("agents command is planned (P1). Use skelo status for active config summary."));
+    console.log(chalk.yellow("agents command is coming in v0.2. Use 'skelo status' for active config summary."));
   });
 
 // ── gates ──
@@ -139,7 +139,7 @@ program
   .command("gates")
   .description("List all pipeline gates with pass/fail stats")
   .action(async () => {
-    console.log(chalk.yellow("gates command is planned (P1). Use skelo explain <dagFile> to inspect configured gates now."));
+    console.log(chalk.yellow("gates command is coming in v0.2. Use 'skelo explain <dagFile>' to inspect configured gates now."));
   });
 
 // ── logs ──
@@ -148,7 +148,7 @@ program
   .description("Stream audit log")
   .option("--task <taskId>", "Filter to a specific task")
   .action(async () => {
-    console.log(chalk.yellow("logs command is planned (P2). Use /dag event log or /api/dag/runs/<id>/events for now."));
+    console.log(chalk.yellow("logs command is coming in v0.2. Use /dag event log or /api/dag/runs/<id>/events for now."));
   });
 
 program.parse();

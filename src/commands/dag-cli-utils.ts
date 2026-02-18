@@ -60,9 +60,11 @@ export interface RequiredInput {
   name: string;
   type: PortDef["type"];
   description?: string;
+  required?: boolean;
+  default?: unknown;
 }
 
-export function requiredContextInputs(dag: DAGDef): RequiredInput[] {
+export function contextEntryInputs(dag: DAGDef): RequiredInput[] {
   const incoming = new Set(dag.edges.map((e) => `${e.to}::${e.input}`));
   const req = new Map<string, RequiredInput>();
 
@@ -70,9 +72,14 @@ export function requiredContextInputs(dag: DAGDef): RequiredInput[] {
     for (const [portName, def] of Object.entries(block.inputs)) {
       if (!def) continue;
       if (incoming.has(`${block.id}::${portName}`)) continue;
-      if (def.required === false || def.default !== undefined) continue;
       if (!req.has(portName)) {
-        req.set(portName, { name: portName, type: def.type, description: def.description });
+        req.set(portName, {
+          name: portName,
+          type: def.type,
+          description: def.description,
+          required: def.required !== false && def.default === undefined,
+          default: def.default,
+        });
       }
     }
   }
@@ -80,8 +87,36 @@ export function requiredContextInputs(dag: DAGDef): RequiredInput[] {
   return [...req.values()];
 }
 
+export function requiredContextInputs(dag: DAGDef): RequiredInput[] {
+  return contextEntryInputs(dag).filter((r) => r.required);
+}
+
 export function missingRequiredInputs(required: RequiredInput[], ctx: Record<string, unknown>): RequiredInput[] {
   return required.filter((r) => ctx[r.name] === undefined);
+}
+
+export function suggestClosestInput(input: string, options: string[]): string | null {
+  let best: { value: string; dist: number } | null = null;
+  for (const opt of options) {
+    const dist = levenshtein(input, opt);
+    if (!best || dist < best.dist) best = { value: opt, dist };
+  }
+  if (!best) return null;
+  const threshold = Math.max(1, Math.floor(Math.max(input.length, best.value.length) * 0.4));
+  return best.dist <= threshold ? best.value : null;
+}
+
+function levenshtein(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  return dp[a.length][b.length];
 }
 
 export function ensurePipelinesDir(): string {

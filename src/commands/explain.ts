@@ -1,11 +1,14 @@
 import chalk from "chalk";
 import type { DAGDef } from "../core/block.js";
+import { loadConfig } from "../core/config.js";
 import { loadDagFromFile, requiredContextInputs } from "./dag-cli-utils.js";
 
 export async function explainCommand(dagFile: string): Promise<void> {
   try {
     const { dag, path } = loadDagFromFile(dagFile);
     const layers = topoLayers(dag);
+    let cfg: ReturnType<typeof loadConfig> | null = null;
+    try { cfg = loadConfig(); } catch { cfg = null; }
 
     console.log(chalk.bold(`${dag.name} — ${dag.blocks.length} blocks, ${dag.edges.length} edges`));
     console.log(chalk.dim(path));
@@ -31,6 +34,8 @@ export async function explainCommand(dagFile: string): Promise<void> {
           console.log(`  ${block.id} inputs:`);
           for (const l of inputLines) console.log(l);
         }
+        const routing = resolveRoutingLine(block, cfg);
+        if (routing) console.log(`  ${block.id} route: ${routing}`);
       }
     }
 
@@ -58,6 +63,33 @@ export async function explainCommand(dagFile: string): Promise<void> {
     console.error(chalk.red(`✗ ${String((err as Error).message ?? err)}`));
     process.exit(1);
   }
+}
+
+function resolveRoutingLine(block: { agent?: { specific?: string; role?: string; capability?: string } }, cfg: ReturnType<typeof loadConfig> | null): string {
+  const a = block.agent ?? {};
+  if (!cfg) return a.specific ? `specific:${a.specific}` : (a.role ? `role:${a.role}` : (a.capability ? `capability:${a.capability}` : "default"));
+
+  const agents = cfg.agents;
+  let selectedId: string | null = null;
+  let reason = "";
+  if (a.specific && agents[a.specific]) {
+    selectedId = a.specific;
+    reason = "specific";
+  } else if (a.role) {
+    selectedId = Object.keys(agents).find((id) => agents[id]?.role === a.role) ?? null;
+    if (selectedId) reason = `role:${a.role}`;
+  }
+  if (!selectedId && a.capability) {
+    selectedId = Object.keys(agents).find((id) => Array.isArray(agents[id]?.capabilities) && agents[id].capabilities.includes(a.capability!)) ?? null;
+    if (selectedId) reason = `capability:${a.capability}`;
+  }
+  if (!selectedId) {
+    selectedId = Object.keys(agents)[0] ?? null;
+    if (selectedId) reason = "default:first-agent";
+  }
+  if (!selectedId || !agents[selectedId]) return "unresolved";
+  const agent = agents[selectedId];
+  return `${selectedId} via ${reason} → provider=${agent.provider}, model=${agent.model}`;
 }
 
 function topoLayers(dag: DAGDef): string[][] {

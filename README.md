@@ -47,8 +47,8 @@ OpenSkelo is different. It's not another agent framework — it's the **skeleton
 # Start runtime
 npx openskelo start
 
-# Run a bundled DAG example
-npx openskelo run start --example coding-pipeline.yaml --context-json '{"prompt":"Build a login endpoint"}'
+# Run DAG directly (canonical one-command path)
+npx openskelo run examples/coding-pipeline.yaml --input prompt="Build a login endpoint" --watch
 
 # Or use planner thin-slice from natural language
 npx openskelo autopilot "Add rate limiting to the API"

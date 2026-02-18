@@ -2,7 +2,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { readFileSync } from "fs";
 import { watchCommand } from "./watch.js";
-import { loadDagFromFile, missingRequiredInputs, parseInputPairs, requiredContextInputs, resolveDagPath } from "./dag-cli-utils.js";
+import { loadConfig } from "../core/config.js";
+import { contextEntryInputs, loadDagFromFile, missingRequiredInputs, parseInputPairs, requiredContextInputs, resolveDagPath, suggestClosestInput } from "./dag-cli-utils.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -245,13 +246,34 @@ async function runDagFile(dagFile: string, opts: Record<string, unknown>): Promi
 
   const loaded = loadDagFromFile(dagFile);
   const { dag } = loaded;
+  const entryInputs = contextEntryInputs(dag);
+  const entryNames = new Set(entryInputs.map((i) => i.name));
+
+  const unknownInputs = Object.keys(inputContext).filter((k) => !entryNames.has(k));
+  if (unknownInputs.length > 0) {
+    console.error(chalk.red("✗ Unknown --input key(s):"));
+    for (const key of unknownInputs) {
+      const hint = suggestClosestInput(key, [...entryNames]);
+      console.error(`  - ${key}${hint ? ` (did you mean '${hint}'?)` : ""}`);
+    }
+    if (entryInputs.length > 0) {
+      console.error(chalk.dim("Valid entry inputs:"));
+      for (const i of entryInputs) {
+        const req = i.required ? "required" : "optional";
+        console.error(chalk.dim(`  - ${i.name} (${i.type}, ${req})${i.description ? ` — ${i.description}` : ""}`));
+      }
+    }
+    process.exit(1);
+  }
+
   const missing = missingRequiredInputs(requiredContextInputs(dag), context);
   if (missing.length > 0) {
     console.error(chalk.red("✗ Missing required input(s):"));
     for (const m of missing) {
-      console.error(`  - ${m.name} (${m.type})${m.description ? ` — ${m.description}` : ""}`);
+      console.error(`  - block entry port '${m.name}' (type: ${m.type})${m.description ? ` — ${m.description}` : ""}`);
+      const valHint = m.type === "json" ? `'{}'` : (m.type === "number" ? "123" : (m.type === "boolean" ? "true" : "\"value\""));
+      console.error(chalk.dim(`    fix: --input ${m.name}=${valHint}`));
     }
-    console.error(chalk.dim(`Usage: skelo run ${dagFile} --input ${missing[0].name}=...`));
     process.exit(1);
   }
 
@@ -288,9 +310,62 @@ async function runDagFile(dagFile: string, opts: Record<string, unknown>): Promi
   if (data.status_url) console.log(chalk.dim(`  status: ${String(data.status_url)}`));
   if (data.sse_url) console.log(chalk.dim(`  events: ${String(data.sse_url)}`));
 
+  const routingLines = getBlockRoutingSummary(dag);
+  if (routingLines.length > 0) {
+    console.log(chalk.dim("  routing:"));
+    for (const line of routingLines.slice(0, 8)) console.log(chalk.dim(`    - ${line}`));
+    if (routingLines.length > 8) console.log(chalk.dim(`    - ... ${routingLines.length - 8} more blocks`));
+  }
+
   if (opts.watch) {
     await watchCommand(runId, { api });
   }
+}
+
+function getBlockRoutingSummary(dag: { blocks: Array<{ id: string; agent?: { specific?: string; role?: string; capability?: string } }> }): string[] {
+  let cfg: ReturnType<typeof loadConfig> | null = null;
+  try {
+    cfg = loadConfig();
+  } catch {
+    cfg = null;
+  }
+
+  const lines: string[] = [];
+  for (const b of dag.blocks) {
+    const a = b.agent ?? {};
+    if (!cfg) {
+      lines.push(`${b.id}: selector=${a.specific ? `specific:${a.specific}` : (a.role ? `role:${a.role}` : (a.capability ? `capability:${a.capability}` : "default"))}`);
+      continue;
+    }
+
+    const agents = cfg.agents;
+    let selectedId: string | null = null;
+    let reason = "";
+
+    if (a.specific && agents[a.specific]) {
+      selectedId = a.specific;
+      reason = "specific";
+    } else if (a.role) {
+      selectedId = Object.keys(agents).find((id) => agents[id]?.role === a.role) ?? null;
+      if (selectedId) reason = `role:${a.role}`;
+    }
+    if (!selectedId && a.capability) {
+      selectedId = Object.keys(agents).find((id) => Array.isArray(agents[id]?.capabilities) && agents[id].capabilities.includes(a.capability!)) ?? null;
+      if (selectedId) reason = `capability:${a.capability}`;
+    }
+    if (!selectedId) {
+      selectedId = Object.keys(agents)[0] ?? null;
+      if (selectedId) reason = "default:first-agent";
+    }
+
+    if (!selectedId || !agents[selectedId]) {
+      lines.push(`${b.id}: unresolved selector`);
+      continue;
+    }
+    const agent = agents[selectedId];
+    lines.push(`${b.id}: ${selectedId} via ${reason} → provider=${agent.provider}, model=${agent.model}`);
+  }
+  return lines;
 }
 
 function collect(value: string, prev: string[]): string[] {
