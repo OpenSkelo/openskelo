@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { parse as parseYaml } from "yaml";
 import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
@@ -1039,6 +1039,51 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const body = await c.req.json().catch(() => ({}));
     const result = await resolveApproval(latest.run.id, null, body as Record<string, unknown>);
     return c.json(result.payload, result.status);
+  });
+
+  // Auto status summary derived from roadmap + recent commits
+  app.get("/api/dag/status-summary", (c) => {
+    const roadmapPath = resolve(process.cwd(), "ROADMAP.md");
+    let done: string[] = [];
+    let todo: string[] = [];
+
+    if (existsSync(roadmapPath)) {
+      const text = readFileSync(roadmapPath, "utf-8");
+      for (const line of text.split(/\r?\n/)) {
+        const m = line.match(/^\s*[-*]\s*\[(x|X| )\]\s+(.*)$/);
+        if (!m) continue;
+        const item = m[2].trim();
+        if (!item) continue;
+        if (m[1].toLowerCase() === "x") done.push(item);
+        else todo.push(item);
+      }
+    }
+
+    const commits: Array<{ sha: string; subject: string }> = [];
+    try {
+      const r = spawnSync("git", ["-C", process.cwd(), "log", "--oneline", "-n", "12"], { encoding: "utf-8" });
+      if ((r.status ?? 1) === 0) {
+        for (const line of String(r.stdout || "").split(/\r?\n/)) {
+          const v = line.trim();
+          if (!v) continue;
+          const i = v.indexOf(" ");
+          if (i <= 0) continue;
+          commits.push({ sha: v.slice(0, i), subject: v.slice(i + 1) });
+        }
+      }
+    } catch {
+      // ignore git errors in non-repo cwd
+    }
+
+    return c.json({
+      generated_at: new Date().toISOString(),
+      roadmap_path: existsSync(roadmapPath) ? roadmapPath : null,
+      done_count: done.length,
+      todo_count: todo.length,
+      done: done.slice(0, 20),
+      todo: todo.slice(0, 20),
+      recent_commits: commits,
+    });
   });
 
   // List runs (active + durable)

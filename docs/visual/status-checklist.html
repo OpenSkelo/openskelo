@@ -5,65 +5,68 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>OpenSkelo Status Checklist</title>
   <style>
-    :root{--bg:#0b1020;--card:#131b35;--border:#33406b;--text:#e8eeff;--muted:#aab8e6;--ok:#39d98a;--warn:#ffd166;--todo:#ff6b6b}
+    :root{--bg:#0b1020;--card:#131b35;--border:#33406b;--text:#e8eeff;--muted:#aab8e6;--ok:#39d98a;--todo:#ff6b6b}
     *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui;background:radial-gradient(1200px 700px at 20% -20%, #1f2a56 0%, var(--bg) 60%);color:var(--text)}
     .wrap{max-width:1200px;margin:16px auto;padding:0 16px 34px}
     h1{margin:0 0 6px;font-size:24px}.sub{color:var(--muted);margin-bottom:10px}
     .card{border:1px solid var(--border);border-radius:12px;background:var(--card);padding:12px;margin-top:10px}
-    .row{display:grid;grid-template-columns:180px 1fr;gap:10px;padding:7px 0;border-bottom:1px dashed rgba(90,110,170,.3)}
+    .row{display:grid;grid-template-columns:120px 1fr;gap:10px;padding:7px 0;border-bottom:1px dashed rgba(90,110,170,.3)}
     .row:last-child{border-bottom:0}
     .tag{display:inline-block;padding:3px 8px;border-radius:999px;border:1px solid var(--border);font-size:11px}
     .ok{background:rgba(57,217,138,.14);border-color:rgba(57,217,138,.45)}
-    .warn{background:rgba(255,209,102,.14);border-color:rgba(255,209,102,.45)}
     .todo{background:rgba(255,107,107,.14);border-color:rgba(255,107,107,.45)}
-    ul{margin:6px 0 0 16px;color:#c9d7ff}
     .mono{font-family:ui-monospace,Menlo,monospace}
+    .muted{color:var(--muted)}
   </style>
 </head>
 <body>
 <div class="wrap" id="wrapRoot">
   <div id="localHeader">
-    <h1>OpenSkelo — What shipped today vs what remains</h1>
-    <div class="sub">Fast truth page so we can stay aligned without hunting through long chat threads.</div>
+    <h1>OpenSkelo — Live status (auto-derived)</h1>
+    <div class="sub">Derived from ROADMAP.md checklist + latest git commits.</div>
   </div>
 
-  <div class="card">
-    <h3 style="margin:0 0 6px">Today shipped (2026-02-17)</h3>
-    <div class="row"><div><span class="tag ok">DONE</span></div><div>Iteration loop: reject can auto-spawn next cycle; supports <span class="mono">refine</span> and <span class="mono">from_scratch</span>.</div></div>
-    <div class="row"><div><span class="tag ok">DONE</span></div><div>Shared memory + iteration lineage persisted (<span class="mono">__shared_memory</span>, parent/root/latest links).</div></div>
-    <div class="row"><div><span class="tag ok">DONE</span></div><div>Approval bridge fix: approve decision can override gate-relevant input via <span class="mono">__override_input_*</span>.</div></div>
-    <div class="row"><div><span class="tag ok">DONE</span></div><div>Docs hub created under <span class="mono">docs/visual/</span> with tabs: Visualizer, Overview, Explainer, Architecture, Roadmap.</div></div>
-    <div class="row"><div><span class="tag ok">DONE</span></div><div>Local docs routes added: <span class="mono">/docs</span> and <span class="mono">/doc/{tab}</span> (tab-safe redirects).</div></div>
-    <div class="row"><div><span class="tag ok">DONE</span></div><div>Overview upgraded with practical use-case pipelines and improved DAG visuals.</div></div>
-  </div>
-
-  <div class="card">
-    <h3 style="margin:0 0 6px">Still left (priority)</h3>
-    <div class="row"><div><span class="tag todo">P0</span></div><div>Provider-agnostic dispatch on canonical DAG run path (remove OpenClaw-only gate).</div></div>
-    <div class="row"><div><span class="tag todo">P0</span></div><div>Restart-safe recovery of active runs (full store-first reconstruction semantics).</div></div>
-    <div class="row"><div><span class="tag warn">P1</span></div><div>Approval lifecycle hardening: TTL/expiry/retry/escalation edge cases.</div></div>
-    <div class="row"><div><span class="tag warn">P1</span></div><div>Runtime truth verify endpoint (consistency/provenance checks).</div></div>
-    <div class="row"><div><span class="tag warn">P1</span></div><div>Native structured output enforcement in adapters where supported (keep core validator as final guard).</div></div>
-  </div>
-
-  <div class="card">
-    <h3 style="margin:0 0 6px">Tomorrow suggested sequence</h3>
-    <ul>
-      <li>1) Lock provider factory + adapter routing on <span class="mono">/api/dag/run</span></li>
-      <li>2) Implement restart recovery checkpoint and replay integrity tests</li>
-      <li>3) Add verification endpoint + docs update in this status page</li>
-    </ul>
-  </div>
+  <div class="card" id="summaryCard">Loading status summary…</div>
+  <div class="card" id="doneCard"><h3 style="margin:0 0 6px">Shipped</h3><div class="muted">Loading…</div></div>
+  <div class="card" id="todoCard"><h3 style="margin:0 0 6px">Still left</h3><div class="muted">Loading…</div></div>
+  <div class="card" id="commitCard"><h3 style="margin:0 0 6px">Recent commits</h3><div class="muted">Loading…</div></div>
 </div>
+
 <script>
   const params = new URLSearchParams(location.search);
   if (params.get('embed') === '1') {
     const h = document.getElementById('localHeader');
     if (h) h.style.display = 'none';
-    const w = document.getElementById('wrapRoot');
-    if (w) { w.style.margin = '0 auto'; w.style.paddingTop = '0'; }
     document.body.style.background = 'transparent';
   }
+
+  function esc(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}
+
+  async function load(){
+    try {
+      const res = await fetch('/api/dag/status-summary');
+      const d = await res.json();
+
+      document.getElementById('summaryCard').innerHTML = `
+        <div class="row"><div class="muted">Generated</div><div>${new Date(d.generated_at).toLocaleString()}</div></div>
+        <div class="row"><div class="muted">Roadmap</div><div class="mono">${d.roadmap_path ? esc(d.roadmap_path) : 'not found'}</div></div>
+        <div class="row"><div><span class="tag ok">DONE ${d.done_count}</span></div><div>Completed checklist items parsed from ROADMAP.md</div></div>
+        <div class="row"><div><span class="tag todo">TODO ${d.todo_count}</span></div><div>Remaining checklist items parsed from ROADMAP.md</div></div>
+      `;
+
+      const doneRows = (d.done||[]).map((x)=>`<div class="row"><div><span class="tag ok">DONE</span></div><div>${esc(x)}</div></div>`).join('') || '<div class="muted">No done items found.</div>';
+      document.getElementById('doneCard').innerHTML = `<h3 style="margin:0 0 6px">Shipped</h3>${doneRows}`;
+
+      const todoRows = (d.todo||[]).map((x)=>`<div class="row"><div><span class="tag todo">TODO</span></div><div>${esc(x)}</div></div>`).join('') || '<div class="muted">No pending items found.</div>';
+      document.getElementById('todoCard').innerHTML = `<h3 style="margin:0 0 6px">Still left</h3>${todoRows}`;
+
+      const commitRows = (d.recent_commits||[]).map((c)=>`<div class="row"><div class="mono">${esc(c.sha)}</div><div>${esc(c.subject)}</div></div>`).join('') || '<div class="muted">No commits found.</div>';
+      document.getElementById('commitCard').innerHTML = `<h3 style="margin:0 0 6px">Recent commits</h3>${commitRows}`;
+    } catch (e) {
+      document.getElementById('summaryCard').innerHTML = `<span class="tag todo">ERROR</span> Could not load /api/dag/status-summary`;
+    }
+  }
+  load();
 </script>
 </body>
 </html>
