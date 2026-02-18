@@ -35,6 +35,7 @@ const runSafetyTimers = new Map<string, NodeJS.Timeout>();
 const runStallTimers = new Map<string, NodeJS.Timeout>();
 const runEvents = new Map<string, DAGEvent[]>();
 const sseClients = new Map<string, Set<(event: DAGEvent) => void>>();
+const sseClientRegistry = new Map<string, Map<string, (event: DAGEvent) => void>>();
 
 export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string }) {
   const app = new Hono();
@@ -916,7 +917,12 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     if (!hasActive && !existsDurable) return c.json({ error: "Not found" }, 404);
 
     const lastEventIdRaw = c.req.header("last-event-id") ?? c.req.query("since") ?? "0";
-    const sinceSeq = Number(lastEventIdRaw) || 0;
+    const rawSince = Number(lastEventIdRaw);
+    const sinceSeq = Number.isFinite(rawSince) && rawSince > 0 ? rawSince : 0;
+
+    const requestedClientId = String(c.req.header("x-sse-client-id") ?? c.req.query("clientId") ?? "").trim();
+    const clientId = requestedClientId || `sse_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    c.header("x-sse-client-id", clientId);
 
     return streamSSE(c, async (stream) => {
       // Replay from durable store first (sequence-aware)
@@ -940,8 +946,13 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       // If run is no longer active, replay-only mode (close)
       if (!activeRuns.has(runId)) return;
 
-      // Register for new events
+      // Register for new events with client-id dedupe
       const clients = sseClients.get(runId) ?? new Set();
+      const registry = sseClientRegistry.get(runId) ?? new Map<string, (event: DAGEvent) => void>();
+
+      const existing = registry.get(clientId);
+      if (existing) clients.delete(existing);
+
       const handler = async (event: DAGEvent) => {
         try {
           await stream.writeSSE({
@@ -951,10 +962,16 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           });
         } catch {
           clients.delete(handler);
+          registry.delete(clientId);
+          if (clients.size === 0) sseClients.delete(runId);
+          if (registry.size === 0) sseClientRegistry.delete(runId);
         }
       };
+
       clients.add(handler);
+      registry.set(clientId, handler);
       sseClients.set(runId, clients);
+      sseClientRegistry.set(runId, registry);
 
       // Keep alive until run completes or client disconnects
       const entry = activeRuns.get(runId);
@@ -965,6 +982,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       // Final keepalive then close
       await new Promise(r => setTimeout(r, 1000));
       clients.delete(handler);
+      registry.delete(clientId);
+      if (clients.size === 0) sseClients.delete(runId);
+      if (registry.size === 0) sseClientRegistry.delete(runId);
     });
   });
 

@@ -415,6 +415,29 @@ describe("DAG API integration", () => {
     expect(body.error).toMatch(/bad\.yaml:\d+:\d+/);
   });
 
+  it("assigns SSE client id and supports replay-only stream mode", async () => {
+    const examplesDir = mkdtempSync(join(tmpdir(), "openskelo-dag-examples-"));
+    mkdirSync(examplesDir, { recursive: true });
+    writeFileSync(join(examplesDir, "simple.yaml"), `name: simple\nblocks:\n  - id: one\n    name: One\n    inputs:\n      prompt: string\n    outputs: {}\n    agent:\n      specific: manager\n    pre_gates: []\n    post_gates: []\n    retry:\n      max_attempts: 0\n      backoff: none\n      delay_ms: 0\nedges: []\n`);
+
+    const ctx = setupDagTestApp(examplesDir);
+    cleanups.push(ctx.cleanup);
+
+    const start = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ example: "simple.yaml", context: { prompt: "x" }, devMode: true }),
+    });
+    expect(start.status).toBe(201);
+    const created = (await start.json()) as { run_id: string };
+
+    await waitForRunStatus(ctx.app as any, created.run_id, ["completed", "failed", "cancelled"], 8000);
+
+    const sse = await ctx.app.request(`/api/dag/runs/${created.run_id}/events?since=-10&clientId=test-client`);
+    expect(sse.status).toBe(200);
+    expect(String(sse.headers.get("x-sse-client-id") ?? "")).toBe("test-client");
+  });
+
   it("supports emergency stop-all", async () => {
     const ctx = setupDagTestApp();
     cleanups.push(ctx.cleanup);
