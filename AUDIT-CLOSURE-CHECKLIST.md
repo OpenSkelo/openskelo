@@ -60,7 +60,7 @@ Legend:
   - Proof: `63dd573`
 - [ ] Add richer stuck diagnostics
 - [x] Per-block timeout enforcement with strict timeout failure path coverage (`DISPATCH_TIMEOUT`)
-  - Proof: `pending-commit`
+  - Proof: `543d8e0`
 - [ ] Cost/budget enforcement
 
 ## 7) State Management & Durability
