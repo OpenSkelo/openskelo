@@ -3,7 +3,7 @@
  * Used for demos and visual testing of the DAG engine.
  */
 
-import type { ProviderAdapter, DispatchRequest, DispatchResult } from "../types.js";
+import type { ProviderAdapter, DispatchRequest, DispatchResult, DispatchStreamHandlers } from "../types.js";
 
 export interface MockProviderOpts {
   /** Min execution time in ms (default: 2000) */
@@ -44,6 +44,14 @@ export function createMockProvider(opts: MockProviderOpts = {}): ProviderAdapter
         sessionId: `mock_${Date.now()}`,
         tokensUsed: Math.floor(200 + Math.random() * 800),
       };
+    },
+
+    async dispatchStream(request: DispatchRequest, handlers?: DispatchStreamHandlers): Promise<DispatchResult> {
+      const res = await this.dispatch(request);
+      if (res.success && res.output) handlers?.onChunk?.(res.output);
+      if (res.success) handlers?.onDone?.(res);
+      else handlers?.onError?.(new Error(res.error ?? "dispatch failed"));
+      return res;
     },
 
     async healthCheck(): Promise<boolean> {

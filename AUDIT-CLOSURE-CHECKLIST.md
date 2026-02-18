@@ -52,7 +52,8 @@ Legend:
   - Proof: `deceee7`
 - [x] Docs support matrix clarity (implemented vs planned) with explicit table in README
   - Proof: `9895021`
-- [ ] Streaming provider interface
+- [x] Streaming provider interface baseline (`dispatchStream` contract + provider shim implementations)
+  - Proof: `pending-commit`
 - [x] Full model parameter passthrough baseline (`model_params` in DAG agent config -> provider payload)
   - Proof: `a1e9e81`
 

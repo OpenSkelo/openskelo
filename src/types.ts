@@ -141,12 +141,20 @@ export interface DispatchResult {
   repairSucceeded?: boolean;
 }
 
+export interface DispatchStreamHandlers {
+  onChunk?: (chunk: string) => void;
+  onDone?: (result: DispatchResult) => void;
+  onError?: (error: Error) => void;
+}
+
 // ── Provider adapter interface ──
 
 export interface ProviderAdapter {
   name: string;
   type: string;
   dispatch(request: DispatchRequest): Promise<DispatchResult>;
+  /** Optional streaming interface. Providers may emit chunks then return final result. */
+  dispatchStream?(request: DispatchRequest, handlers?: DispatchStreamHandlers): Promise<DispatchResult>;
   healthCheck?(): Promise<boolean>;
   cancel?(sessionId: string): Promise<void>;
 }

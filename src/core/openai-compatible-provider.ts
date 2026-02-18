@@ -1,4 +1,4 @@
-import type { DispatchRequest, DispatchResult, ProviderAdapter } from "../types.js";
+import type { DispatchRequest, DispatchResult, DispatchStreamHandlers, ProviderAdapter } from "../types.js";
 
 export interface OpenAICompatibleProviderOpts {
   name: string;
@@ -73,6 +73,14 @@ export function createOpenAICompatibleProvider(opts: OpenAICompatibleProviderOpt
         clearTimeout(timeout);
       }
     },
+    async dispatchStream(request: DispatchRequest, handlers?: DispatchStreamHandlers): Promise<DispatchResult> {
+      const res = await this.dispatch(request);
+      if (res.success && res.output) handlers?.onChunk?.(res.output);
+      if (res.success) handlers?.onDone?.(res);
+      else handlers?.onError?.(new Error(res.error ?? "dispatch failed"));
+      return res;
+    },
+
     async healthCheck() {
       try {
         const res = await fetch(`${baseUrl}/models`, { method: "GET" });
