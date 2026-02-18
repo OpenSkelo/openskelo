@@ -36,8 +36,24 @@ const runStallTimers = new Map<string, NodeJS.Timeout>();
 const runEvents = new Map<string, DAGEvent[]>();
 const sseClients = new Map<string, Set<(event: DAGEvent) => void>>();
 const sseClientRegistry = new Map<string, Map<string, (event: DAGEvent) => void>>();
+const approvalWaiters = new Map<string, Set<() => void>>();
 
 export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string }) {
+  // Isolate state per API instance (important for tests/restarts)
+  for (const t of runSafetyTimers.values()) clearTimeout(t);
+  for (const t of runStallTimers.values()) clearTimeout(t);
+  for (const ctl of runAbortControllers.values()) {
+    if (!ctl.signal.aborted) ctl.abort("dag-api reinit");
+  }
+  activeRuns.clear();
+  runAbortControllers.clear();
+  runSafetyTimers.clear();
+  runStallTimers.clear();
+  runEvents.clear();
+  sseClients.clear();
+  sseClientRegistry.clear();
+  approvalWaiters.clear();
+
   const app = new Hono();
   const engine = createBlockEngine();
   const examplesBaseDir = opts?.examplesDir ?? resolve(process.cwd(), "examples");
@@ -185,6 +201,26 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     runSafetyTimers.delete(runId);
     const t2 = runStallTimers.get(runId); if (t2) clearTimeout(t2);
     runStallTimers.delete(runId);
+    const waiters = approvalWaiters.get(runId);
+    if (waiters) {
+      for (const resolve of waiters) resolve();
+      approvalWaiters.delete(runId);
+    }
+  }
+
+  function waitForApprovalSignal(runId: string): Promise<void> {
+    return new Promise((resolve) => {
+      const set = approvalWaiters.get(runId) ?? new Set<() => void>();
+      set.add(resolve);
+      approvalWaiters.set(runId, set);
+    });
+  }
+
+  function signalApproval(runId: string): void {
+    const set = approvalWaiters.get(runId);
+    if (!set) return;
+    for (const resolve of set) resolve();
+    approvalWaiters.delete(runId);
   }
 
   function armStallTimer(runId: string) {
@@ -450,6 +486,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       maxParallel: 4,
       abortSignal: runAbortController.signal,
       isCancelled: () => (runIdRef ? activeRuns.get(runIdRef)?.run.status === "cancelled" : false),
+      waitForApproval: async (run) => {
+        if (run.status !== "paused_approval") return;
+        await waitForApprovalSignal(run.id);
+      },
       onBlockStart: (run, blockId) => {
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
@@ -554,11 +594,12 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     const activeRunningCount = Array.from(activeRuns.values()).filter((e) => e.run.status === "running" || e.run.status === "paused_approval" || e.run.status === "pending").length;
     if (activeRunningCount >= safety.maxConcurrentRuns) {
-      return c.json({
+      return {
         error: "Concurrency limit reached",
         limit: safety.maxConcurrentRuns,
         active: activeRunningCount,
-      }, 429);
+        status: 429 as const,
+      };
     }
 
     // Create initial run state for immediate response
@@ -783,6 +824,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       entry.run.context[`__override_input_${blockId}_approved`] = true;
       entry.run.status = "running";
       persistRunSnapshot(entry);
+      signalApproval(entry.run.id);
 
       broadcast(entry.run.id, {
         type: "approval:decided",
@@ -809,6 +851,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     if (!shouldIterate) {
       entry.run.status = "failed";
       persistRunSnapshot(entry);
+      signalApproval(entry.run.id);
       return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status } };
     }
 
@@ -825,6 +868,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     if (cycle > maxCycles) {
       entry.run.status = "failed";
       persistRunSnapshot(entry);
+      signalApproval(entry.run.id);
       return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status, iteration_stopped: "max_cycles_reached" } };
     }
 
@@ -839,6 +883,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     if ((started as { error?: string }).error) {
       entry.run.status = "failed";
       persistRunSnapshot(entry);
+      signalApproval(entry.run.id);
       return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status, iteration_error: (started as { error: string }).error } };
     }
 
@@ -846,6 +891,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     entry.run.status = "iterated";
     entry.run.context.__latest_iterated_run_id = childRunId;
     persistRunSnapshot(entry);
+    signalApproval(entry.run.id);
 
     broadcast(entry.run.id, {
       type: "run:iterated",

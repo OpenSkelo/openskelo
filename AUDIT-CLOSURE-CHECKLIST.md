@@ -54,7 +54,8 @@ Legend:
 
 ## 6) DAG Executor
 - [x] Contract/repair path present and tested
-- [ ] Replace approval busy-wait with event/promise wait
+- [x] Replace approval busy-wait with event/promise wait (`waitForApproval` + approval signal wake)
+  - Proof: `pending-commit-after-commit`
 - [ ] Improve scheduling beyond batch `Promise.allSettled`
 - [ ] Add richer stuck diagnostics
 - [~] Per-block timeout enforcement (safety caps present; strict end-to-end proof pending)

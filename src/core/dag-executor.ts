@@ -66,6 +66,9 @@ export interface ExecutorOpts {
   /** Called when a block is waiting for human approval */
   onApprovalRequired?: (run: DAGRun, blockId: string, approval: Record<string, unknown>) => void;
 
+  /** Optional approval wait primitive (event/promise-based). */
+  waitForApproval?: (run: DAGRun) => Promise<void>;
+
   /** Max parallel blocks executing simultaneously (default: 4) */
   maxParallel?: number;
 
@@ -111,6 +114,9 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     // Main execution loop
     while (true) {
+      if (run.status === "iterated" || run.status === "completed" || run.status === "failed") {
+        break;
+      }
       if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) {
         run.status = "cancelled";
         break;
@@ -118,7 +124,11 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
       // Pause loop when waiting for human approval
       if (run.status === "paused_approval") {
-        await sleep(250);
+        if (opts.waitForApproval) {
+          await opts.waitForApproval(run);
+        } else {
+          await sleep(250);
+        }
         continue;
       }
 
