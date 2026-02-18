@@ -64,7 +64,7 @@ Legend:
 
 ## 7) State Management & Durability
 - [~] Durable tables + replay endpoint implemented
-- [ ] Store-first/event-sourced reconstruction completion
+- [~] Store-first/event reconstruction advanced: durable `GET /api/dag/runs/:id` now reconstructs state from event stream on fallback (full event-sourced completion pending)
 - [ ] Remove legacy DB schema paths/tables in hard-cut release
 - [ ] Numbered migration framework (`schema_migrations` + migration files)
 

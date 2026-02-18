@@ -711,6 +711,30 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     return c.json(started, 201);
   });
 
+  function reconstructRunFromEvents(baseRun: Record<string, unknown>, durableEvents: Array<Record<string, unknown>>): Record<string, unknown> {
+    const run = JSON.parse(JSON.stringify(baseRun ?? {})) as Record<string, unknown>;
+    const blocks = (run.blocks as Record<string, Record<string, unknown>> | undefined) ?? {};
+
+    for (const e of durableEvents) {
+      const type = String(e.event_type ?? "");
+      const data = JSON.parse(String(e.data_json ?? "{}")) as Record<string, unknown>;
+      const blockId = e.block_id ? String(e.block_id) : undefined;
+
+      if (blockId && data.instance && typeof data.instance === "object") {
+        blocks[blockId] = data.instance as Record<string, unknown>;
+      }
+
+      if (type === "run:complete") run.status = "completed";
+      else if (type === "run:fail") run.status = "failed";
+      else if (type === "run:iterated") run.status = "iterated";
+      else if (type === "approval:requested" && run.status !== "completed" && run.status !== "failed" && run.status !== "iterated") run.status = "paused_approval";
+      else if (type === "approval:decided" && run.status === "paused_approval") run.status = "running";
+    }
+
+    run.blocks = blocks;
+    return run;
+  }
+
   // Get run status
   app.get("/api/dag/runs/:id", (c) => {
     const runId = c.req.param("id");
@@ -732,7 +756,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const events = db.prepare("SELECT rowid as seq, event_type, run_id, block_id, data_json, timestamp FROM dag_events WHERE run_id = ? ORDER BY rowid ASC").all(runId) as Array<Record<string, unknown>>;
     const approval = db.prepare("SELECT * FROM dag_approvals WHERE run_id = ? AND status = 'pending' ORDER BY requested_at DESC LIMIT 1").get(runId) as Record<string, unknown> | undefined;
 
-    const run = JSON.parse(String(row.run_json ?? "{}"));
+    const baseRun = JSON.parse(String(row.run_json ?? "{}")) as Record<string, unknown>;
+    const run = reconstructRunFromEvents(baseRun, events);
     const dag = JSON.parse(String(row.dag_json ?? "{}"));
     const trace = JSON.parse(String(row.trace_json ?? "[]"));
 
@@ -750,6 +775,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       })),
       trace,
       durable: true,
+      reconstructed: true,
     });
   });
 
