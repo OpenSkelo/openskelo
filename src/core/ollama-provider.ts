@@ -17,14 +17,15 @@ export function createOllamaProvider(opts: OllamaProviderOpts): ProviderAdapter 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
+        const messages: Array<{ role: string; content: string }> = [];
+        if (request.system && request.system.trim()) {
+          messages.push({ role: "system", content: request.system });
+        }
+        messages.push({ role: "user", content: buildPrompt(request) });
+
         const basePayload: Record<string, unknown> = {
           model: request.agent.model || "llama3.1",
-          messages: [
-            {
-              role: "user",
-              content: buildPrompt(request),
-            },
-          ],
+          messages,
           stream: false,
         };
 

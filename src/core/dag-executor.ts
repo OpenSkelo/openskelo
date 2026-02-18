@@ -15,6 +15,7 @@
  */
 
 import { createBlockEngine, evaluateBlockGate } from "./block.js";
+import { runDeterministicHandler } from "./deterministic.js";
 import type {
   BlockDef,
   BlockExecution,
@@ -318,6 +319,13 @@ export function createDAGExecutor(opts: ExecutorOpts) {
             inst.started_at = null;
             inst.completed_at = null;
           }
+          if (rule.feedback_from === "gate_verdicts") {
+            run.context.gate_verdicts = {
+              gate: failedPreGate.name,
+              reason: failedPreGate.reason,
+              audit: failedPreGate.audit ?? null,
+            };
+          }
 
           opts.onBlockFail?.(
             run,
@@ -352,6 +360,124 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         pre_gates: preGates,
         post_gates: [],
         execution: null,
+        duration_ms: Date.now() - startTime,
+      });
+      return;
+    }
+
+    // 3. Deterministic execution path (no provider dispatch)
+    if ((blockDef.mode ?? "ai") === "deterministic") {
+      if (!blockDef.deterministic?.handler) {
+        const err = `Deterministic block missing handler: ${blockId}`;
+        engine.failBlock(run, blockId, err, blockDef);
+        opts.onBlockFail?.(run, blockId, err, "DET_CONFIG_INVALID", { stage: "dispatch", message: err });
+        return;
+      }
+
+      let outputs: Record<string, unknown> = {};
+      try {
+        outputs = await runDeterministicHandler(blockDef.deterministic.handler, {
+          inputs,
+          config: blockDef.deterministic.config ?? {},
+          blockId,
+          runId: run.id,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Deterministic handler failed";
+        engine.failBlock(run, blockId, msg, blockDef);
+        opts.onBlockFail?.(run, blockId, msg, "DET_EXEC_FAILED", { stage: "dispatch", message: msg });
+        trace.push({
+          block_id: blockId,
+          instance_id: run.blocks[blockId].instance_id,
+          status: "failed",
+          inputs,
+          outputs: {},
+          pre_gates: preGates,
+          post_gates: [],
+          execution: null,
+          duration_ms: Date.now() - startTime,
+        });
+        return;
+      }
+
+      const contract = validateOutputContract(blockDef, outputs);
+      if (!contract.ok) {
+        const msg = `Output contract failed: ${contract.errors.join('; ')}`;
+        engine.failBlock(run, blockId, msg, blockDef);
+        opts.onBlockFail?.(run, blockId, msg, "OUTPUT_CONTRACT_FAILED", { stage: "contract", message: msg });
+        return;
+      }
+
+      const execution: BlockExecution = {
+        agent_id: "deterministic",
+        provider: "deterministic",
+        transport_provider: "deterministic",
+        model: `deterministic:${blockDef.deterministic.handler}`,
+        raw_output: JSON.stringify(outputs),
+        tokens_in: 0,
+        tokens_out: 0,
+        duration_ms: Date.now() - startTime,
+      };
+
+      const postGates = await evaluateGatesWithLLM(blockDef.post_gates, {
+        inputs,
+        outputs,
+        blockDef,
+        defaultAgent: null,
+        providers: opts.providers,
+      });
+      run.blocks[blockId].post_gate_results = postGates;
+      const postMode = blockDef.gate_composition?.post ?? "all";
+      const postPassed = postGates.length === 0
+        ? true
+        : (postMode === "any" ? postGates.some((g) => g.passed) : postGates.every((g) => g.passed));
+      if (!postPassed) {
+        const failedPostGate = postGates.find(g => !g.passed);
+        const rule = failedPostGate ? (blockDef.on_gate_fail ?? []).find((r) => r.when_gate === failedPostGate.name) : undefined;
+        if (rule && failedPostGate) {
+          const key = `__bounce_${blockId}_${rule.when_gate}`;
+          const bounce = Number((run.context[key] as number) ?? 0) + 1;
+          run.context[key] = bounce;
+          if (bounce <= rule.max_bounces) {
+            const toReset = new Set<string>([blockId, ...(rule.reset_blocks ?? []), rule.route_to]);
+            for (const retryBlock of toReset) {
+              const inst = run.blocks[retryBlock];
+              if (!inst) continue;
+              inst.status = "pending";
+              inst.outputs = {};
+              inst.execution = null;
+              inst.started_at = null;
+              inst.completed_at = null;
+            }
+            if (rule.feedback_from === "gate_verdicts") {
+              run.context.gate_verdicts = {
+                gate: failedPostGate.name,
+                reason: failedPostGate.reason,
+                audit: failedPostGate.audit ?? null,
+              };
+            }
+            opts.onBlockFail?.(run, blockId, `Gate failure reroute Bounce ${bounce}/${rule.max_bounces} → rerouting to ${rule.route_to}.`, "GATE_FAIL_REROUTE", { stage: "gate", message: `Gate failure reroute Bounce ${bounce}/${rule.max_bounces} → rerouting to ${rule.route_to}.` });
+            return;
+          }
+        }
+
+        const msg = `Post-gate failed: ${failedPostGate?.name ?? "unknown"} — ${failedPostGate?.reason ?? ""}`;
+        engine.failBlock(run, blockId, msg, blockDef);
+        opts.onBlockFail?.(run, blockId, msg, "POST_GATE_FAILED", { stage: "gate", message: msg });
+        return;
+      }
+
+      engine.completeBlock(run, blockId, outputs, execution);
+      opts.onBlockComplete?.(run, blockId);
+      trace.push({
+        block_id: blockId,
+        instance_id: run.blocks[blockId].instance_id,
+        status: "completed",
+        inputs,
+        outputs,
+        pre_gates: preGates,
+        post_gates: postGates,
+        execution,
         duration_ms: Date.now() - startTime,
       });
       return;
@@ -630,6 +756,41 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       : (postMode === "any" ? postGates.some((g) => g.passed) : postGates.every((g) => g.passed));
     const failedPostGate = postGates.find(g => !g.passed);
     if (!postPassed) {
+      const rule = (blockDef.on_gate_fail ?? []).find((r) => r.when_gate === failedPostGate.name);
+      if (rule) {
+        const key = `__bounce_${blockId}_${rule.when_gate}`;
+        const bounce = Number((run.context[key] as number) ?? 0) + 1;
+        run.context[key] = bounce;
+
+        if (bounce <= rule.max_bounces) {
+          const toReset = new Set<string>([blockId, ...(rule.reset_blocks ?? []), rule.route_to]);
+          for (const retryBlock of toReset) {
+            const inst = run.blocks[retryBlock];
+            if (!inst) continue;
+            inst.status = "pending";
+            inst.outputs = {};
+            inst.execution = null;
+            inst.started_at = null;
+            inst.completed_at = null;
+          }
+          if (rule.feedback_from === "gate_verdicts") {
+            run.context.gate_verdicts = {
+              gate: failedPostGate.name,
+              reason: failedPostGate.reason,
+              audit: failedPostGate.audit ?? null,
+            };
+          }
+          opts.onBlockFail?.(
+            run,
+            blockId,
+            `${rule.reason ?? "Gate failure reroute"} Bounce ${bounce}/${rule.max_bounces} → rerouting to ${rule.route_to}.`,
+            "GATE_FAIL_REROUTE",
+            { stage: "gate", message: `${rule.reason ?? "Gate failure reroute"} Bounce ${bounce}/${rule.max_bounces} → rerouting to ${rule.route_to}.` }
+          );
+          return;
+        }
+      }
+
       execution.error = `Post-gate failed: ${failedPostGate.name}`;
       engine.failBlock(run, blockId, `Post-gate failed: ${failedPostGate.name} — ${failedPostGate.reason}`, blockDef);
       opts.onBlockFail?.(run, blockId, failedPostGate.reason ?? "Post-gate failed", "POST_GATE_FAILED", { stage: "gate", message: failedPostGate.reason ?? "Post-gate failed" });
@@ -1040,25 +1201,30 @@ async function evaluateGatesWithLLM(
     const criteria = gate.check.criteria;
     const passThreshold = Number(gate.check.pass_threshold ?? 1);
 
+    const systemPrompt = gate.check.system_prompt ?? "You are a strict quality reviewer.";
     const reviewPrompt = [
-      "You are a strict quality judge.",
-      "Evaluate the candidate output against each criterion.",
-      "Respond with ONLY valid JSON using this schema:",
-      '{"criteria":[{"criterion":"string","passed":true,"reason":"string"}],"summary":"string"}',
-      "Do not include markdown.",
+      "Evaluate the following output against each criterion.",
+      "Respond with ONLY valid JSON array; each element must have: criterion, passed (boolean), reasoning.",
       "",
-      `Candidate output (${gate.check.port}):`,
+      "OUTPUT:",
+      "---",
       String(candidate),
+      "---",
       "",
-      "Criteria:",
+      "CRITERIA:",
       ...criteria.map((c, i) => `${i + 1}. ${c}`),
+      "",
+      "Example:",
+      '[{"criterion":"Code handles errors","passed":true,"reasoning":"Try/catch present."}]',
     ].join("\n");
 
+    const reviewStart = Date.now();
     try {
       const reviewReq: DispatchRequest = {
         taskId: `gate_${ctx.blockDef.id}_${gate.name}`,
         pipeline: "llm_review",
         title: `LLM Review: ${ctx.blockDef.name}/${gate.name}`,
+        system: systemPrompt,
         description: reviewPrompt,
         context: {
           gate_type: "llm_review",
@@ -1082,7 +1248,19 @@ async function evaluateGatesWithLLM(
           name: gate.name,
           passed: false,
           reason: `${gate.error} (review dispatch failed: ${review.error ?? "unknown"})`,
-          audit: { gate_type: "llm_review", status: "failed", failure: "dispatch_failed", provider: providerName, model },
+          audit: {
+            gate_type: "llm_review",
+            status: "failed",
+            failure: "dispatch_failed",
+            provider: providerName,
+            model,
+            criteria_count: criteria.length,
+            pass_threshold: passThreshold,
+            review_prompt: reviewPrompt,
+            raw_response: review.output ?? "",
+            tokens_used: review.tokensUsed ?? 0,
+            duration_ms: Date.now() - reviewStart,
+          },
         });
         continue;
       }
@@ -1122,8 +1300,13 @@ async function evaluateGatesWithLLM(
           score,
           passed_count: passedCount,
           criteria_count: parsed.criteria.length,
-          criteria: parsed.criteria,
+          overall_passed: ok,
+          verdicts: parsed.criteria,
           summary: parsed.summary,
+          review_prompt: reviewPrompt,
+          raw_response: review.output ?? "",
+          tokens_used: review.tokensUsed ?? 0,
+          duration_ms: Date.now() - reviewStart,
         },
       });
     } catch (err) {
@@ -1145,29 +1328,35 @@ async function evaluateGatesWithLLM(
   return results;
 }
 
-function parseReviewJson(raw: string): { ok: true; criteria: Array<{ criterion: string; passed: boolean; reason: string }>; summary?: string } | { ok: false } {
+function parseReviewJson(raw: string): { ok: true; criteria: Array<{ criterion: string; passed: boolean; reasoning: string }>; summary?: string } | { ok: false } {
   const candidates: string[] = [raw];
   const code = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (code?.[1]) candidates.push(code[1]);
 
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(candidate) as Record<string, unknown>;
-      if (!Array.isArray(parsed.criteria)) continue;
-      const criteria = parsed.criteria
+      const parsedAny = JSON.parse(candidate) as unknown;
+      const parsed = parsedAny as Record<string, unknown>;
+
+      const arr = Array.isArray(parsedAny)
+        ? parsedAny
+        : (Array.isArray(parsed?.criteria) ? parsed.criteria : null);
+      if (!arr) continue;
+
+      const criteria = arr
         .map((c) => c as Record<string, unknown>)
         .filter((c) => typeof c.criterion === "string" && typeof c.passed === "boolean")
         .map((c) => ({
           criterion: String(c.criterion),
           passed: Boolean(c.passed),
-          reason: typeof c.reason === "string" ? c.reason : "",
+          reasoning: typeof c.reasoning === "string"
+            ? c.reasoning
+            : (typeof c.reason === "string" ? c.reason : ""),
         }));
       if (criteria.length === 0) continue;
-      return {
-        ok: true,
-        criteria,
-        summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
-      };
+
+      const summary = !Array.isArray(parsedAny) && typeof parsed.summary === "string" ? parsed.summary : undefined;
+      return { ok: true, criteria, summary };
     } catch {
       // try next candidate
     }

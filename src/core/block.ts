@@ -28,6 +28,13 @@ export interface GateComposition {
   post?: "all" | "any";
 }
 
+export type BlockMode = "ai" | "deterministic" | "approval";
+
+export interface DeterministicSpec {
+  handler: string;
+  config?: Record<string, unknown>;
+}
+
 export interface BlockDef {
   /** Unique block ID within the DAG (e.g., "build", "review", "deploy") */
   id: string;
@@ -41,8 +48,14 @@ export interface BlockDef {
   /** What this block produces — keys are port names, values are type descriptors */
   outputs: Record<string, PortDef>;
 
+  /** Execution mode */
+  mode?: BlockMode;
+
   /** Agent routing: which agent handles this block */
   agent: AgentRef;
+
+  /** Deterministic handler config (required when mode=deterministic) */
+  deterministic?: DeterministicSpec;
 
   /** Pre-execution gates — all must pass before block runs */
   pre_gates: BlockGate[];
@@ -122,7 +135,7 @@ export type BlockGateCheck =
   | { type: "json_schema"; port: string; schema: Record<string, unknown> }
   | { type: "http"; url: string; method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; expect_status?: number; timeout_ms?: number }
   | { type: "semantic_review"; port: string; keywords: string[]; min_matches?: number }
-  | { type: "llm_review"; port: string; criteria: string[]; provider?: string; model?: string; pass_threshold?: number; timeout_ms?: number }
+  | { type: "llm_review"; port: string; criteria: string[]; provider?: string; model?: string; pass_threshold?: number; timeout_ms?: number; system_prompt?: string }
   | { type: "diff"; left: string; right: string; mode?: "equal" | "not_equal" }
   | { type: "cost"; max: number; port?: string }
   | { type: "latency"; max_ms: number; port?: string }
@@ -154,6 +167,8 @@ export interface GateFailRule {
   max_bounces: number;
   /** Message shown in logs/events */
   reason?: string;
+  /** Optional context payload mapping when bouncing (e.g. gate_verdicts) */
+  feedback_from?: "gate_verdicts";
 }
 
 export interface ApprovalPolicy {
@@ -699,12 +714,17 @@ function parseBlockDef(raw: Record<string, unknown>): BlockDef {
     }
   }
 
+  const mode = parseBlockMode(raw.mode, id);
+  const deterministic = parseDeterministicSpec(raw.deterministic, id, mode);
+
   return {
     id,
     name: (raw.name as string) ?? id,
+    mode,
     inputs,
     outputs,
     agent: parseAgentRef(raw.agent as Record<string, unknown> | undefined),
+    deterministic,
     pre_gates: parseBlockGates(raw.pre_gates),
     post_gates: parseBlockGates(raw.post_gates),
     on_gate_fail: parseGateFailRules(raw.on_gate_fail),
@@ -716,6 +736,30 @@ function parseBlockDef(raw: Record<string, unknown>): BlockDef {
     contract_repair_attempts: Number(raw.contract_repair_attempts ?? 1),
     metadata: raw.metadata as Record<string, unknown> | undefined,
   };
+}
+
+function parseBlockMode(raw: unknown, blockId: string): BlockMode {
+  const mode = String(raw ?? "ai").trim();
+  if (mode !== "ai" && mode !== "deterministic" && mode !== "approval") {
+    throw new Error(`Invalid mode for block '${blockId}': ${mode}. Allowed: ai|deterministic|approval`);
+  }
+  return mode as BlockMode;
+}
+
+function parseDeterministicSpec(raw: unknown, blockId: string, mode: BlockMode): DeterministicSpec | undefined {
+  if (mode !== "deterministic") return undefined;
+  if (!raw || typeof raw !== "object") {
+    throw new Error(`Block '${blockId}' mode=deterministic requires 'deterministic' object with handler`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const handler = String(obj.handler ?? "").trim();
+  if (!handler) {
+    throw new Error(`Block '${blockId}' mode=deterministic requires deterministic.handler`);
+  }
+  const config = obj.config && typeof obj.config === "object"
+    ? (obj.config as Record<string, unknown>)
+    : undefined;
+  return { handler, config };
 }
 
 function parsePortDef(raw: unknown, path: string): PortDef {
@@ -894,14 +938,23 @@ function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
       if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
         throw new Error(`Invalid ${path}: llm_review timeout_ms must be > 0`);
       }
+      const provider = typeof obj.provider === "string" && obj.provider.trim() ? obj.provider : undefined;
+      const model = typeof obj.model === "string" && obj.model.trim() ? obj.model : undefined;
+      if (!provider) {
+        throw new Error(`Invalid ${path}: llm_review requires non-empty 'provider'`);
+      }
+      if (!model) {
+        throw new Error(`Invalid ${path}: llm_review requires non-empty 'model'`);
+      }
       return {
         type,
         port: obj.port,
         criteria,
-        provider: typeof obj.provider === "string" && obj.provider.trim() ? obj.provider : undefined,
-        model: typeof obj.model === "string" && obj.model.trim() ? obj.model : undefined,
+        provider,
+        model,
         pass_threshold: passThreshold,
         timeout_ms: timeoutMs,
+        system_prompt: typeof obj.system_prompt === "string" && obj.system_prompt.trim() ? obj.system_prompt : undefined,
       };
     }
     case "diff": {
@@ -968,6 +1021,7 @@ function parseGateFailRules(raw: unknown): GateFailRule[] {
       reset_blocks: Array.isArray(r.reset_blocks) ? (r.reset_blocks as string[]) : undefined,
       max_bounces: Number(r.max_bounces ?? 0),
       reason: r.reason as string | undefined,
+      feedback_from: r.feedback_from === "gate_verdicts" ? "gate_verdicts" : undefined,
     }))
     .filter((r) => r.when_gate && r.route_to && r.max_bounces > 0);
 }

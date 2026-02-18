@@ -1,0 +1,26 @@
+name: deterministic-write-test
+blocks:
+  - id: save
+    mode: deterministic
+    name: Save File
+    inputs:
+      input: { type: string, description: "Markdown content to write (UI top input box)" }
+    outputs:
+      file_path: { type: string }
+      file_name: { type: string }
+      bytes_written: { type: number }
+      save_summary: { type: string }
+    deterministic:
+      handler: builtin:write-file
+      config:
+        content_from: input
+        default_path_template: "./output/content-{timestamp}.md"
+        mkdir: true
+        overwrite: false
+    pre_gates: []
+    post_gates:
+      - name: has-output-path
+        check: { type: port_matches, port: file_path, pattern: "content-[0-9]{8}-[0-9]{6}\\.md$" }
+        error: "must write timestamped markdown file"
+    retry: { max_attempts: 0, backoff: none, delay_ms: 0 }
+edges: []

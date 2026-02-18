@@ -109,6 +109,8 @@ export interface DispatchRequest {
   pipeline: string;
   title: string;
   description: string;
+  /** Optional system message/instruction for chat-style providers */
+  system?: string;
   context: Record<string, unknown>;
   acceptanceCriteria: string[];
   previousNotes?: string;

@@ -23,14 +23,15 @@ export function createOpenAICompatibleProvider(opts: OpenAICompatibleProviderOpt
       const apiKey = opts.apiKeyEnv ? process.env[opts.apiKeyEnv] : process.env.OPENAI_API_KEY;
 
       try {
+        const messages: Array<{ role: string; content: string }> = [];
+        if (request.system && request.system.trim()) {
+          messages.push({ role: "system", content: request.system });
+        }
+        messages.push({ role: "user", content: buildPrompt(request) });
+
         const basePayload: Record<string, unknown> = {
           model: request.agent.model || opts.model || "gpt-4o-mini",
-          messages: [
-            {
-              role: "user",
-              content: buildPrompt(request),
-            },
-          ],
+          messages,
         };
 
         const payload = {
