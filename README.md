@@ -26,6 +26,11 @@ OpenSkelo is different. It's not another agent framework — it's the **skeleton
 - 👁️ **Observable** — built-in dashboard, audit logs, gate logs
 - 🔌 **Pluggable** — works with Ollama, OpenAI, Anthropic, OpenClaw, or any HTTP endpoint
 
+## Runtime Status (Important)
+
+- ✅ **Canonical runtime:** `/api/dag/*` (DAG engine, approvals, replay, durability)
+- ⚠️ **Legacy surface (`task` CLI + `/api/tasks*`):** deprecated and scheduled for removal in the next release
+
 ## Quick Start
 
 ```bash
@@ -111,7 +116,9 @@ gates:
     error: "Provide evidence of completion"
 ```
 
-### 2. Create and manage tasks
+### 2. Legacy task flow (deprecated)
+
+> This flow is still available for one release window, but new builds should use DAG run APIs (`/api/dag/*`).
 
 ```bash
 # Create a task
@@ -227,6 +234,8 @@ skelo init my-project --template custom    # Blank starting point
 
 ## CLI Reference
 
+> `skelo task *` commands are legacy-deprecated and will be removed in the next release.
+
 ```bash
 skelo init [name]              # Create new project
 skelo start                    # Start pipeline server + dashboard
@@ -243,7 +252,10 @@ skelo validate                 # Validate skelo.yaml
 
 ## API
 
-When running, OpenSkelo exposes a REST API:
+When running, OpenSkelo exposes a REST API.
+
+- Canonical runtime: `/api/dag/*`
+- Legacy (deprecated): `/api/tasks*`
 
 ```
 GET    /api/health          — Pipeline health
