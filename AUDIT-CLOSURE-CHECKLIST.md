@@ -70,7 +70,8 @@ Legend:
 - [x] Legacy `/api/tasks*` deprecation headers
   - Proof: `376cd2e`
 - [ ] Rate limiting
-- [ ] Request size limits
+- [x] Request size limits on `/api/dag/*` (configurable `OPENSKELO_MAX_REQUEST_BYTES`)
+  - Proof: `pending-commit`
 - [ ] Optional auth model
 - [ ] SSE client lifecycle hardening (IDs/dedupe)
 - [ ] Error contract/pagination consistency polish

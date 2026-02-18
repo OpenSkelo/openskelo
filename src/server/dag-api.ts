@@ -249,7 +249,19 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
   }
 
-  app.get("/api/dag/safety", (c) => c.json({ safety }));
+  const maxRequestBytes = Number(process.env.OPENSKELO_MAX_REQUEST_BYTES ?? String(512 * 1024));
+  app.use("/api/dag/*", async (c, next) => {
+    const lenHeader = c.req.header("content-length");
+    if (lenHeader) {
+      const n = Number(lenHeader);
+      if (Number.isFinite(n) && n > maxRequestBytes) {
+        return c.json({ error: `Request too large. Max ${maxRequestBytes} bytes` }, 413);
+      }
+    }
+    await next();
+  });
+
+  app.get("/api/dag/safety", (c) => c.json({ safety, limits: { maxRequestBytes } }));
 
   // Startup orphan sweep (durable runs marked running with no active execution)
   try {

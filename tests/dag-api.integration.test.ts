@@ -113,6 +113,28 @@ describe("DAG API integration", () => {
     expect(body.error).toContain("Unknown provider");
   });
 
+  it("enforces max request size on dag endpoints", async () => {
+    const prev = process.env.OPENSKELO_MAX_REQUEST_BYTES;
+    process.env.OPENSKELO_MAX_REQUEST_BYTES = "100";
+    const ctx = setupDagTestApp();
+    cleanups.push(() => {
+      if (prev === undefined) delete process.env.OPENSKELO_MAX_REQUEST_BYTES;
+      else process.env.OPENSKELO_MAX_REQUEST_BYTES = prev;
+      ctx.cleanup();
+    });
+
+    const big = "x".repeat(2000);
+    const res = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(big.length) },
+      body: big,
+    });
+
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("Request too large");
+  });
+
   it("routes provider override by name/type to the correct adapter endpoints", async () => {
     const examplesDir = mkdtempSync(join(tmpdir(), "openskelo-dag-examples-"));
     mkdirSync(examplesDir, { recursive: true });
