@@ -132,7 +132,7 @@ Exit criteria:
   - [ ] gate catches issue
   - [ ] auto-correction
   - [ ] final pass
-- [ ] Produce launch post draft (HN/X/GitHub)
+- [x] Produce launch post draft (HN/X/GitHub)
 
 Exit criteria:
 - One-command reproducible demo
