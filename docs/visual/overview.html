@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>OpenSkelo Visual Overview</title>
+  <style>
+    :root{--bg:#0b1020;--card:#131b35;--border:#33406b;--text:#e8eeff;--muted:#aab8e6;--ok:#39d98a;--info:#7aa2ff;--warn:#ffd166}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui;background:radial-gradient(1200px 700px at 20% -20%, #1f2a56 0%, var(--bg) 60%);color:var(--text)}
+    .wrap{max-width:1200px;margin:16px auto;padding:0 16px 34px}
+    h1{margin:0 0 6px;font-size:26px}.sub{color:var(--muted);margin-bottom:12px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:980px){.grid{grid-template-columns:1fr}}
+    .card{border:1px solid var(--border);border-radius:12px;background:var(--card);padding:12px}
+    .card h3{margin:0 0 8px}
+    .chip{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid var(--border);font-size:11px;margin-right:6px}
+    .ok{background:rgba(57,217,138,.14);border-color:rgba(57,217,138,.45)}
+    .info{background:rgba(122,162,255,.14);border-color:rgba(122,162,255,.45)}
+    .warn{background:rgba(255,209,102,.14);border-color:rgba(255,209,102,.45)}
+    .pipeline{margin-top:8px;padding:10px;border:1px dashed #4762a8;border-radius:10px;background:#0f1730}
+    .steps{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px}
+    .node{padding:6px 9px;border:1px solid #3f568f;border-radius:8px;background:#1a274f}
+    .arrow{opacity:.75}
+    ul{margin:6px 0 0 18px;color:#c7d5ff;font-size:13px}
+    .mono{font-family:ui-monospace,Menlo,monospace}
+  </style>
+</head>
+<body>
+<div class="wrap" id="wrapRoot">
+  <div id="localHeader">
+    <h1>OpenSkelo — Overview</h1>
+    <div class="sub">Runtime-first DAG orchestration. UI is optional; execution runs headless in background.</div>
+  </div>
+
+  <div class="card">
+    <h3>How to think about OpenSkelo</h3>
+    <span class="chip ok">Headless-first</span>
+    <span class="chip info">Deterministic block contracts</span>
+    <span class="chip warn">Human approvals + iteration loops</span>
+    <ul>
+      <li>Core runtime executes blocks using typed inputs/outputs and gates.</li>
+      <li>Provider adapters handle the actual AI call boundary.</li>
+      <li>Durable store keeps run snapshots, events, and approvals for replay/debug.</li>
+      <li>Web/terminal UIs are observer/control surfaces, not execution engines.</li>
+    </ul>
+  </div>
+
+  <div class="grid" style="margin-top:10px">
+    <div class="card">
+      <h3>Simple pipeline (starter)</h3>
+      <div class="pipeline">
+        <div class="steps">
+          <span class="node">Input</span><span class="arrow">→</span>
+          <span class="node">Generate</span><span class="arrow">→</span>
+          <span class="node">Validate</span><span class="arrow">→</span>
+          <span class="node">Done</span>
+        </div>
+      </div>
+      <ul>
+        <li>Use case: one-shot artifact generation.</li>
+        <li>2–4 blocks, minimal gates, no approval pauses.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>Standard pipeline (production baseline)</h3>
+      <div class="pipeline">
+        <div class="steps">
+          <span class="node">Spec</span><span class="arrow">→</span>
+          <span class="node">Build</span><span class="arrow">→</span>
+          <span class="node">QA</span><span class="arrow">→</span>
+          <span class="node">Polish</span><span class="arrow">→</span>
+          <span class="node">Release</span>
+        </div>
+      </div>
+      <ul>
+        <li>Use case: iterative deliverable with quality checks.</li>
+        <li>Adds contract enforcement, post-gates, and optional release approval.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>Complex pipeline (multi-branch)</h3>
+      <div class="pipeline">
+        <div class="steps">
+          <span class="node">Plan</span><span class="arrow">→</span>
+          <span class="node">Build A</span>
+          <span class="node">Build B</span><span class="arrow">→</span>
+          <span class="node">Merge</span><span class="arrow">→</span>
+          <span class="node">Review Gate</span>
+        </div>
+      </div>
+      <ul>
+        <li>Use case: parallel workstreams + merge validation.</li>
+        <li>Needs explicit handoff contracts and stronger gate strategy.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>Advanced pipeline (human-in-loop continuous iteration)</h3>
+      <div class="pipeline">
+        <div class="steps">
+          <span class="node">Create</span><span class="arrow">→</span>
+          <span class="node">Review</span><span class="arrow">→</span>
+          <span class="node">Approve/Reject</span><span class="arrow">↺</span>
+          <span class="node">Next Cycle</span>
+        </div>
+      </div>
+      <ul>
+        <li>Use case: operator-guided refinement until approval.</li>
+        <li>Uses shared memory (<span class="mono">__shared_memory</span>) and restart modes (<span class="mono">refine/from_scratch</span>).</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.get('embed') === '1') {
+    const h = document.getElementById('localHeader');
+    if (h) h.style.display = 'none';
+    const w = document.getElementById('wrapRoot');
+    if (w) { w.style.margin = '0 auto'; w.style.paddingTop = '0'; }
+    document.body.style.background = 'transparent';
+  }
+</script>
+</body>
+</html>

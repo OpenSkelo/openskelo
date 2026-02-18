@@ -82,6 +82,7 @@
   <div class="sub">Single reusable block contract. This is the core blueprint you can instantiate repeatedly across any workflow stage.</div>
   <div class="top-tabs">
     <button class="top-tab active" id="tabVisualizer">🧩 Block Visualizer</button>
+    <button class="top-tab" id="tabOverview">🧭 Overview</button>
     <button class="top-tab" id="tabExplainer">📘 Explainer</button>
     <button class="top-tab" id="tabArchitecture">🏗️ Architecture</button>
     <button class="top-tab" id="tabRoadmap">🗺️ Roadmap</button>
@@ -236,6 +237,9 @@
       </div>
     </div>
   </div>
+  <div id="overviewPanel" style="display:none;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0f1730;margin-top:2px">
+    <iframe id="overviewFrame" src="./overview.html?embed=1" title="Visual Overview" style="display:block;width:100%;height:calc(100vh - 180px);border:0;background:#0f1730"></iframe>
+  </div>
   <div id="explainerPanel">
     <iframe id="explainerFrame" src="./generic-block-explainer.html?embed=1" title="Generic Block Explainer"></iframe>
   </div>
@@ -309,19 +313,23 @@
   const roadmapPanel = document.getElementById('roadmapPanel');
   function setTopTab(which){
     const isViz = which==='visualizer';
+    const isOverview = which==='overview';
     const isExplainer = which==='explainer';
     const isArch = which==='architecture';
     const isRoadmap = which==='roadmap';
     if (visualizerPanel) visualizerPanel.style.display = isViz ? 'grid' : 'none';
+    if (overviewPanel) overviewPanel.style.display = isOverview ? 'block' : 'none';
     if (explainerPanel) explainerPanel.style.display = isExplainer ? 'block' : 'none';
     if (architecturePanel) architecturePanel.style.display = isArch ? 'block' : 'none';
     if (roadmapPanel) roadmapPanel.style.display = isRoadmap ? 'block' : 'none';
     if (tabVisualizer) tabVisualizer.classList.toggle('active', isViz);
+    if (tabOverview) tabOverview.classList.toggle('active', isOverview);
     if (tabExplainer) tabExplainer.classList.toggle('active', isExplainer);
     if (tabArchitecture) tabArchitecture.classList.toggle('active', isArch);
     if (tabRoadmap) tabRoadmap.classList.toggle('active', isRoadmap);
   }
   if (tabVisualizer) tabVisualizer.addEventListener('click', ()=>setTopTab('visualizer'));
+  if (tabOverview) tabOverview.addEventListener('click', ()=>setTopTab('overview'));
   if (tabExplainer) tabExplainer.addEventListener('click', ()=>setTopTab('explainer'));
   if (tabArchitecture) tabArchitecture.addEventListener('click', ()=>setTopTab('architecture'));
   if (tabRoadmap) tabRoadmap.addEventListener('click', ()=>setTopTab('roadmap'));
