@@ -31,7 +31,8 @@ Legend:
   - Proof: `19c6360`, `a534aa7`, `b7be7cc`
 - [x] Remove hardcoded Telegram approval target default
   - Proof: `0bf9d44`
-- [ ] Regex ReDoS hardening strategy (RE2/timeout guard)
+- [x] Regex ReDoS hardening strategy (parse-time unsafe pattern guard)
+  - Proof: `pending-commit`
 
 ## 4) Gate System
 - [x] Core gate system preserved and strengthened

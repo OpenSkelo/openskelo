@@ -745,6 +745,9 @@ function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
       } catch {
         throw new Error(`Invalid ${path}: pattern is not a valid regex`);
       }
+      if (isPotentiallyUnsafeRegex(obj.pattern)) {
+        throw new Error(`Invalid ${path}: pattern rejected by ReDoS safety guard`);
+      }
       return { type, port: obj.port, pattern: obj.pattern };
     }
     case "port_min_length": {
@@ -968,6 +971,15 @@ function applyTransform(value: unknown, transform: string): unknown {
 
 function detectCycles(blocks: BlockDef[], edges: Edge[]): void {
   topoSort(blocks, edges); // throws on cycle
+}
+
+function isPotentiallyUnsafeRegex(pattern: string): boolean {
+  // Heuristic ReDoS guard:
+  // 1) Nested quantifiers like (a+)+ or (.+)*
+  // 2) Excessive length
+  if (pattern.length > 256) return true;
+  const nestedQuantifier = /\((?:[^()\\]|\\.)*[+*](?:[^()\\]|\\.)*\)[+*{]/;
+  return nestedQuantifier.test(pattern);
 }
 
 function isShellGateEnabled(): boolean {

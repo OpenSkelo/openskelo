@@ -111,6 +111,22 @@ describe("Block Engine — parseDAG", () => {
     ).toThrow(/valid regex/i);
   });
 
+  it("rejects potentially unsafe regex patterns at parse time", () => {
+    expect(() =>
+      engine.parseDAG({
+        name: "unsafe-gate-regex",
+        blocks: [{
+          id: "a",
+          inputs: { x: "string" },
+          outputs: { y: "string" },
+          pre_gates: [{ name: "g1", check: { type: "port_matches", port: "x", pattern: "(a+)+$" }, error: "nope" }],
+          agent: {},
+        }],
+        edges: [],
+      })
+    ).toThrow(/ReDoS safety guard/i);
+  });
+
   it("rejects invalid port type at parse time", () => {
     expect(() =>
       engine.parseDAG({
