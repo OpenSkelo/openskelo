@@ -690,20 +690,20 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status } };
     }
 
-    // Reject path: fail current run; optionally spawn next cycle (phase 2)
-    entry.run.status = "failed";
-    persistRunSnapshot(entry);
+    // Reject path: optionally spawn next cycle (phase 2)
+    const shouldIterate = body.iterate !== false;
 
     broadcast(entry.run.id, {
       type: "approval:decided",
       run_id: entry.run.id,
       block_id: blockId,
-      data: { decision, notes, feedback, restart_mode: restartMode },
+      data: { decision, notes, feedback, restart_mode: restartMode, iterate: shouldIterate },
       timestamp: new Date().toISOString(),
     });
 
-    const shouldIterate = body.iterate !== false;
     if (!shouldIterate) {
+      entry.run.status = "failed";
+      persistRunSnapshot(entry);
       return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status } };
     }
 
@@ -718,6 +718,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     nextContext.__iteration_root_run_id = String(nextContext.__iteration_root_run_id ?? entry.run.id);
 
     if (cycle > maxCycles) {
+      entry.run.status = "failed";
+      persistRunSnapshot(entry);
       return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status, iteration_stopped: "max_cycles_reached" } };
     }
 
@@ -730,12 +732,23 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     const runOpts = (nextContext.__run_options as Record<string, unknown> | undefined) ?? {};
     const started = await startDagExecution(entry.dag, nextContext, runOpts);
     if ((started as { error?: string }).error) {
+      entry.run.status = "failed";
+      persistRunSnapshot(entry);
       return { status: 200 as const, payload: { ok: true, decision, feedback, restart_mode: restartMode, run_status: entry.run.status, iteration_error: (started as { error: string }).error } };
     }
 
     const childRunId = (started as { run_id: string }).run_id;
+    entry.run.status = "iterated";
     entry.run.context.__latest_iterated_run_id = childRunId;
     persistRunSnapshot(entry);
+
+    broadcast(entry.run.id, {
+      type: "run:iterated",
+      run_id: entry.run.id,
+      block_id: blockId,
+      data: { iterated_run_id: childRunId, restart_mode: restartMode, feedback },
+      timestamp: new Date().toISOString(),
+    });
 
     return {
       status: 200 as const,

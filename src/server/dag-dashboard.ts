@@ -548,6 +548,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           <div><span class="label">Status:</span> <span id="runStatus">—</span></div>
           <div><span class="label">Elapsed:</span> <span id="runElapsed">—</span></div>
           <div><span class="label">Cycle:</span> <span id="runCycle">1/—</span></div>
+          <div><span class="label">Run chain:</span> <span id="runChain">—</span></div>
           <div style="margin-top:4px"><label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:4px"><input type="checkbox" id="followLatestIterated" checked /> follow latest iterated run</label></div>
         </div>
         <div id="iterationHistory" style="margin-top:8px;font-size:11px;color:var(--text-dim);max-height:120px;overflow:auto;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
@@ -1289,6 +1290,17 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       const cycleEl = document.getElementById('runCycle');
       if (cycleEl) cycleEl.textContent = cycle + '/' + max;
 
+      const chainEl = document.getElementById('runChain');
+      if (chainEl) {
+        const root = run?.context?.__iteration_root_run_id || run?.id || '—';
+        const parent = run?.context?.__iteration_parent_run_id;
+        const latest = run?.context?.__latest_iterated_run_id;
+        const parts = [root === run?.id ? 'root:this' : ('root:' + String(root).slice(0, 10))];
+        if (parent) parts.push('parent:' + String(parent).slice(0, 10));
+        if (latest) parts.push('latest:' + String(latest).slice(0, 10));
+        chainEl.textContent = parts.join(' → ');
+      }
+
       const historyEl = document.getElementById('iterationHistory');
       if (!historyEl) return;
       const decisions = Array.isArray(shared.decisions) ? shared.decisions : [];
@@ -1334,7 +1346,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           applyViewFilter();
           updateIterationUI(run);
 
-          if (run.status === 'failed' || run.status === 'completed' || run.status === 'cancelled') {
+          if (run.status === 'failed' || run.status === 'completed' || run.status === 'cancelled' || run.status === 'iterated') {
             const follow = document.getElementById('followLatestIterated')?.checked === true;
             const latestIterated = run?.context?.__latest_iterated_run_id;
             if (follow && latestIterated && latestIterated !== currentRunId && !followSwitchInFlight) {

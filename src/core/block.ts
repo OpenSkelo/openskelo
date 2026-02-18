@@ -282,7 +282,7 @@ export interface DAGRun {
   dag_name: string;
 
   /** Overall status */
-  status: "pending" | "running" | "paused_approval" | "completed" | "failed" | "cancelled";
+  status: "pending" | "running" | "paused_approval" | "completed" | "failed" | "cancelled" | "iterated";
 
   /** All block instances in this run */
   blocks: Record<string, BlockInstance>;
