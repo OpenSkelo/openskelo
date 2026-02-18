@@ -8,14 +8,15 @@ import type { createRouter } from "../core/router.js";
 
 interface APIContext {
   config: SkeloConfig;
-  taskEngine: ReturnType<typeof createTaskEngine>;
-  gateEngine: ReturnType<typeof createGateEngine>;
-  router: ReturnType<typeof createRouter>;
+  taskEngine?: ReturnType<typeof createTaskEngine>;
+  gateEngine?: ReturnType<typeof createGateEngine>;
+  router?: ReturnType<typeof createRouter>;
 }
 
 export function createAPI(ctx: APIContext) {
   const app = new Hono();
   const { config, taskEngine, gateEngine } = ctx;
+  const hasLegacyTaskRuntime = Boolean(taskEngine && gateEngine);
 
   const markLegacyTaskApiDeprecation = (c: { header: (name: string, value: string) => void }) => {
     c.header("Deprecation", "true");
@@ -50,86 +51,88 @@ export function createAPI(ctx: APIContext) {
     });
   });
 
-  app.get("/api/tasks", (c) => {
-    markLegacyTaskApiDeprecation(c);
-    const status = c.req.query("status");
-    const pipeline = c.req.query("pipeline");
-    const tasks = taskEngine.list({ status, pipeline });
-    return c.json({ tasks });
-  });
+  if (hasLegacyTaskRuntime) {
+    app.get("/api/tasks", (c) => {
+      markLegacyTaskApiDeprecation(c);
+      const status = c.req.query("status");
+      const pipeline = c.req.query("pipeline");
+      const tasks = taskEngine!.list({ status, pipeline });
+      return c.json({ tasks });
+    });
 
-  app.get("/api/tasks/:id", (c) => {
-    markLegacyTaskApiDeprecation(c);
-    const task = taskEngine.getById(c.req.param("id"));
-    if (!task) return c.json({ error: "Not found" }, 404);
-    return c.json({ task });
-  });
+    app.get("/api/tasks/:id", (c) => {
+      markLegacyTaskApiDeprecation(c);
+      const task = taskEngine!.getById(c.req.param("id"));
+      if (!task) return c.json({ error: "Not found" }, 404);
+      return c.json({ task });
+    });
 
-  app.post("/api/tasks", async (c) => {
-    markLegacyTaskApiDeprecation(c);
-    const body = await c.req.json();
-    if (!body.pipeline) return c.json({ error: "pipeline is required" }, 400);
-    if (!body.title) return c.json({ error: "title is required" }, 400);
-
-    try {
-      const task = taskEngine.create({
-        pipeline: body.pipeline,
-        title: body.title,
-        description: body.description,
-        assigned: body.assigned,
-        priority: body.priority,
-        metadata: body.metadata,
-      });
-      return c.json({ task }, 201);
-    } catch (err) {
-      return c.json({ error: (err as Error).message }, 400);
-    }
-  });
-
-  app.patch("/api/tasks/:id", async (c) => {
-    markLegacyTaskApiDeprecation(c);
-    const id = c.req.param("id");
-    const body = await c.req.json();
-
-    const task = taskEngine.getById(id);
-    if (!task) return c.json({ error: "Not found" }, 404);
-
-    if (body.status && body.status !== task.status) {
-      const results = gateEngine.evaluate(
-        task,
-        task.status,
-        body.status,
-        { assigned: body.assigned, notes: body.notes },
-        body.role
-      );
-
-      const failed = gateEngine.hasFailed(results);
-      if (failed) {
-        return c.json({ error: failed.reason, gate: failed.name, results }, 400);
-      }
+    app.post("/api/tasks", async (c) => {
+      markLegacyTaskApiDeprecation(c);
+      const body = await c.req.json();
+      if (!body.pipeline) return c.json({ error: "pipeline is required" }, 400);
+      if (!body.title) return c.json({ error: "title is required" }, 400);
 
       try {
-        const updated = taskEngine.transition(
-          id,
-          body.status,
-          { assigned: body.assigned, notes: body.notes, metadata: body.metadata },
-          body.agent ?? "api",
-          results
-        );
-
-        return c.json({ task: updated, gates: results });
+        const task = taskEngine!.create({
+          pipeline: body.pipeline,
+          title: body.title,
+          description: body.description,
+          assigned: body.assigned,
+          priority: body.priority,
+          metadata: body.metadata,
+        });
+        return c.json({ task }, 201);
       } catch (err) {
         return c.json({ error: (err as Error).message }, 400);
       }
-    }
+    });
 
-    return c.json({ error: "No status change provided" }, 400);
-  });
+    app.patch("/api/tasks/:id", async (c) => {
+      markLegacyTaskApiDeprecation(c);
+      const id = c.req.param("id");
+      const body = await c.req.json();
 
-  app.get("/api/tasks/counts", (c) => {
-    markLegacyTaskApiDeprecation(c);
-    return c.json(taskEngine.counts());
-  });
+      const task = taskEngine!.getById(id);
+      if (!task) return c.json({ error: "Not found" }, 404);
+
+      if (body.status && body.status !== task.status) {
+        const results = gateEngine!.evaluate(
+          task,
+          task.status,
+          body.status,
+          { assigned: body.assigned, notes: body.notes },
+          body.role
+        );
+
+        const failed = gateEngine!.hasFailed(results);
+        if (failed) {
+          return c.json({ error: failed.reason, gate: failed.name, results }, 400);
+        }
+
+        try {
+          const updated = taskEngine!.transition(
+            id,
+            body.status,
+            { assigned: body.assigned, notes: body.notes, metadata: body.metadata },
+            body.agent ?? "api",
+            results
+          );
+
+          return c.json({ task: updated, gates: results });
+        } catch (err) {
+          return c.json({ error: (err as Error).message }, 400);
+        }
+      }
+
+      return c.json({ error: "No status change provided" }, 400);
+    });
+
+    app.get("/api/tasks/counts", (c) => {
+      markLegacyTaskApiDeprecation(c);
+      return c.json(taskEngine!.counts());
+    });
+  }
 
   app.get("/api/agents", (c) => {
     const agents = Object.entries(config.agents).map(([id, agent]) => ({ id, ...agent }));

@@ -1,9 +1,6 @@
 import chalk from "chalk";
 import { loadConfig } from "../core/config.js";
 import { createDB } from "../core/db.js";
-import { createTaskEngine } from "../core/task-engine.js";
-import { createGateEngine } from "../core/gate-engine.js";
-import { createRouter } from "../core/router.js";
 import { createAPI } from "../server/api.js";
 import { createDAGAPI } from "../server/dag-api.js";
 import { getDAGDashboardHTML } from "../server/dag-dashboard.js";
@@ -43,16 +40,12 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   const agentCount = Object.keys(config.agents).length;
   console.log(chalk.green("  ✓ ") + `${agentCount} agent${agentCount !== 1 ? "s" : ""} registered`);
 
-  // Initialize engines
-  const taskEngine = createTaskEngine(config.pipelines);
-  const gateEngine = createGateEngine(config.gates);
-  const router = createRouter(config.agents, config.pipelines);
   const pipelineCount = Object.keys(config.pipelines).length;
   const gateCount = config.gates.length;
   console.log(chalk.green("  ✓ ") + `${pipelineCount} pipeline${pipelineCount !== 1 ? "s" : ""}, ${gateCount} gate${gateCount !== 1 ? "s" : ""}`);
 
-  // Start server
-  const app = createAPI({ config, taskEngine, gateEngine, router });
+  // Start server (DAG-first base API)
+  const app = createAPI({ config });
 
   // Mount DAG API and dashboard
   const { resolve: pathResolve } = await import("node:path");
