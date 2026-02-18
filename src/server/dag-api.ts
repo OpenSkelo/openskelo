@@ -15,6 +15,7 @@ import { createMockProvider } from "../core/mock-provider.js";
 import { createOllamaProvider } from "../core/ollama-provider.js";
 import { createOpenAICompatibleProvider } from "../core/openai-compatible-provider.js";
 import { createDB, getDB } from "../core/db.js";
+import { SkeloError, toSkeloError } from "../core/errors.js";
 import type { DAGDef, DAGRun, BlockInstance } from "../core/block.js";
 import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
 import type { SkeloConfig, ProviderAdapter } from "../types.js";
@@ -61,10 +62,16 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   const jsonError = (
     c: { json: (body: unknown, status?: number) => Response },
     status: number,
-    error: string,
-    code: string,
+    error: string | Error,
+    code?: string,
     details?: Record<string, unknown>
-  ) => c.json({ error, code, ...(details ? { details } : {}) }, status);
+  ) => {
+    const se = error instanceof SkeloError
+      ? error
+      : (error instanceof Error ? toSkeloError(error, code ?? "INTERNAL_ERROR", status) : new SkeloError(String(error), code ?? "INTERNAL_ERROR", status));
+    const mergedDetails = { ...(se.details ?? {}), ...(details ?? {}) };
+    return c.json({ error: se.message, code: se.code, ...(Object.keys(mergedDetails).length ? { details: mergedDetails } : {}) }, se.status || status);
+  };
 
   const safety = {
     maxConcurrentRuns: Number(process.env.OPENSKELO_MAX_CONCURRENT_RUNS ?? "2"),
@@ -380,7 +387,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       const dag = engine.parseDAG(raw);
       return c.json({ dag, order: engine.executionOrder(dag) });
     } catch (err) {
-      return jsonError(c, 400, (err as Error).message, "BAD_REQUEST");
+      return jsonError(c, 400, toSkeloError(err, "BAD_REQUEST", 400));
     }
   });
 
@@ -715,7 +722,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         return jsonError(c, 400, "Provide 'example' filename or 'dag' definition", "INVALID_INPUT");
       }
     } catch (err) {
-      return jsonError(c, 400, (err as Error).message, "BAD_REQUEST");
+      return jsonError(c, 400, toSkeloError(err, "BAD_REQUEST", 400));
     }
 
     const started = await startDagExecution(dag, context, body as Record<string, unknown>);

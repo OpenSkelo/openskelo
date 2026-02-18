@@ -20,7 +20,8 @@ Legend:
 ## 2) Code Quality & Implementation
 - [x] Parse-time validation hardening for gates/ports
   - Proof: `37c4392`
-- [ ] Structured error hierarchy (`SkeloError` family)
+- [x] Structured error hierarchy baseline (`SkeloError` + normalization helper in API path)
+  - Proof: `pending-commit`
 - [x] Mutable-state contract clarity (explicit mutable vs immutable semantics)
   - Proof: `fb2833f`
 

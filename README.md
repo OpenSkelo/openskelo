@@ -283,6 +283,7 @@ OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 - Claim alignment: `docs/CLAIM-ALIGNMENT.md`
 - ID strategy review: `docs/ID-STRATEGY-REVIEW.md`
 - Mutable-state contract: `docs/MUTABILITY-CONTRACT.md`
+- Error model baseline: `src/core/errors.ts`
 
 ## Testing & Reports
 
