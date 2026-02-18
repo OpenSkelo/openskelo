@@ -213,6 +213,27 @@ describe("DAG executor output contract", () => {
     expect(diag.blocked[0]?.missing_required_inputs).toContain("game_spec");
   });
 
+  it("supports pre-gate composition mode any", async () => {
+    const dagAny: DAGDef = {
+      ...baseDag,
+      blocks: [
+        {
+          ...baseDag.blocks[0],
+          gate_composition: { pre: "any" },
+          pre_gates: [
+            { name: "has_prompt", check: { type: "port_not_empty", port: "prompt" }, error: "missing prompt" },
+            { name: "too_long", check: { type: "port_min_length", port: "prompt", min: 999 }, error: "too short" },
+          ],
+        },
+      ],
+    };
+
+    const provider = makeProvider(() => ({ success: true, output: JSON.stringify({ game_spec: { ok: true }, dev_plan: "ok" }) }));
+    const ex = createDAGExecutor({ providers: { local: provider }, agents });
+    const { run } = await ex.execute(dagAny, { prompt: "ship" });
+    expect(run.status).toBe("completed");
+  });
+
   it("continues from spec to build across repeated runs", async () => {
     for (let i = 0; i < 5; i++) {
       let call = 0;

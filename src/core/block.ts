@@ -23,6 +23,11 @@ import { parse as parseExpression } from "acorn";
 
 // ── Block Definition (from YAML config) ──
 
+export interface GateComposition {
+  pre?: "all" | "any";
+  post?: "all" | "any";
+}
+
 export interface BlockDef {
   /** Unique block ID within the DAG (e.g., "build", "review", "deploy") */
   id: string;
@@ -47,6 +52,9 @@ export interface BlockDef {
 
   /** Generic gate-failure routing/bounce rules */
   on_gate_fail?: GateFailRule[];
+
+  /** Gate composition behavior (default pre=all, post=all) */
+  gate_composition?: GateComposition;
 
   /** Optional human approval gate before this block executes */
   approval?: ApprovalPolicy;
@@ -646,6 +654,7 @@ export function createBlockEngine() {
       agent: blockDef.agent,
       pre_gates: blockDef.pre_gates,
       post_gates: blockDef.post_gates,
+      gate_composition: blockDef.gate_composition,
       retry: blockDef.retry,
       strict_output: blockDef.strict_output,
       contract_repair_attempts: blockDef.contract_repair_attempts,
@@ -698,6 +707,7 @@ function parseBlockDef(raw: Record<string, unknown>): BlockDef {
     pre_gates: parseBlockGates(raw.pre_gates),
     post_gates: parseBlockGates(raw.post_gates),
     on_gate_fail: parseGateFailRules(raw.on_gate_fail),
+    gate_composition: parseGateComposition(raw.gate_composition),
     approval: parseApprovalPolicy(raw.approval),
     retry: parseRetryPolicy(raw.retry),
     timeout_ms: raw.timeout_ms as number | undefined,
@@ -908,6 +918,15 @@ function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
     default:
       throw new Error(`Invalid ${path}: unknown gate check type '${type}'`);
   }
+}
+
+function parseGateComposition(raw: unknown): GateComposition | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const obj = raw as Record<string, unknown>;
+  const pre = obj.pre === "any" ? "any" : (obj.pre === "all" ? "all" : undefined);
+  const post = obj.post === "any" ? "any" : (obj.post === "all" ? "all" : undefined);
+  if (!pre && !post) return undefined;
+  return { ...(pre ? { pre } : {}), ...(post ? { post } : {}) };
 }
 
 function parseGateFailRules(raw: unknown): GateFailRule[] {

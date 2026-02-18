@@ -287,8 +287,12 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const preGates = engine.evaluatePreGates(blockDef, inputs);
     run.blocks[blockId].pre_gate_results = preGates;
 
+    const preMode = blockDef.gate_composition?.pre ?? "all";
+    const prePassed = preGates.length === 0
+      ? true
+      : (preMode === "any" ? preGates.some((g) => g.passed) : preGates.every((g) => g.passed));
     const failedPreGate = preGates.find(g => !g.passed);
-    if (failedPreGate) {
+    if (!prePassed) {
       // Generic gate-failure reroute/bounce policy
       const rule = (blockDef.on_gate_fail ?? []).find((r) => r.when_gate === failedPreGate.name);
       if (rule) {
@@ -607,8 +611,12 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const postGates = engine.evaluatePostGates(blockDef, inputs, outputs);
     run.blocks[blockId].post_gate_results = postGates;
 
+    const postMode = blockDef.gate_composition?.post ?? "all";
+    const postPassed = postGates.length === 0
+      ? true
+      : (postMode === "any" ? postGates.some((g) => g.passed) : postGates.every((g) => g.passed));
     const failedPostGate = postGates.find(g => !g.passed);
-    if (failedPostGate) {
+    if (!postPassed) {
       execution.error = `Post-gate failed: ${failedPostGate.name}`;
       engine.failBlock(run, blockId, `Post-gate failed: ${failedPostGate.name} — ${failedPostGate.reason}`, blockDef);
       opts.onBlockFail?.(run, blockId, failedPostGate.reason ?? "Post-gate failed", "POST_GATE_FAILED", { stage: "gate", message: failedPostGate.reason ?? "Post-gate failed" });
