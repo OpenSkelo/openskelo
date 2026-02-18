@@ -21,7 +21,7 @@ Legend:
 - [x] Parse-time validation hardening for gates/ports
   - Proof: `37c4392`
 - [x] Structured error hierarchy baseline (`SkeloError` + normalization helper in API path)
-  - Proof: `pending-commit`
+  - Proof: `40be947`
 - [x] Mutable-state contract clarity (explicit mutable vs immutable semantics)
   - Proof: `fb2833f`
 
