@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 
 const {
   GITHUB_TOKEN,
@@ -24,6 +24,17 @@ const [owner, repo] = GITHUB_REPOSITORY.split("/");
 const blocking = String(BLOCKING_MODE) === "true";
 const maxFiles = Number(MAX_FILES) || 120;
 const maxPatchChars = Number(MAX_PATCH_CHARS) || 140000;
+
+function loadReviewContext() {
+  try {
+    const raw = readFileSync("REVIEW_CONTEXT.md", "utf-8").trim();
+    if (!raw) return "";
+    // Keep prompt size stable
+    return raw.slice(0, 5000);
+  } catch {
+    return "";
+  }
+}
 
 async function gh(path, init = {}) {
   const res = await fetch(`https://api.github.com${path}`, {
@@ -90,7 +101,9 @@ function buildDiffPayload(files) {
 }
 
 async function anthropicReview(payload) {
+  const reviewContext = loadReviewContext();
   const system = [
+    reviewContext ? `Project context:\n${reviewContext}\n` : "",
     "You are a strict, practical senior engineer reviewing a GitHub PR.",
     "Focus on correctness, security, error handling, regression risk, and test adequacy.",
     "Avoid style nitpicks unless they materially affect maintainability.",
