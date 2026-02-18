@@ -286,6 +286,51 @@ describe("DAG API integration", () => {
     await ctx.app.request("/api/dag/runs/stop-all", { method: "POST" });
   }, 20000);
 
+  it("persists shell gate audit metadata in durable dag events", async () => {
+    const examplesDir = mkdtempSync(join(tmpdir(), "openskelo-dag-examples-"));
+    mkdirSync(examplesDir, { recursive: true });
+    writeFileSync(join(examplesDir, "shell-gate.yaml"), `name: shell-gate\nblocks:\n  - id: draft\n    name: Draft\n    inputs:\n      prompt: string\n    outputs:\n      out: string\n    pre_gates:\n      - name: shell-check\n        check:\n          type: shell\n          command: \"node -e \\\"process.exit(0)\\\"\"\n        error: shell failed\n    post_gates: []\n    agent:\n      specific: manager\n    retry:\n      max_attempts: 0\n      backoff: none\n      delay_ms: 0\nedges: []\n`);
+
+    delete process.env.OPENSKELO_ALLOW_SHELL_GATES;
+
+    const ctx = setupDagTestApp(examplesDir);
+    cleanups.push(() => {
+      delete process.env.OPENSKELO_ALLOW_SHELL_GATES;
+      ctx.cleanup();
+    });
+
+    const start = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        example: "shell-gate.yaml",
+        provider: "local",
+        devMode: true,
+        context: { prompt: "test" },
+      }),
+    });
+    expect(start.status).toBe(201);
+    const created = (await start.json()) as { run_id: string };
+
+    await waitForRunStatus(ctx.app as any, created.run_id, ["failed"], 8000);
+
+    const replayRes = await ctx.app.request(`/api/dag/runs/${created.run_id}/replay?since=0`);
+    expect(replayRes.status).toBe(200);
+    const replay = (await replayRes.json()) as { events: Array<Record<string, unknown>> };
+    const failEvent = replay.events.find((e) => e.type === "block:fail");
+    expect(failEvent).toBeTruthy();
+
+    const failData = (failEvent?.data as Record<string, unknown>) ?? {};
+    const instance = (failData.instance as Record<string, unknown>) ?? {};
+    const preGates = (instance.pre_gate_results as Array<Record<string, unknown>>) ?? [];
+    expect(preGates.length).toBeGreaterThan(0);
+    const shellGate = preGates[0] ?? {};
+    const audit = (shellGate.audit as Record<string, unknown>) ?? {};
+    expect(audit.gate_type).toBe("shell");
+    expect(audit.status).toBe("blocked");
+    expect(typeof audit.command).toBe("string");
+  });
+
   it("supports emergency stop-all", async () => {
     const ctx = setupDagTestApp();
     cleanups.push(ctx.cleanup);
