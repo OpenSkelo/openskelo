@@ -111,6 +111,8 @@ export type BlockGateCheck =
   | { type: "port_matches"; port: string; pattern: string }
   | { type: "port_min_length"; port: string; min: number }
   | { type: "port_type"; port: string; expected: string }
+  | { type: "cost"; max: number; port?: string }
+  | { type: "latency"; max_ms: number; port?: string }
   | { type: "shell"; command: string }
   | { type: "expr"; expression: string };
 
@@ -814,6 +816,22 @@ function parseBlockGateCheck(raw: unknown, path: string): BlockGateCheck {
       }
       return { type, port: obj.port, expected: obj.expected };
     }
+    case "cost": {
+      const max = Number(obj.max);
+      if (!Number.isFinite(max) || max < 0) {
+        throw new Error(`Invalid ${path}: cost requires numeric max >= 0`);
+      }
+      const port = typeof obj.port === "string" && obj.port.trim() ? obj.port : undefined;
+      return { type, max, port };
+    }
+    case "latency": {
+      const maxMs = Number(obj.max_ms);
+      if (!Number.isFinite(maxMs) || maxMs < 0) {
+        throw new Error(`Invalid ${path}: latency requires numeric max_ms >= 0`);
+      }
+      const port = typeof obj.port === "string" && obj.port.trim() ? obj.port : undefined;
+      return { type, max_ms: maxMs, port };
+    }
     case "shell": {
       if (typeof obj.command !== "string" || !obj.command.trim()) {
         throw new Error(`Invalid ${path}: shell requires non-empty 'command'`);
@@ -918,6 +936,30 @@ function evaluateBlockGate(
         return { name: gate.name, passed: false, reason: `Expected ${gate.check.expected}, got ${actual}` };
       }
       return { name: gate.name, passed: true };
+    }
+
+    case "cost": {
+      const port = gate.check.port ?? "__cost";
+      const value = Number(ports[port] ?? 0);
+      if (!Number.isFinite(value)) {
+        return { name: gate.name, passed: false, reason: `${gate.error} (invalid cost value)` };
+      }
+      if (value > gate.check.max) {
+        return { name: gate.name, passed: false, reason: `${gate.error} (cost ${value} > ${gate.check.max})` };
+      }
+      return { name: gate.name, passed: true, audit: { gate_type: "cost", value, max: gate.check.max, port } };
+    }
+
+    case "latency": {
+      const port = gate.check.port ?? "__latency_ms";
+      const value = Number(ports[port] ?? 0);
+      if (!Number.isFinite(value)) {
+        return { name: gate.name, passed: false, reason: `${gate.error} (invalid latency value)` };
+      }
+      if (value > gate.check.max_ms) {
+        return { name: gate.name, passed: false, reason: `${gate.error} (latency ${value}ms > ${gate.check.max_ms}ms)` };
+      }
+      return { name: gate.name, passed: true, audit: { gate_type: "latency", value_ms: value, max_ms: gate.check.max_ms, port } };
     }
 
     case "shell": {
