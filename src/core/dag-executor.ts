@@ -29,7 +29,7 @@ import type { ProviderAdapter, DispatchRequest, DispatchResult } from "../types.
 
 type FailInfo = {
   code?: string;
-  stage?: "dispatch" | "parse" | "contract" | "gate" | "handoff" | "timeout" | "orphan" | "unknown";
+  stage?: "dispatch" | "parse" | "contract" | "gate" | "handoff" | "timeout" | "budget" | "orphan" | "unknown";
   message?: string;
   repair?: { attempted?: boolean; succeeded?: boolean; error_message?: string };
   raw_output_preview?: string;
@@ -109,6 +109,9 @@ export function createDAGExecutor(opts: ExecutorOpts) {
   const engine = createBlockEngine();
   const maxParallel = opts.maxParallel ?? 4;
 
+  const isRunCancelled = (run: DAGRun): boolean =>
+    (run.status as string) === "cancelled" || !!opts.isCancelled?.() || !!opts.abortSignal?.aborted;
+
   /**
    * Execute a full DAG run. Returns when all blocks are done or failed.
    * If an existing run is provided, mutates it in place (for API state sharing).
@@ -123,16 +126,17 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     // Main execution loop
     const inFlight = new Map<string, Promise<void>>();
     while (true) {
-      if (run.status === "iterated" || run.status === "completed" || run.status === "failed") {
+      const runStatus = run.status as DAGRun["status"];
+      if (runStatus === "iterated" || runStatus === "completed" || runStatus === "failed") {
         break;
       }
-      if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) {
+      if (isRunCancelled(run)) {
         run.status = "cancelled";
         break;
       }
 
       // Pause loop when waiting for human approval
-      if (run.status === "paused_approval") {
+      if (runStatus === "paused_approval") {
         if (opts.waitForApproval) {
           await opts.waitForApproval(run);
         } else {
@@ -232,7 +236,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     const blockDef = dag.blocks.find(b => b.id === blockId);
     if (!blockDef) throw new Error(`Unknown block: ${blockId}`);
 
-    if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) return;
+    if (isRunCancelled(run)) return;
 
     const startTime = Date.now();
 
@@ -301,6 +305,11 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       : (preMode === "any" ? preGates.some((g) => g.passed) : preGates.every((g) => g.passed));
     const failedPreGate = preGates.find(g => !g.passed);
     if (!prePassed) {
+      if (!failedPreGate) {
+        engine.failBlock(run, blockId, "Pre-gate failed", blockDef);
+        opts.onBlockFail?.(run, blockId, "Pre-gate failed", "PRE_GATE_FAILED", { stage: "gate", message: "Pre-gate failed" });
+        return;
+      }
       // Generic gate-failure reroute/bounce policy
       const rule = (blockDef.on_gate_fail ?? []).find((r) => r.when_gate === failedPreGate.name);
       if (rule) {
@@ -534,7 +543,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       dispatchResult = await dispatchWithTimeout(provider, dispatchRequest, blockDef.timeout_ms);
     } catch (err) {
       const error = err instanceof Error ? err.message : "Unknown dispatch error";
-      if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) {
+      if (isRunCancelled(run)) {
         run.blocks[blockId].status = "skipped";
         return;
       }
@@ -559,7 +568,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     }
 
     if (!dispatchResult.success) {
-      if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) {
+      if (isRunCancelled(run)) {
         run.blocks[blockId].status = "skipped";
         return;
       }
@@ -756,6 +765,12 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       : (postMode === "any" ? postGates.some((g) => g.passed) : postGates.every((g) => g.passed));
     const failedPostGate = postGates.find(g => !g.passed);
     if (!postPassed) {
+      if (!failedPostGate) {
+        execution.error = "Post-gate failed";
+        engine.failBlock(run, blockId, "Post-gate failed", blockDef);
+        opts.onBlockFail?.(run, blockId, "Post-gate failed", "POST_GATE_FAILED", { stage: "gate", message: "Post-gate failed" });
+        return;
+      }
       const rule = (blockDef.on_gate_fail ?? []).find((r) => r.when_gate === failedPostGate.name);
       if (rule) {
         const key = `__bounce_${blockId}_${rule.when_gate}`;

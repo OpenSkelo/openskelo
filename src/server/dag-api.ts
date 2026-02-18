@@ -25,7 +25,7 @@ import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
 import type { SkeloConfig, ProviderAdapter } from "../types.js";
 
 interface DAGEvent {
-  type: "run:start" | "block:start" | "block:complete" | "block:fail" | "run:complete" | "run:fail" | "approval:requested" | "approval:decided";
+  type: "run:start" | "block:start" | "block:complete" | "block:fail" | "run:complete" | "run:fail" | "run:iterated" | "approval:requested" | "approval:decided";
   run_id: string;
   block_id?: string;
   data: Record<string, unknown>;

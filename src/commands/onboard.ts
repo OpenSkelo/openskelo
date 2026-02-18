@@ -66,11 +66,11 @@ async function runOnboard(opts: OnboardOpts): Promise<void> {
     try {
       oauthTokens = await loginOpenAIOAuth({
         onAuthUrl: async (url) => {
-          oauthSpin.update("Opening browser for OpenAI sign-in...");
+          oauthSpin.message("Opening browser for OpenAI sign-in...");
           await open(url);
           console.log(chalk.dim(`If browser did not open, visit:\n${url}`));
         },
-        onProgress: (message) => oauthSpin.update(message),
+        onProgress: (message) => oauthSpin.message(message),
         onPrompt: async (message) => {
           const input = await text({ message, placeholder: "http://127.0.0.1:1455/auth/callback?code=...&state=..." });
           if (isCancel(input)) throw new Error("OAuth login cancelled");

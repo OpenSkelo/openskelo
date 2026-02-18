@@ -42,7 +42,7 @@ export async function explainCommand(dagFile: string): Promise<void> {
     const totalPre = dag.blocks.reduce((n, b) => n + b.pre_gates.length, 0);
     const totalPost = dag.blocks.reduce((n, b) => n + b.post_gates.length, 0);
     const approvals = dag.blocks.filter((b) => b.approval?.required === true).map((b) => b.id);
-    const bounces = dag.blocks.flatMap((b) => b.on_gate_fail.map((r) => `${b.id}→${r.route_to}`));
+    const bounces = dag.blocks.flatMap((b) => (b.on_gate_fail ?? []).map((r) => `${b.id}→${r.route_to}`));
 
     console.log();
     console.log(`Gates: ${totalPre + totalPost} total (${totalPre} pre, ${totalPost} post)`);

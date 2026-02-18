@@ -61,11 +61,11 @@ export function authCommands(parent: Command): void {
       try {
         const tokens = await loginOpenAIOAuth({
           onAuthUrl: async (url) => {
-            spin.update("Opening browser for OpenAI sign-in...");
+            spin.message("Opening browser for OpenAI sign-in...");
             await open(url);
             console.log(chalk.dim(`If browser did not open, visit:\n${url}`));
           },
-          onProgress: (message) => spin.update(message),
+          onProgress: (message) => spin.message(message),
           onPrompt: async (message) => {
             const input = await text({ message, placeholder: "http://127.0.0.1:1455/auth/callback?code=...&state=..." });
             if (isCancel(input)) throw new Error("OAuth login cancelled");
