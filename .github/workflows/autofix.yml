@@ -3,13 +3,16 @@ name: autofix
 on:
   pull_request_review:
     types: [submitted]
+  workflow_run:
+    workflows: ["ai-review"]
+    types: [completed]
 
 permissions:
   contents: write
   pull-requests: write
 
 concurrency:
-  group: autofix-${{ github.event.pull_request.number }}
+  group: autofix-${{ github.event.pull_request.number || github.event.workflow_run.id }}
   cancel-in-progress: false
 
 jobs:
@@ -51,5 +54,71 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           REVIEW_BODY: ${{ github.event.review.body }}
+          MAX_AUTOFIX_ATTEMPTS: "3"
+        run: node scripts/autofix.mjs
+
+  autofix-on-ai-failure:
+    name: autofix-on-ai-failure
+    if: >-
+      ${{
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'failure' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.name == 'ai-review' &&
+        startsWith(github.event.workflow_run.head_branch, 'nora/')
+      }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve PR metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          pr_number=$(gh api "/repos/$REPO/commits/$HEAD_SHA/pulls" --jq '.[0].number // empty')
+          if [ -z "$pr_number" ]; then
+            echo "No PR found for sha $HEAD_SHA; skipping"
+            exit 0
+          fi
+          review_body=$(gh api "/repos/$REPO/pulls/$pr_number/reviews" --jq '[.[] | select((.author.login=="github-actions" or .author.login=="github-actions[bot]") and (.state=="CHANGES_REQUESTED" or .state=="COMMENTED"))] | last | .body // ""')
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "head_branch=$HEAD_BRANCH" >> "$GITHUB_OUTPUT"
+          {
+            echo "review_body<<EOF"
+            echo "$review_body"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PR head
+        if: ${{ steps.meta.outputs.pr_number != '' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.head_branch }}
+
+      - name: Setup Node 22
+        if: ${{ steps.meta.outputs.pr_number != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install deps
+        if: ${{ steps.meta.outputs.pr_number != '' }}
+        run: npm ci
+
+      - name: Run autofix
+        if: ${{ steps.meta.outputs.pr_number != '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-opus-4-6
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.meta.outputs.pr_number }}
+          PR_HEAD_REF: ${{ steps.meta.outputs.head_branch }}
+          REVIEW_BODY: ${{ steps.meta.outputs.review_body }}
           MAX_AUTOFIX_ATTEMPTS: "3"
         run: node scripts/autofix.mjs

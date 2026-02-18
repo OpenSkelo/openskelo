@@ -40,6 +40,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           BLOCKING_MODE: ${{ github.event.pull_request.base.ref != 'main' && !contains(join(github.event.pull_request.labels.*.name, ','), 'ai-review-advisory') }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          RUN_ACTOR: ${{ github.actor }}
           MAX_FILES: "120"
           MAX_PATCH_CHARS: "140000"
 

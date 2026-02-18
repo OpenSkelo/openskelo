@@ -9,6 +9,8 @@ const {
   PR_NUMBER,
   BASE_REF,
   BLOCKING_MODE = "true",
+  PR_AUTHOR = "",
+  RUN_ACTOR = "",
   ANTHROPIC_MODEL = "claude-sonnet-4-5",
   MAX_FILES = "120",
   MAX_PATCH_CHARS = "140000",
@@ -226,8 +228,9 @@ function fail(msg) {
 
     const payload = buildDiffPayload(files);
     const result = await anthropicReview(payload);
-    // In advisory mode, downgrade REQUEST_CHANGES to COMMENT so it doesn't block the PR
-    const effectiveVerdict = !blocking && result.verdict === "REQUEST_CHANGES" ? "COMMENT" : result.verdict;
+    // In advisory mode (or self-review constraints), downgrade REQUEST_CHANGES to COMMENT so it doesn't block via review state
+    const selfReviewConstraint = result.verdict === "REQUEST_CHANGES" && PR_AUTHOR && RUN_ACTOR && PR_AUTHOR === RUN_ACTOR;
+    const effectiveVerdict = (!blocking || selfReviewConstraint) && result.verdict === "REQUEST_CHANGES" ? "COMMENT" : result.verdict;
     const body = formatBody(result, false);
     await submitReview(effectiveVerdict, body);
 
