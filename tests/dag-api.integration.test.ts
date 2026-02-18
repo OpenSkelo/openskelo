@@ -438,6 +438,21 @@ describe("DAG API integration", () => {
     expect(String(sse.headers.get("x-sse-client-id") ?? "")).toBe("test-client");
   });
 
+  it("supports pagination on list runs endpoint", async () => {
+    const ctx = setupDagTestApp();
+    cleanups.push(ctx.cleanup);
+
+    const res = await ctx.app.request("/api/dag/runs?limit=1&offset=0");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { runs: unknown[]; pagination: { limit: number; offset: number; total: number; has_more: boolean } };
+    expect(Array.isArray(body.runs)).toBe(true);
+    expect(body.runs.length).toBeLessThanOrEqual(1);
+    expect(body.pagination.limit).toBe(1);
+    expect(body.pagination.offset).toBe(0);
+    expect(typeof body.pagination.total).toBe("number");
+    expect(typeof body.pagination.has_more).toBe("boolean");
+  });
+
   it("supports emergency stop-all", async () => {
     const ctx = setupDagTestApp();
     cleanups.push(ctx.cleanup);

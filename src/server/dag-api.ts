@@ -1289,8 +1289,13 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     });
   });
 
-  // List runs (active + durable)
+  // List runs (active + durable) with simple pagination
   app.get("/api/dag/runs", (c) => {
+    const limitRaw = Number(c.req.query("limit") ?? "200");
+    const offsetRaw = Number(c.req.query("offset") ?? "0");
+    const limit = Number.isFinite(limitRaw) ? Math.min(500, Math.max(1, Math.floor(limitRaw))) : 200;
+    const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.floor(offsetRaw)) : 0;
+
     const active = Array.from(activeRuns.entries()).map(([id, entry]) => ({
       id,
       dag_name: entry.dag.name,
@@ -1302,9 +1307,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       durable: false,
     }));
 
-    let durableRows = db.prepare("SELECT id, dag_name, status, run_json, created_at FROM dag_runs ORDER BY updated_at DESC LIMIT 200").all() as Array<Record<string, unknown>>;
+    let durableRows = db.prepare("SELECT id, dag_name, status, run_json, created_at FROM dag_runs ORDER BY updated_at DESC LIMIT 500").all() as Array<Record<string, unknown>>;
     for (const row of durableRows) reconcileOrphanedRun(String(row.id));
-    durableRows = db.prepare("SELECT id, dag_name, status, run_json, created_at FROM dag_runs ORDER BY updated_at DESC LIMIT 200").all() as Array<Record<string, unknown>>;
+    durableRows = db.prepare("SELECT id, dag_name, status, run_json, created_at FROM dag_runs ORDER BY updated_at DESC LIMIT 500").all() as Array<Record<string, unknown>>;
     const activeIds = new Set(active.map((r) => r.id));
     const durableOnly = durableRows
       .filter((r) => !activeIds.has(String(r.id)))
@@ -1323,7 +1328,18 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         };
       });
 
-    return c.json({ runs: [...active, ...durableOnly] });
+    const allRuns = [...active, ...durableOnly];
+    const page = allRuns.slice(offset, offset + limit);
+
+    return c.json({
+      runs: page,
+      pagination: {
+        limit,
+        offset,
+        total: allRuns.length,
+        has_more: offset + page.length < allRuns.length,
+      },
+    });
   });
 
   return app;

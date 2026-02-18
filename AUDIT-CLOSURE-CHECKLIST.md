@@ -79,7 +79,7 @@ Legend:
   - Proof: `31320cc`
 - [x] SSE client lifecycle hardening (client IDs + dedupe + cleanup)
   - Proof: `fe61393`
-- [ ] Error contract/pagination consistency polish
+- [~] Error contract/pagination consistency polish (pagination added on `/api/dag/runs`; error envelope unification still pending)
 
 ## 9) DX & CLI
 - [x] DAG-first CLI commands (`skelo run ...`)
