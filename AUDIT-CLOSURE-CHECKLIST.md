@@ -21,7 +21,8 @@ Legend:
 - [x] Parse-time validation hardening for gates/ports
   - Proof: `37c4392`
 - [ ] Structured error hierarchy (`SkeloError` family)
-- [ ] Mutable-state contract clarity (explicit mutable vs immutable semantics)
+- [x] Mutable-state contract clarity (explicit mutable vs immutable semantics)
+  - Proof: `pending-commit`
 
 ## 3) Security Audit
 - [x] Remove `new Function()` in expr/transform
