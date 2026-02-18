@@ -61,7 +61,8 @@ Legend:
 - [ ] Add richer stuck diagnostics
 - [x] Per-block timeout enforcement with strict timeout failure path coverage (`DISPATCH_TIMEOUT`)
   - Proof: `543d8e0`
-- [ ] Cost/budget enforcement
+- [x] Cost/budget enforcement baseline via token budgets (`OPENSKELO_MAX_TOKENS_PER_RUN` / `OPENSKELO_MAX_TOKENS_PER_BLOCK`)
+  - Proof: `pending-commit`
 
 ## 7) State Management & Durability
 - [~] Durable tables + replay endpoint implemented

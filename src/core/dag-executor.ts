@@ -77,6 +77,12 @@ export interface ExecutorOpts {
 
   /** Optional run cancellation predicate */
   isCancelled?: () => boolean;
+
+  /** Optional token budget caps (0/undefined = disabled). */
+  budget?: {
+    maxTokensPerRun?: number;
+    maxTokensPerBlock?: number;
+  };
 }
 
 export interface ExecutorResult {
@@ -542,6 +548,54 @@ export function createDAGExecutor(opts: ExecutorOpts) {
     }
     if (strictOutput) {
       (execution as unknown as Record<string, unknown>).contract_trace = contractTrace;
+    }
+
+    // 5.5 Enforce token budgets (if configured)
+    const blockTokens = Number(execution.tokens_in ?? 0) + Number(execution.tokens_out ?? 0);
+    const maxPerBlock = Number(opts.budget?.maxTokensPerBlock ?? 0);
+    if (Number.isFinite(maxPerBlock) && maxPerBlock > 0 && blockTokens > maxPerBlock) {
+      const err = `Token budget exceeded for block ${blockId}: ${blockTokens} > ${maxPerBlock}`;
+      execution.error = err;
+      engine.failBlock(run, blockId, err, blockDef);
+      opts.onBlockFail?.(run, blockId, err, "BUDGET_EXCEEDED", { stage: "budget", message: err });
+      trace.push({
+        block_id: blockId,
+        instance_id: run.blocks[blockId].instance_id,
+        status: "failed",
+        inputs,
+        outputs,
+        pre_gates: preGates,
+        post_gates: [],
+        execution,
+        duration_ms: durationMs,
+      });
+      return;
+    }
+
+    const maxPerRun = Number(opts.budget?.maxTokensPerRun ?? 0);
+    if (Number.isFinite(maxPerRun) && maxPerRun > 0) {
+      const currentRunTokens = Object.values(run.blocks).reduce((sum, b) => {
+        if (!b.execution) return sum;
+        return sum + Number(b.execution.tokens_in ?? 0) + Number(b.execution.tokens_out ?? 0);
+      }, 0) + blockTokens;
+      if (currentRunTokens > maxPerRun) {
+        const err = `Run token budget exceeded: ${currentRunTokens} > ${maxPerRun}`;
+        execution.error = err;
+        engine.failBlock(run, blockId, err, blockDef);
+        opts.onBlockFail?.(run, blockId, err, "BUDGET_EXCEEDED", { stage: "budget", message: err });
+        trace.push({
+          block_id: blockId,
+          instance_id: run.blocks[blockId].instance_id,
+          status: "failed",
+          inputs,
+          outputs,
+          pre_gates: preGates,
+          post_gates: [],
+          execution,
+          duration_ms: durationMs,
+        });
+        return;
+      }
     }
 
     // 6. Evaluate post-gates

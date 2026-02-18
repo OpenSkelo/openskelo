@@ -164,6 +164,23 @@ describe("DAG executor output contract", () => {
     expect(failures[0]?.err.toLowerCase()).toContain("timed out");
   });
 
+  it("fails when per-block token budget is exceeded", async () => {
+    const provider = makeProvider(() => ({ success: true, output: JSON.stringify({ game_spec: { ok: true }, dev_plan: "ok" }), tokensUsed: 200 }));
+    const failures: Array<{ err: string; code?: string }> = [];
+
+    const ex = createDAGExecutor({
+      providers: { local: provider },
+      agents,
+      budget: { maxTokensPerBlock: 100 },
+      onBlockFail: (_r, _b, err, code) => failures.push({ err, code }),
+    });
+
+    const { run } = await ex.execute(baseDag, { prompt: "x" });
+    expect(run.status).toBe("failed");
+    expect(failures[0]?.code).toBe("BUDGET_EXCEEDED");
+    expect(failures[0]?.err).toContain("Token budget exceeded for block");
+  });
+
   it("continues from spec to build across repeated runs", async () => {
     for (let i = 0; i < 5; i++) {
       let call = 0;
