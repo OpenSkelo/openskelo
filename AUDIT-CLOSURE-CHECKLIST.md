@@ -109,7 +109,7 @@ Legend:
 - [x] Broader security regression/fuzz suite baseline (unsafe regex guard fuzz tests)
   - Proof: `e9d5117`
 - [x] Mutation testing baseline plan (optional lane documented; thresholds/scoped targets defined)
-  - Proof: `pending-commit`
+  - Proof: `c167fc9`
 
 ## 11) Performance & Scalability
 - [ ] Edge indexing for large DAGs
