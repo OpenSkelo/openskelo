@@ -118,7 +118,8 @@ Legend:
   - Proof: `40d98c2`
 - [x] Executor/API isolation strategy baseline (worker-thread path documented)
   - Proof: `fd2bed0`
-- [ ] Hosted-scale queue strategy (future)
+- [x] Hosted-scale queue strategy baseline (future architecture and rollout documented)
+  - Proof: `pending-commit`
 
 ## 12) Design Philosophy Decisions (to codify)
 - [x] Static vs dynamic DAG scope statement
