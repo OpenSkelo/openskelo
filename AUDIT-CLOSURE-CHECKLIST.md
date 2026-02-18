@@ -53,7 +53,8 @@ Legend:
 - [x] Docs support matrix clarity (implemented vs planned) with explicit table in README
   - Proof: `9895021`
 - [ ] Streaming provider interface
-- [ ] Full model parameter passthrough (temp/top_p/max_tokens/etc.)
+- [x] Full model parameter passthrough baseline (`model_params` in DAG agent config -> provider payload)
+  - Proof: `pending-commit`
 
 ## 6) DAG Executor
 - [x] Contract/repair path present and tested

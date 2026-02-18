@@ -114,6 +114,8 @@ export interface DispatchRequest {
   previousNotes?: string;
   bounceCount: number;
   outputSchema?: Record<string, unknown>;
+  /** Provider-specific model params passthrough (temperature/top_p/max_tokens/etc.) */
+  modelParams?: Record<string, unknown>;
   abortSignal?: AbortSignal;
   isCancelled?: () => boolean;
   agent: {

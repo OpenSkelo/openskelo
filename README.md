@@ -289,6 +289,7 @@ OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 ## Testing & Reports
 
 - Optional real-provider profile: set `OPENSKELO_RUN_PROVIDER_INTEGRATION=1` before `npm test` to enable provider integration tests (skipped by default in CI).
+- Provider param passthrough tests: `tests/provider.params.test.ts`.
 
 ```bash
 npm run test

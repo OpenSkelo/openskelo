@@ -17,19 +17,26 @@ export function createOllamaProvider(opts: OllamaProviderOpts): ProviderAdapter 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
+        const basePayload: Record<string, unknown> = {
+          model: request.agent.model || "llama3.1",
+          messages: [
+            {
+              role: "user",
+              content: buildPrompt(request),
+            },
+          ],
+          stream: false,
+        };
+
+        const payload = {
+          ...basePayload,
+          ...(request.modelParams ?? {}),
+        };
+
         const res = await fetch(`${baseUrl}/api/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: request.agent.model || "llama3.1",
-            messages: [
-              {
-                role: "user",
-                content: buildPrompt(request),
-              },
-            ],
-            stream: false,
-          }),
+          body: JSON.stringify(payload),
           signal: request.abortSignal ?? controller.signal,
         });
 

@@ -23,22 +23,28 @@ export function createOpenAICompatibleProvider(opts: OpenAICompatibleProviderOpt
       const apiKey = opts.apiKeyEnv ? process.env[opts.apiKeyEnv] : process.env.OPENAI_API_KEY;
 
       try {
+        const basePayload: Record<string, unknown> = {
+          model: request.agent.model || opts.model || "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: buildPrompt(request),
+            },
+          ],
+        };
+
+        const payload = {
+          ...basePayload,
+          ...(request.modelParams ?? { temperature: 0.2 }),
+        };
+
         const res = await fetch(`${baseUrl}/chat/completions`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...(apiKey ? { [authHeader]: authHeader.toLowerCase() === "authorization" ? `Bearer ${apiKey}` : apiKey } : {}),
           },
-          body: JSON.stringify({
-            model: request.agent.model || opts.model || "gpt-4o-mini",
-            messages: [
-              {
-                role: "user",
-                content: buildPrompt(request),
-              },
-            ],
-            temperature: 0.2,
-          }),
+          body: JSON.stringify(payload),
           signal: request.abortSignal ?? controller.signal,
         });
 

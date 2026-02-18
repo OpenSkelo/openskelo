@@ -381,6 +381,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       acceptanceCriteria: blockDef.post_gates.map(g => g.error),
       bounceCount: run.blocks[blockId].retry_state.attempt - 1,
       outputSchema: buildOutputJsonSchema(blockDef),
+      modelParams: blockDef.agent.model_params,
       abortSignal: opts.abortSignal,
       isCancelled: opts.isCancelled,
       agent: {

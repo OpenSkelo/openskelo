@@ -90,6 +90,9 @@ export interface AgentRef {
 
   /** Route to specific agent ID */
   specific?: string;
+
+  /** Optional model parameters passed through to provider adapters */
+  model_params?: Record<string, unknown>;
 }
 
 export interface BlockGate {
@@ -733,6 +736,9 @@ function parseAgentRef(raw: Record<string, unknown> | undefined): AgentRef {
     role: raw.role as string | undefined,
     capability: raw.capability as string | undefined,
     specific: raw.specific as string | undefined,
+    model_params: (raw.model_params && typeof raw.model_params === "object")
+      ? (raw.model_params as Record<string, unknown>)
+      : undefined,
   };
 }
 
