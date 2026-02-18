@@ -38,8 +38,9 @@ OpenSkelo is different. It's not another agent framework — it's the **skeleton
 | `openclaw` | ✅ Implemented | Native OpenClaw adapter |
 | `ollama` | ✅ Implemented | Uses Ollama `/api/chat` |
 | `openai` | ✅ Implemented via openai-compatible | Uses `/chat/completions` |
+| `anthropic` | ✅ Implemented via API key + openai-compatible adapter | Set `env` to your Anthropic key env var and Anthropic-compatible base URL |
+| `openrouter` | ✅ Implemented via openai-compatible adapter | Defaults to `https://openrouter.ai/api/v1` + `OPENROUTER_API_KEY` |
 | `http` | ✅ Implemented via openai-compatible | Configurable base URL + auth header/env |
-| `anthropic` | 🟨 Routed via openai-compatible path | Native Anthropic adapter planned |
 
 ## Quick Start (DAG-first)
 

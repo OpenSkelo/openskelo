@@ -428,12 +428,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         });
         continue;
       }
-      if (p.type === "openai" || p.type === "anthropic" || p.type === "http") {
+      if (p.type === "openai" || p.type === "anthropic" || p.type === "http" || p.type === "openrouter") {
         const authHeader = typeof p.config?.authHeader === "string" ? p.config.authHeader : undefined;
+        const baseUrl = p.type === "openrouter" ? (p.url ?? "https://openrouter.ai/api/v1") : p.url;
+        const apiKeyEnv = p.type === "openrouter" ? (p.env ?? "OPENROUTER_API_KEY") : p.env;
         providers[p.name] = createOpenAICompatibleProvider({
           name: p.name,
-          baseUrl: p.url,
-          apiKeyEnv: p.env,
+          baseUrl,
+          apiKeyEnv,
           authHeader,
           timeoutMs: Math.min(Number(body.timeoutSeconds ?? 120) * 1000, safety.maxBlockDurationMs),
         });

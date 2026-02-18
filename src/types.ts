@@ -15,7 +15,7 @@ export interface SkeloConfig {
 
 export interface Provider {
   name: string;
-  type: "ollama" | "openai" | "anthropic" | "openclaw" | "http";
+  type: "ollama" | "openai" | "anthropic" | "openrouter" | "openclaw" | "http";
   url?: string;
   env?: string; // environment variable name for API key
   config?: Record<string, unknown>;
