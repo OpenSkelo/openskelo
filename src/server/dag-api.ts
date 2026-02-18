@@ -12,6 +12,8 @@ import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
 import { createOpenClawProvider } from "../core/openclaw-provider.js";
 import { createMockProvider } from "../core/mock-provider.js";
+import { createOllamaProvider } from "../core/ollama-provider.js";
+import { createOpenAICompatibleProvider } from "../core/openai-compatible-provider.js";
 import { createDB, getDB } from "../core/db.js";
 import type { DAGDef, DAGRun, BlockInstance } from "../core/block.js";
 import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
@@ -354,11 +356,29 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     for (const p of config.providers) {
       if (p.type === "openclaw") {
         providers[p.name] = openclawProvider;
-      } else {
-        // Temporary adapter fallback for non-openclaw provider types.
-        // Keeps runtime provider-agnostic while dedicated adapters are being implemented.
-        providers[p.name] = mockProvider;
+        continue;
       }
+      if (p.type === "ollama") {
+        providers[p.name] = createOllamaProvider({
+          name: p.name,
+          baseUrl: p.url,
+          timeoutMs: Math.min(Number(body.timeoutSeconds ?? 120) * 1000, safety.maxBlockDurationMs),
+        });
+        continue;
+      }
+      if (p.type === "openai" || p.type === "anthropic" || p.type === "http") {
+        const authHeader = typeof p.config?.authHeader === "string" ? p.config.authHeader : undefined;
+        providers[p.name] = createOpenAICompatibleProvider({
+          name: p.name,
+          baseUrl: p.url,
+          apiKeyEnv: p.env,
+          authHeader,
+          timeoutMs: Math.min(Number(body.timeoutSeconds ?? 120) * 1000, safety.maxBlockDurationMs),
+        });
+        continue;
+      }
+      // Unknown provider type fallback
+      providers[p.name] = mockProvider;
     }
 
     // Optional provider override by name or type: route all agent providers to selected adapter
