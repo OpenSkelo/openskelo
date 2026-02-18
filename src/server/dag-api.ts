@@ -15,7 +15,8 @@ import { createMockProvider } from "../core/mock-provider.js";
 import { createOllamaProvider } from "../core/ollama-provider.js";
 import { createOpenAICompatibleProvider } from "../core/openai-compatible-provider.js";
 import { createDB, getDB } from "../core/db.js";
-import { SkeloError, toSkeloError } from "../core/errors.js";
+import { toSkeloError } from "../core/errors.js";
+import { jsonError } from "./dag-api-errors.js";
 import type { DAGDef, DAGRun, BlockInstance } from "../core/block.js";
 import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
 import type { SkeloConfig, ProviderAdapter } from "../types.js";
@@ -58,20 +59,6 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   const app = new Hono();
   const engine = createBlockEngine();
   const examplesBaseDir = opts?.examplesDir ?? resolve(process.cwd(), "examples");
-
-  const jsonError = (
-    c: { json: (body: unknown, status?: number) => Response },
-    status: number,
-    error: string | Error,
-    code?: string,
-    details?: Record<string, unknown>
-  ) => {
-    const se = error instanceof SkeloError
-      ? error
-      : (error instanceof Error ? toSkeloError(error, code ?? "INTERNAL_ERROR", status) : new SkeloError(String(error), code ?? "INTERNAL_ERROR", status));
-    const mergedDetails = { ...(se.details ?? {}), ...(details ?? {}) };
-    return c.json({ error: se.message, code: se.code, ...(Object.keys(mergedDetails).length ? { details: mergedDetails } : {}) }, se.status || status);
-  };
 
   const safety = {
     maxConcurrentRuns: Number(process.env.OPENSKELO_MAX_CONCURRENT_RUNS ?? "2"),

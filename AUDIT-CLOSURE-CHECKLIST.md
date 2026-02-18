@@ -13,7 +13,9 @@ Legend:
 ## 1) Architecture Analysis
 - [x] Dual architecture cleanup: legacy task/runtime path removed from CLI/API/core/schema/docs
   - Proof: `65153c6`, `e172277`, `1488fa5`, `d8f0ea0`, `b5c4d49`, `819c2ca`
-- [ ] Monolithic decomposition (`dag-api.ts`, `dag-dashboard.ts` split)
+- [~] Monolithic decomposition (`dag-api.ts`, `dag-dashboard.ts` split)
+  - Progress: extracted shared error-envelope utility to `src/server/dag-api-errors.ts`
+  - Proof: `pending-commit`
 - [x] Final dependency/ID strategy review (UUIDv7/sortable IDs optional)
   - Proof: `9f12ce0`
 
