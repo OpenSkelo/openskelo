@@ -51,7 +51,6 @@ async function runOnboard(opts: OnboardOpts): Promise<void> {
       { value: "openrouter-key", label: "OpenRouter API key" },
       { value: "ollama", label: "Local model (Ollama)" },
       { value: "lmstudio", label: "Local model (LM Studio)" },
-      { value: "custom", label: "Custom OpenAI-compatible endpoint" },
     ],
   });
   if (isCancel(auth)) return cancel();
@@ -136,7 +135,12 @@ async function runNonInteractive(opts: OnboardOpts): Promise<void> {
   const template = ((opts.template ?? "content") as TemplateMode);
   const outDir = resolve(opts.dir ?? "./my-skelo-project");
 
-  await verifyConnection(auth, opts.apiKey);
+  try {
+    await verifyConnection(auth, opts.apiKey);
+  } catch (err) {
+    console.error(chalk.red(`✗ ${String((err as Error).message ?? err)}`));
+    process.exit(2);
+  }
 
   if (opts.reset) saveAuthStore({ version: 1, providers: {} });
   persistAuth(auth, opts.apiKey);
@@ -147,6 +151,14 @@ async function runNonInteractive(opts: OnboardOpts): Promise<void> {
   console.log(chalk.dim(`  run: skelo run ${template}-pipeline.yaml --input prompt=\"hello\" --watch`));
 }
 
+function timeoutSignal(ms = 10_000): AbortSignal {
+  const sigFactory = (AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal });
+  if (typeof sigFactory.timeout === "function") return sigFactory.timeout(ms);
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), ms);
+  return ctl.signal;
+}
+
 async function verifyConnection(auth: AuthMode, apiKey?: string): Promise<void> {
   if (auth === "openai-key") {
     if (!apiKey?.startsWith("sk-")) throw new Error("OpenAI API key must start with 'sk-'.");
@@ -154,6 +166,7 @@ async function verifyConnection(auth: AuthMode, apiKey?: string): Promise<void> 
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "user", content: "Say OK" }], max_tokens: 5 }),
+      signal: timeoutSignal(),
     });
     if (!res.ok) throw new Error(`OpenAI validation failed (${res.status}). Check your key.`);
     return;
@@ -165,19 +178,20 @@ async function verifyConnection(auth: AuthMode, apiKey?: string): Promise<void> 
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ model: "openai/gpt-4o-mini", messages: [{ role: "user", content: "Say OK" }], max_tokens: 5 }),
+      signal: timeoutSignal(),
     });
     if (!res.ok) throw new Error(`OpenRouter validation failed (${res.status}). Check your key.`);
     return;
   }
 
   if (auth === "ollama") {
-    const res = await fetch("http://localhost:11434/api/tags");
+    const res = await fetch("http://localhost:11434/api/tags", { signal: timeoutSignal() });
     if (!res.ok) throw new Error("Could not reach Ollama at http://localhost:11434. Is it running?");
     return;
   }
 
   if (auth === "lmstudio") {
-    const res = await fetch("http://localhost:1234/v1/models");
+    const res = await fetch("http://localhost:1234/v1/models", { signal: timeoutSignal() });
     if (!res.ok) throw new Error("Could not reach LM Studio at http://localhost:1234. Is it running?");
     return;
   }
