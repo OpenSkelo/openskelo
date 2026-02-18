@@ -873,6 +873,13 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       const restart_mode = document.getElementById('approvalRestartMode')?.value || 'refine';
       const iterate = document.getElementById('approvalIterate')?.checked !== false;
 
+      const runBtn = document.getElementById('runBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      // While approval decision is processing (especially reject+iterate), keep run controls in active mode.
+      runBtn.disabled = true;
+      runBtn.textContent = '⏳ Applying decision...';
+      stopBtn.style.display = 'inline-block';
+
       const res = await apiFetch(API + '/api/dag/runs/' + currentRunId + '/approvals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -886,11 +893,17 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       const fbEl = document.getElementById('approvalFeedback');
       if (fbEl) fbEl.value = '';
 
-      // Auto-follow iterated run when backend spawns a new cycle
-      if (data && data.iterated_run_id) {
-        currentRunId = data.iterated_run_id;
+      // Accept multiple backend key names for spawned-child run ids.
+      const nextRunId = data?.iterated_run_id || data?.next_run_id || data?.run_id || null;
+
+      // Auto-follow iterated run when backend spawns a new cycle.
+      if (nextRunId) {
+        currentRunId = String(nextRunId);
         document.getElementById('runId').textContent = currentRunId;
         setRunStatus('running');
+        runBtn.disabled = true;
+        runBtn.textContent = '🔄 Running...';
+        stopBtn.style.display = 'inline-block';
         setupSSE(currentRunId);
         addEventLog({
           type: 'run:start',
@@ -898,7 +911,15 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           data: { status: 'Iterated run started', from_reject: true },
           timestamp: new Date().toISOString(),
         });
+        refreshRunData();
+        return;
       }
+
+      // No immediate child id returned; keep controls in waiting state and let refresh/follow pick up latest run.
+      runBtn.disabled = true;
+      runBtn.textContent = '⏳ Waiting for iterate...';
+      stopBtn.style.display = 'inline-block';
+      refreshRunData();
     }
 
     function setupSSE(runId) {
@@ -1138,10 +1159,23 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       handleEvent(event);
       clearInterval(elapsedInterval);
       setRunStatus(event.data.status);
-      const btn = document.getElementById('runBtn');
-      btn.disabled = false;
-      btn.textContent = '▶ Run DAG';
-      document.getElementById('stopBtn').style.display = 'none';
+
+      const runBtn = document.getElementById('runBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      const follow = document.getElementById('followLatestIterated')?.checked === true;
+      const endedAsIterated = String(event?.data?.status || '') === 'iterated';
+
+      // If we're iterating and follow is enabled, keep controls in active/wait state (do not reset to Run).
+      if (endedAsIterated && follow) {
+        runBtn.disabled = true;
+        runBtn.textContent = '⏳ Waiting for iterate...';
+        stopBtn.style.display = 'inline-block';
+      } else {
+        runBtn.disabled = false;
+        runBtn.textContent = '▶ Run DAG';
+        stopBtn.style.display = 'none';
+      }
+
       refreshRunData().then(() => {
         const failed = Object.entries(currentRunData?.run?.blocks || {}).find(([_, b]) => b.status === 'failed');
         if (failed) return showInspector(failed[0]);
@@ -1472,9 +1506,19 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
           if (run.status === 'failed' || run.status === 'completed' || run.status === 'cancelled' || run.status === 'iterated') {
             const btn = document.getElementById('runBtn');
-            btn.disabled = false;
-            btn.textContent = '▶ Run DAG';
-            document.getElementById('stopBtn').style.display = 'none';
+            const stopBtn = document.getElementById('stopBtn');
+            const keepWaitingForIterate = run.status === 'iterated' && follow;
+
+            if (keepWaitingForIterate) {
+              btn.disabled = true;
+              btn.textContent = '⏳ Waiting for iterate...';
+              stopBtn.style.display = 'inline-block';
+            } else {
+              btn.disabled = false;
+              btn.textContent = '▶ Run DAG';
+              stopBtn.style.display = 'none';
+            }
+
             if (eventSource) { eventSource.close(); eventSource = null; }
             if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
             if (livePoll) { clearInterval(livePoll); livePoll = null; }
