@@ -1,0 +1,65 @@
+name: ai-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ai-review:
+    name: ai-review
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
+    outputs:
+      verdict: ${{ steps.review.outputs.verdict }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Skip fork PRs (no secrets)
+        if: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          echo "Fork PR detected. Skipping Anthropic review (secrets not available)."
+
+      - name: Run Claude review
+        id: review
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: node scripts/ai-review.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: claude-sonnet-4-5
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BLOCKING_MODE: "false"
+          MAX_FILES: "120"
+          MAX_PATCH_CHARS: "140000"
+
+  auto-merge:
+    name: auto-merge
+    runs-on: ubuntu-latest
+    needs: [ai-review]
+    if: >-
+      ${{
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.base.ref != 'main' &&
+        needs.ai-review.outputs.verdict == 'APPROVE'
+      }}
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Enable auto-merge (squash)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr merge "$PR_NUMBER" --repo "${{ github.repository }}" --auto --squash --delete-branch
