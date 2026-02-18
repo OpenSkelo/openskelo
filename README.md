@@ -4,7 +4,7 @@
 
 Your AI agents have brains (LLMs) and muscles (OpenClaw, CrewAI, LangGraph). OpenSkelo gives them a skeleton — deterministic structure so they ship reliably, not just chat.
 
-> CI/CD for AI agents. One config file. Runs on your laptop. Costs $0.
+> Quality gates for AI agent output. Deterministic DAG runtime. Runs on your laptop.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -41,90 +41,53 @@ OpenSkelo is different. It's not another agent framework — it's the **skeleton
 | `http` | ✅ Implemented via openai-compatible | Configurable base URL + auth header/env |
 | `anthropic` | 🟨 Routed via openai-compatible path | Native Anthropic adapter planned |
 
-## Quick Start
+## Quick Start (DAG-first)
 
 ```bash
-# Create a new pipeline project
-npx openskelo init my-pipeline --template coding
+# Clone and install
+npm install
 
-# Enter the project
-cd my-pipeline
-
-# Start the pipeline
-npx openskelo start
+# Run a bundled DAG example (recommended until template migration lands)
+npx openskelo run start --example basic --watch
 ```
 
-```
-🦴 OpenSkelo starting...
+Then open:
+- Dashboard: `http://localhost:4040/dashboard`
+- DAG API: `http://localhost:4040/api/dag/*`
 
-  ✓ Config loaded: my-pipeline
-  ✓ Database initialized (.skelo/skelo.db)
-  ✓ 2 agents registered
-  ✓ 1 pipeline, 4 gates
-
-  🔥 OpenSkelo running
-
-  Pipeline:  http://localhost:4040
-  Dashboard: http://localhost:4040/dashboard
-  API:       http://localhost:4040/api
-
-  🔧 coder (worker, codellama:13b)
-  🔍 reviewer (reviewer, llama3:8b)
-```
+> Note: `skelo init --template ...` is being migrated to emit DAG block format. For now, use `examples/*.yaml` as canonical starter configs.
 
 ## How It Works
 
-### 1. Define your pipeline in `skelo.yaml`
-
-> Note: names like `coder` and `reviewer` below are example labels only. You can name agents anything.
+### 1. Define your workflow as a DAG (`examples/*.yaml`)
 
 ```yaml
-name: my-pipeline
+blocks:
+  - id: plan
+    outputs:
+      plan: { type: string }
+    agent:
+      provider: local
+      model: llama3:8b
+      prompt: "Produce an implementation plan for: {{inputs.goal}}"
 
-providers:
-  - name: local
-    type: ollama
-    url: http://localhost:11434
-
-agents:
-  coder:
-    role: worker
-    capabilities: [coding]
-    provider: local
-    model: codellama:13b
-    max_concurrent: 1
-
-  reviewer:
-    role: reviewer
-    capabilities: [coding]
-    provider: local
-    model: llama3:8b
-    max_concurrent: 1
-
-pipelines:
-  coding:
-    stages:
-      - name: PENDING
-        transitions: [IN_PROGRESS]
-      - name: IN_PROGRESS
-        route: { role: worker, capability: coding }
-        transitions: [REVIEW, BLOCKED]
-      - name: REVIEW
-        route: { role: reviewer, capability: coding }
-        transitions: [DONE, IN_PROGRESS]
-      - name: DONE
-
-gates:
-  - name: structured-feedback
-    on: { from: REVIEW, to: IN_PROGRESS }
-    check: { type: contains, field: notes, values: ["WHAT:", "WHERE:", "FIX:"] }
-    error: "Bounce requires structured feedback"
-
-  - name: done-evidence
-    on: { to: DONE }
-    check: { type: min_length, field: notes, min: 10 }
-    error: "Provide evidence of completion"
+  - id: implement
+    inputs:
+      plan: { from: plan.plan }
+    outputs:
+      patch: { type: string }
+    agent:
+      provider: local
+      model: codellama:13b
+      prompt: "Implement this plan:\n{{inputs.plan}}"
+    post_gates:
+      - check:
+          type: semantic_review
+          required_terms: ["error handling", "tests"]
+        error: "Implementation is missing required quality signals"
 ```
+
+This YAML is the runtime IR. The execution contract is block/edge/gate driven via `/api/dag/*`.
 
 ### 2. Blocks are the core building unit
 
@@ -189,30 +152,24 @@ sequenceDiagram
 
 ### 4. Gates enforce quality — deterministically
 
-Gates are rules that **cannot be broken**. The API rejects transitions that fail gates.
+Gates are rules that **cannot be bypassed silently**. Block execution and progression fail when gates fail.
 
-**Built-in gate checks:**
+**Current gate checks include:** `contains`, `matches`, `min_length`, `max_value`, `valid_json`, `valid_url`, `shell`, `json_schema`, `http`, `diff`, `cost`, `latency`, and `semantic_review`.
 
-| Check | What it validates |
-|---|---|
-| `not_empty` | Field must have a value |
-| `contains` | Field must include specific strings |
-| `matches` | Field must match a regex pattern |
-| `min_length` | Field must be at least N characters |
-| `max_value` | Numeric field must be under a limit |
-| `valid_json` | Field must be valid JSON |
-| `valid_url` | Field must be a valid URL |
-| `shell` | Custom shell command (exit 0 = pass) |
+> Important: current `semantic_review` is a deterministic keyword-coverage baseline. A true second-model review gate (`llm_review`) is planned and tracked as a top product priority.
 
-The `shell` check is the escape hatch — any validation you can write as a bash one-liner works as a gate.
+The `shell` check remains an escape hatch (explicitly opt-in) for environment-specific validation.
 
 ## Templates
 
+Template migration note:
+- `skelo init --template ...` is currently being updated to DAG block format.
+- Until that lands, treat `examples/*.yaml` as canonical templates.
+
 ```bash
-skelo init my-project --template coding    # Coder + Reviewer pipeline
-skelo init my-project --template research  # Researcher with source validation
-skelo init my-project --template content   # Writer + Editor with revision loop
-skelo init my-project --template custom    # Blank starting point
+# canonical today
+npx openskelo run start --example basic
+npx openskelo run start --example coding
 ```
 
 ## CLI Reference
@@ -276,6 +233,12 @@ OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 - Emergency stop all: `POST /api/dag/runs/stop-all`
 - Safety policy introspection: `GET /api/dag/safety`
 
+
+## Known Gaps (Post-audit follow-up)
+
+- `skelo init` templates are being migrated to DAG block format (currently legacy-shaped output).
+- `semantic_review` is keyword coverage today; `llm_review` (second-model judge) is the planned semantic gate.
+- DAG-route CORS hardening is tracked as a priority for browser-first integrations.
 
 ## 60-Second Demo
 

@@ -39,6 +39,11 @@ Product strategy: **OpenClaw-native first and recommended** (best end-to-end age
   2. Add event sequence numbers + replay contract
   3. Reconstruct run state from durable store (not in-memory only)
 
+### 🚨 Post-Audit Product-Critical (Immediate)
+1. `skelo init` template migration to DAG block format (first-run UX blocker)
+2. Real semantic gate (`llm_review`) using second-model evaluation (differentation blocker)
+3. CORS on `/api/dag/*` for browser integrations (integration blocker)
+
 ---
 
 ## 2) Core Worksheet (Execution Plan)
@@ -74,7 +79,7 @@ Product strategy: **OpenClaw-native first and recommended** (best end-to-end age
 - Artifact contract hardening for playable/live outputs
 
 ### Context Integrated from Prior Strategy Threads
-- Product positioning: **"GitHub Actions / CI-CD for AI agents"** with deterministic gates.
+- Product positioning: **"Quality gates for AI agent output"** with deterministic DAG execution.
 - Distribution thesis: local-first, zero-cost starter, one-command setup, YAML-first configuration, visual proof.
 - Architecture thesis: split into **core runtime + adapters + dashboard**; keep OpenClaw as first-class adapter but not hard dependency.
 - Differentiator thesis: deterministic stage transitions, quality gates, approval gates, retries/dead-letter, and built-in observability.

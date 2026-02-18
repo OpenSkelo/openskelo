@@ -2,9 +2,11 @@
 
 ## Overview
 
-OpenSkelo is a **deterministic pipeline runtime for AI agents**. Think of it like CI/CD for AI agents — instead of just prompting an LLM and hoping for the best, you define a pipeline with gates that must pass before work can move forward.
+OpenSkelo is a **deterministic DAG runtime for AI agents** focused on **quality gates for AI agent output**.
 
-**Core concept:** A pipeline is made of **blocks** connected as a DAG. Each block has typed inputs/outputs, optional gates, and runs on an assigned agent/provider.
+Instead of prompting once and hoping, OpenSkelo executes block graphs with typed contracts, deterministic gates, durable replay, and explicit intervention points.
+
+**Core concept:** A workflow is a DAG of blocks. Each block has typed inputs/outputs, optional pre/post gates, and an assigned provider/model path.
 
 ---
 
@@ -12,31 +14,26 @@ OpenSkelo is a **deterministic pipeline runtime for AI agents**. Think of it lik
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     OpenSkelo Engine                         │
+│                     OpenSkelo Runtime                        │
 ├─────────────────────────────────────────────────────────────┤
-│  ┌──────────┐   ┌──────────────┐   ┌──────────────────┐   │
-│  │  Config  │   │ Task Engine  │   │   Gate Engine    │   │
-│  │(skelo.yaml)│   │ (state machine)│   │ (validators)    │   │
-│  └──────────┘   └──────────────┘   └──────────────────┘   │
-│         │              │                     │               │
-│         └──────────────┼─────────────────────┘               │
-│                        │                                     │
-│                   ┌────┴────┐                                │
-│                   │   DB    │ (SQLite)                       │
-│                   │ tasks   │                                │
-│                   │ audit   │                                │
-│                   │ gates   │                                │
-│                   └─────────┘                                │
-├─────────────────────────────────────────────────────────────┤
-│                    Router                                    │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ Pipeline Stage → Agent Match (role + capability)      │  │
-│  └──────────────────────────────────────────────────────┘  │
+│  ┌─────────────────┐    ┌───────────────────────────────┐  │
+│  │ DAG Parser      │ -> │ DAG Executor                  │  │
+│  │ + Block Engine  │    │ (schedule/retry/approval/stop)│  │
+│  └─────────────────┘    └───────────────────────────────┘  │
+│             │                         │                     │
+│             └──────────────┬──────────┘                     │
+│                            │                                │
+│                    ┌───────▼────────┐                       │
+│                    │ Durable Store   │ (SQLite)             │
+│                    │ dag_runs        │                       │
+│                    │ dag_events      │                       │
+│                    │ dag_approvals   │                       │
+│                    └─────────────────┘                       │
 ├─────────────────────────────────────────────────────────────┤
 │                 Provider Adapters                            │
-│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌────────────┐     │
-│  │ Ollama  │ │ OpenAI  │ │OpenClaw  │ │   HTTP     │     │
-│  └─────────┘ └─────────┘ └──────────┘ └────────────┘     │
+│  ┌─────────┐ ┌─────────────────────┐ ┌──────────┐          │
+│  │ Ollama  │ │ OpenAI-compatible   │ │ OpenClaw │          │
+│  └─────────┘ └─────────────────────┘ └──────────┘          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -183,86 +180,72 @@ stateDiagram-v2
 
 ## Core Components
 
-### 1. Config (`skelo.yaml`)
+### 1. DAG Definition (YAML IR)
 
-Defines the entire system:
-- **providers**: LLM backends (Ollama, OpenAI, OpenClaw, Anthropic, HTTP)
-- **agents**: Workers with role, capabilities, model
-- **pipelines**: DAG of stages with transitions
-- **gates**: Validators that must pass for transitions
+Defines executable workflow structure:
+- **blocks**: units of work with typed inputs/outputs
+- **edges**: dataflow/dependencies between blocks
+- **gates**: deterministic checks before/after block execution
+- **retry/approval policy**: operational safety and intervention controls
 
-### 2. Task Engine
+### 2. DAG Executor
 
-Manages task lifecycle:
+Manages run lifecycle:
 ```
-PENDING → IN_PROGRESS → REVIEW → DONE
-              ↑            ↓
-              └── BLOCKED ←┘
+pending → ready → running → completed
+                 ↘ failed / cancelled / paused_approval
 ```
 
-Each task has:
-- `id`: Auto-generated (TASK-001, TASK-002...)
-- `pipeline`: Which pipeline
-- `status`: Current stage
-- `assigned`: Which agent
-- `notes`: Documentation
-- `bounce_count`: How many times returned from REVIEW
-- `metadata`: Custom fields
+Each run tracks:
+- run id, state, and timing metadata
+- per-block execution state and attempts
+- approval waits/decisions
+- replayable event stream
 
-### 3. Gate Engine
+### 3. Gate Evaluation Engine
 
-Deterministic validators. Each gate:
-- **on**: Which transition triggers it (`from: PENDING, to: IN_PROGRESS`)
-- **check**: What to validate
-- **error**: Message when fails
-- **bypass**: Roles that can skip it
+Deterministic validators attached to block execution.
 
-**Check types:**
-| Type | Purpose |
-|------|---------|
-| `not_empty` | Field must have value |
-| `contains` | Field must contain strings |
-| `matches` | Field matches regex |
-| `min_length` | String min length |
-| `max_value` | Number max value |
-| `valid_json` | Field is valid JSON |
-| `valid_url` | Field is valid URL |
-| `shell` | Run command, check exit code |
+Current checks include:
+- `contains`, `matches`, `min_length`, `max_value`
+- `valid_json`, `valid_url`, `json_schema`
+- `http`, `diff`, `cost`, `latency`, `shell`
+- `semantic_review` (keyword-coverage baseline)
 
-### 4. Router
+> `semantic_review` currently validates required semantic signals via keyword coverage. A true second-model semantic judge (`llm_review`) is planned.
 
-Finds the right agent for a stage:
-1. Look at stage's `route` rule
-2. Match by `role` + `capability`
-3. Pick agent with lowest load
-4. Exclude busy agents (at `max_concurrent`)
+### 4. Provider Adapters
 
-> Note: agent IDs in examples (e.g., `coder`, `reviewer`) are template labels, not platform requirements.
+Dispatch layer for model execution:
+- `ollama`
+- `openai-compatible`
+- `openclaw`
+
+Adapters share a stable dispatch contract so execution logic remains provider-agnostic.
 
 ---
 
-## Pipeline Stages
-
-A pipeline is a DAG of stages:
+## DAG Format (Canonical)
 
 ```yaml
-pipelines:
-  coding:
-    stages:
-      - name: PENDING              # Initial state
-        transitions: [IN_PROGRESS] # Can only go to IN_PROGRESS
-      
-      - name: IN_PROGRESS         # Work happening
-        route: { role: worker, capability: coding }  # Auto-dispatch to coder
-        transitions: [REVIEW, BLOCKED]
-      
-      - name: REVIEW              # Quality check
-        route: { role: reviewer, capability: coding } # Auto-dispatch to reviewer
-        transitions: [DONE, IN_PROGRESS]  # Approve or bounce
-      
-      - name: DONE               # Complete
-      - name: BLOCKED             # Stuck, needs human
-        transitions: [PENDING]    # Can restart
+blocks:
+  - id: plan
+    outputs:
+      plan: { type: string }
+    agent:
+      provider: local
+      model: llama3:8b
+      prompt: "Create a plan for: {{inputs.goal}}"
+
+  - id: implement
+    inputs:
+      plan: { from: plan.plan }
+    outputs:
+      patch: { type: string }
+    agent:
+      provider: local
+      model: codellama:13b
+      prompt: "Implement this plan:\n{{inputs.plan}}"
 ```
 
 ---
@@ -391,13 +374,15 @@ Generated under `docs/reports/`:
 - `test-summary.json` — normalized machine summary (counts + risk/gap matrix)
 - `test-summary.md` — human-readable report for architecture review
 
-## CLI Commands
+## CLI Commands (DAG-first)
 
 ```bash
-npx skelo init           # Create new project
-npx skelo start          # Start server
-npx skelo task create    # Create task
-npx skelo task list      # List tasks
-npx skelo status         # Show health
-npx skelo validate       # Validate config
+npx openskelo start                           # Start runtime + dashboard
+npx openskelo run start --example basic       # Start example DAG run
+npx openskelo run list                        # List DAG runs
+npx openskelo run status <runId>              # Inspect run status
+npx openskelo run approve <runId>             # Approve pending approval
+npx openskelo run reject <runId> --feedback "..."  # Reject with reason
+npx openskelo run stop <runId>                # Stop run
+npx openskelo validate                         # Validate DAG config
 ```

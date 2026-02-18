@@ -22,4 +22,9 @@ The independent audit remediation plan has been driven to checklist closure on t
 - 60s demo: `docs/DEMO-60S.md`
 
 ## Remaining Work Type
-Remaining effort is now product evolution/next roadmap (not unresolved audit checklist debt).
+Audit checklist debt is closed. Remaining effort is product evolution/next roadmap.
+
+### Post-audit follow-up priorities (external review)
+- Migrate `skelo init` templates to DAG block format (first-run correctness)
+- Add true semantic LLM-as-judge gate (`llm_review`) and keep current `semantic_review` labeled as keyword baseline
+- Add CORS coverage on `/api/dag/*` routes for browser-based clients

@@ -139,7 +139,7 @@ Legend:
   - Proof: `25cb1eb`
 
 ## 13) Market/Positioning Alignment
-- [~] Messaging improved to DAG-canonical
+- [~] Messaging improved to DAG-canonical and quality-gate-first framing (in progress across docs/site)
 - [x] Full claim alignment package (feature matrix + roadmap notes)
   - Proof: `52ff697`
 - [x] 60-second demo deliverable (explicit launch artifact)
@@ -186,6 +186,12 @@ Legend:
 4. Perf/stress/mutation testing
 
 ---
+
+## Post-Audit Follow-up Addendum (Not checklist debt)
+These are product-critical follow-ups identified after audit closure and tracked in roadmap work:
+- [ ] `skelo init` emits DAG block templates (replace legacy pipeline/stage output)
+- [ ] Add true `llm_review` gate (second-model semantic evaluation)
+- [ ] Apply CORS coverage to `/api/dag/*` routes
 
 ## Recently Shipped Proof Chain
 - `19c6360` fix(security): replace new Function eval with safe AST expression evaluator
