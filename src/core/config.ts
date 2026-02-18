@@ -43,8 +43,11 @@ function validateConfig(raw: unknown): SkeloConfig {
     throw new Error("skelo.yaml: 'agents' is required (object)");
   }
 
-  if (!config.pipelines || typeof config.pipelines !== "object") {
-    throw new Error("skelo.yaml: 'pipelines' is required (object)");
+  const hasPipelines = Boolean(config.pipelines && typeof config.pipelines === "object");
+  const hasDag = Array.isArray((config as Record<string, unknown>).blocks);
+
+  if (!hasPipelines && !hasDag) {
+    throw new Error("skelo.yaml: either 'pipelines' (legacy) or top-level DAG 'blocks' is required");
   }
 
   // Validate agents
@@ -60,8 +63,8 @@ function validateConfig(raw: unknown): SkeloConfig {
     }
   }
 
-  // Validate pipelines
-  const pipelines = config.pipelines as Record<string, Record<string, unknown>>;
+  // Validate pipelines (legacy config path)
+  const pipelines = (hasPipelines ? (config.pipelines as Record<string, Record<string, unknown>>) : {});
   for (const [id, pipeline] of Object.entries(pipelines)) {
     if (!pipeline.stages || !Array.isArray(pipeline.stages)) {
       throw new Error(`Pipeline '${id}': 'stages' is required (array)`);

@@ -114,6 +114,28 @@ describe("DAG API integration", () => {
     expect(typeof body.code).toBe("string");
   });
 
+  it("adds CORS headers for DAG routes and handles preflight", async () => {
+    const ctx = setupDagTestApp();
+    cleanups.push(ctx.cleanup);
+
+    const preflight = await ctx.app.request("/api/dag/examples", {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://localhost:3000",
+        "access-control-request-method": "GET",
+      },
+    });
+
+    expect(preflight.status).toBe(204);
+    expect(String(preflight.headers.get("access-control-allow-origin") ?? "")).toBe("*");
+
+    const getRes = await ctx.app.request("/api/dag/examples", {
+      headers: { origin: "http://localhost:3000" },
+    });
+    expect(getRes.status).toBe(200);
+    expect(String(getRes.headers.get("access-control-allow-origin") ?? "")).toBe("*");
+  });
+
   it("enforces max request size on dag endpoints", async () => {
     const prev = process.env.OPENSKELO_MAX_REQUEST_BYTES;
     process.env.OPENSKELO_MAX_REQUEST_BYTES = "100";

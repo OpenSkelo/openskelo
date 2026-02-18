@@ -2,11 +2,15 @@ import { mkdirSync, writeFileSync, existsSync } from "fs";
 import { resolve, join } from "path";
 import chalk from "chalk";
 
-const TEMPLATES: Record<string, string> = {
-  coding: `# OpenSkelo Pipeline — Coding Template
-# Edit this file to configure your agent pipeline.
-# Docs: https://github.com/OpenSkelo/openskelo
+interface InitTemplate {
+  config: string;
+  dagFile: string;
+  dag: string;
+}
 
+const TEMPLATES: Record<string, InitTemplate> = {
+  coding: {
+    config: `# OpenSkelo Project Config (v2 DAG-first)
 name: my-pipeline
 
 providers:
@@ -15,57 +19,26 @@ providers:
     url: http://localhost:11434
 
 agents:
-  coder:
+  manager:
+    role: manager
+    capabilities: [planning]
+    provider: local
+    model: llama3:8b
+    max_concurrent: 1
+
+  worker:
     role: worker
-    capabilities: [coding]
+    capabilities: [coding, testing]
     provider: local
     model: codellama:13b
     max_concurrent: 1
 
   reviewer:
     role: reviewer
-    capabilities: [coding]
+    capabilities: [qa]
     provider: local
     model: llama3:8b
     max_concurrent: 1
-
-pipelines:
-  coding:
-    stages:
-      - name: PENDING
-        transitions: [IN_PROGRESS, BLOCKED]
-      - name: IN_PROGRESS
-        route: { role: worker, capability: coding }
-        transitions: [REVIEW, BLOCKED]
-      - name: REVIEW
-        route: { role: reviewer, capability: coding }
-        transitions: [DONE, IN_PROGRESS]
-      - name: DONE
-        transitions: [ARCHIVED]
-      - name: BLOCKED
-        transitions: [PENDING, IN_PROGRESS]
-      - name: ARCHIVED
-
-gates:
-  - name: needs-assignee
-    on: { from: PENDING, to: IN_PROGRESS }
-    check: { type: not_empty, field: assigned }
-    error: "Assign an agent before starting work"
-
-  - name: structured-feedback
-    on: { from: REVIEW, to: IN_PROGRESS }
-    check: { type: contains, field: notes, values: ["WHAT:", "WHERE:", "FIX:"] }
-    error: "Bounce requires structured feedback (WHAT, WHERE, FIX)"
-
-  - name: done-evidence
-    on: { to: DONE }
-    check: { type: min_length, field: notes, min: 10 }
-    error: "Provide evidence of completion in notes"
-
-  - name: max-bounces
-    on: { to: IN_PROGRESS }
-    check: { type: max_value, field: bounce_count, max: 5 }
-    error: "Task exceeded max bounce limit — blocked for review"
 
 storage: sqlite
 
@@ -73,9 +46,75 @@ dashboard:
   enabled: true
   port: 4040
 `,
+    dagFile: "coding.yaml",
+    dag: `name: coding
 
-  research: `# OpenSkelo Pipeline — Research Template
+blocks:
+  - id: plan
+    name: Plan
+    inputs:
+      prompt: string
+    outputs:
+      plan: string
+    agent:
+      role: manager
+    pre_gates: []
+    post_gates:
+      - name: plan-not-empty
+        check: { type: port_not_empty, port: plan }
+        error: Plan is required
+    retry:
+      max_attempts: 0
+      backoff: none
+      delay_ms: 0
 
+  - id: build
+    name: Build
+    inputs:
+      plan: string
+    outputs:
+      code: artifact
+    agent:
+      role: worker
+      capability: coding
+    pre_gates: []
+    post_gates:
+      - name: has-code
+        check: { type: port_not_empty, port: code }
+        error: Build must produce code
+    retry:
+      max_attempts: 1
+      backoff: linear
+      delay_ms: 1000
+
+  - id: review
+    name: Review
+    inputs:
+      code: artifact
+    outputs:
+      approved: boolean
+      feedback: string
+    agent:
+      role: reviewer
+      capability: qa
+    pre_gates: []
+    post_gates:
+      - name: approval-type
+        check: { type: port_type, port: approved, expected: boolean }
+        error: Review must return boolean approved
+    retry:
+      max_attempts: 0
+      backoff: none
+      delay_ms: 0
+
+edges:
+  - { from: plan, output: plan, to: build, input: plan }
+  - { from: build, output: code, to: review, input: code }
+`,
+  },
+
+  research: {
+    config: `# OpenSkelo Project Config (v2 DAG-first)
 name: my-research-pipeline
 
 providers:
@@ -91,33 +130,12 @@ agents:
     model: llama3:8b
     max_concurrent: 1
 
-pipelines:
-  research:
-    stages:
-      - name: PENDING
-        transitions: [IN_PROGRESS]
-      - name: IN_PROGRESS
-        route: { role: worker, capability: research }
-        transitions: [DONE, BLOCKED]
-      - name: DONE
-      - name: BLOCKED
-        transitions: [PENDING]
-
-gates:
-  - name: needs-assignee
-    on: { from: PENDING, to: IN_PROGRESS }
-    check: { type: not_empty, field: assigned }
-    error: "Assign an agent before starting work"
-
-  - name: sources-required
-    on: { to: DONE }
-    check: { type: contains, field: notes, values: ["Sources:"] }
-    error: "Research tasks must include a Sources section"
-
-  - name: summary-length
-    on: { to: DONE }
-    check: { type: min_length, field: notes, min: 200 }
-    error: "Research summary must be at least 200 characters"
+  reviewer:
+    role: reviewer
+    capabilities: [research]
+    provider: local
+    model: llama3:8b
+    max_concurrent: 1
 
 storage: sqlite
 
@@ -125,9 +143,78 @@ dashboard:
   enabled: true
   port: 4040
 `,
+    dagFile: "research.yaml",
+    dag: `name: research
 
-  content: `# OpenSkelo Pipeline — Content Template
+blocks:
+  - id: gather
+    name: Gather Sources
+    inputs:
+      prompt: string
+    outputs:
+      sources: json
+      findings: string
+    agent:
+      specific: researcher
+    pre_gates: []
+    post_gates:
+      - name: has-sources
+        check: { type: port_not_empty, port: sources }
+        error: Sources are required
+    retry:
+      max_attempts: 1
+      backoff: none
+      delay_ms: 0
 
+  - id: synthesize
+    name: Synthesize
+    inputs:
+      findings: string
+      sources: json
+    outputs:
+      summary: string
+    agent:
+      specific: researcher
+    pre_gates: []
+    post_gates:
+      - name: summary-len
+        check: { type: port_min_length, port: summary, min: 120 }
+        error: Summary must be at least 120 chars
+    retry:
+      max_attempts: 0
+      backoff: none
+      delay_ms: 0
+
+  - id: verify
+    name: Verify
+    inputs:
+      summary: string
+      sources: json
+    outputs:
+      approved: boolean
+      notes: string
+    agent:
+      specific: reviewer
+    pre_gates: []
+    post_gates:
+      - name: has-verdict
+        check: { type: port_type, port: approved, expected: boolean }
+        error: Verification must set approved
+    retry:
+      max_attempts: 0
+      backoff: none
+      delay_ms: 0
+
+edges:
+  - { from: gather, output: findings, to: synthesize, input: findings }
+  - { from: gather, output: sources, to: synthesize, input: sources }
+  - { from: synthesize, output: summary, to: verify, input: summary }
+  - { from: gather, output: sources, to: verify, input: sources }
+`,
+  },
+
+  content: {
+    config: `# OpenSkelo Project Config (v2 DAG-first)
 name: my-content-pipeline
 
 providers:
@@ -150,57 +237,67 @@ agents:
     model: llama3:8b
     max_concurrent: 1
 
-pipelines:
-  content:
-    stages:
-      - name: PENDING
-        transitions: [IN_PROGRESS]
-      - name: IN_PROGRESS
-        route: { role: worker, capability: content }
-        transitions: [REVIEW, BLOCKED]
-      - name: REVIEW
-        route: { role: reviewer, capability: content }
-        transitions: [DONE, IN_PROGRESS]
-      - name: DONE
-      - name: BLOCKED
-        transitions: [PENDING]
-
-gates:
-  - name: needs-assignee
-    on: { from: PENDING, to: IN_PROGRESS }
-    check: { type: not_empty, field: assigned }
-    error: "Assign an agent before starting work"
-
-  - name: editorial-feedback
-    on: { from: REVIEW, to: IN_PROGRESS }
-    check: { type: min_length, field: notes, min: 20 }
-    error: "Editorial feedback must explain what needs revision"
-
-  - name: done-evidence
-    on: { to: DONE }
-    check: { type: min_length, field: notes, min: 10 }
-    error: "Provide evidence of completion"
-
 storage: sqlite
 
 dashboard:
   enabled: true
   port: 4040
 `,
+    dagFile: "content.yaml",
+    dag: `name: content
 
-  custom: `# OpenSkelo Pipeline — Custom Template
-# Configure your own pipeline from scratch.
-# Docs: https://github.com/OpenSkelo/openskelo
+blocks:
+  - id: draft
+    name: Draft
+    inputs:
+      prompt: string
+    outputs:
+      draft: string
+    agent:
+      specific: writer
+    pre_gates: []
+    post_gates:
+      - name: draft-min
+        check: { type: port_min_length, port: draft, min: 120 }
+        error: Draft is too short
+    retry:
+      max_attempts: 1
+      backoff: none
+      delay_ms: 0
 
+  - id: edit
+    name: Edit
+    inputs:
+      draft: string
+    outputs:
+      approved: boolean
+      feedback: string
+      final: string
+    agent:
+      specific: editor
+    pre_gates: []
+    post_gates:
+      - name: has-approval
+        check: { type: port_type, port: approved, expected: boolean }
+        error: Edit step must set approval
+    retry:
+      max_attempts: 0
+      backoff: none
+      delay_ms: 0
+
+edges:
+  - { from: draft, output: draft, to: edit, input: draft }
+`,
+  },
+
+  custom: {
+    config: `# OpenSkelo Project Config (v2 DAG-first)
 name: my-pipeline
 
 providers:
   - name: local
     type: ollama
     url: http://localhost:11434
-  # - name: cloud
-  #   type: openai
-  #   env: OPENAI_API_KEY
 
 agents:
   worker:
@@ -209,28 +306,6 @@ agents:
     provider: local
     model: llama3:8b
     max_concurrent: 1
-  # reviewer:
-  #   role: reviewer
-  #   capabilities: [general]
-  #   provider: local
-  #   model: llama3:8b
-  #   max_concurrent: 1
-
-pipelines:
-  default:
-    stages:
-      - name: PENDING
-        transitions: [IN_PROGRESS]
-      - name: IN_PROGRESS
-        route: { role: worker, capability: general }
-        transitions: [DONE]
-      - name: DONE
-
-gates: []
-  # - name: my-gate
-  #   on: { to: DONE }
-  #   check: { type: min_length, field: notes, min: 10 }
-  #   error: "Notes required to complete task"
 
 storage: sqlite
 
@@ -238,19 +313,45 @@ dashboard:
   enabled: true
   port: 4040
 `,
+    dagFile: "custom.yaml",
+    dag: `name: custom
+
+blocks:
+  - id: step1
+    name: Step 1
+    inputs:
+      prompt: string
+    outputs:
+      result: string
+    agent:
+      specific: worker
+    pre_gates: []
+    post_gates:
+      - name: has-result
+        check: { type: port_not_empty, port: result }
+        error: Result is required
+    retry:
+      max_attempts: 0
+      backoff: none
+      delay_ms: 0
+
+edges: []
+`,
+  },
 };
 
-export async function initProject(name?: string, template: string = "coding") {
+export async function initProject(name?: string, template: string = "coding", opts?: { cwd?: string }) {
   const projectName = name ?? "my-skelo-pipeline";
-  const dir = resolve(process.cwd(), projectName);
+  const baseDir = opts?.cwd ?? process.cwd();
+  const dir = resolve(baseDir, projectName);
 
   if (existsSync(dir)) {
     console.error(chalk.red(`✗ Directory '${projectName}' already exists`));
     process.exit(1);
   }
 
-  const templateContent = TEMPLATES[template];
-  if (!templateContent) {
+  const selected = TEMPLATES[template];
+  if (!selected) {
     console.error(chalk.red(`✗ Unknown template: '${template}'. Available: ${Object.keys(TEMPLATES).join(", ")}`));
     process.exit(1);
   }
@@ -260,9 +361,11 @@ export async function initProject(name?: string, template: string = "coding") {
   // Create directory structure
   mkdirSync(dir, { recursive: true });
   mkdirSync(join(dir, ".skelo"), { recursive: true });
+  mkdirSync(join(dir, "examples"), { recursive: true });
 
-  // Write config
-  writeFileSync(join(dir, "skelo.yaml"), templateContent);
+  // Write project config + starter DAG
+  writeFileSync(join(dir, "skelo.yaml"), selected.config);
+  writeFileSync(join(dir, "examples", selected.dagFile), selected.dag);
 
   // Write .gitignore
   writeFileSync(
@@ -273,15 +376,17 @@ export async function initProject(name?: string, template: string = "coding") {
   // Write README
   writeFileSync(
     join(dir, "README.md"),
-    `# ${projectName}\n\nPowered by [OpenSkelo](https://github.com/OpenSkelo/openskelo) — give your AI agents a backbone.\n\n## Quick Start\n\n\`\`\`bash\n# Start the pipeline\nnpx openskelo start\n\n# Create a task\nnpx openskelo task create --pipeline ${template} --title "My first task" --assign ${template === "research" ? "researcher" : template === "content" ? "writer" : "coder"}\n\n# Check status\nnpx openskelo status\n\`\`\`\n\nEdit \`skelo.yaml\` to customize your pipeline.\n`
+    `# ${projectName}\n\nPowered by [OpenSkelo](https://github.com/OpenSkelo/openskelo) — give your AI agents a backbone.\n\n## Quick Start\n\n\`\`\`bash\n# Start runtime + dashboard\nnpx openskelo start\n\n# In another terminal, start a DAG run\nnpx openskelo run start --example ${selected.dagFile} --context-json '{"prompt":"hello"}'\n\n# Check run status\nnpx openskelo run list\n\`\`\`\n\n- Project config: \`skelo.yaml\`\n- Starter DAG: \`examples/${selected.dagFile}\`\n\nThis project uses v2 DAG-first templates.\n`
   );
 
-  console.log(chalk.green("  ✓ ") + "skelo.yaml" + chalk.dim(` (${template} template)`));
+  console.log(chalk.green("  ✓ ") + "skelo.yaml" + chalk.dim(" (project config)"));
+  console.log(chalk.green("  ✓ ") + `examples/${selected.dagFile}` + chalk.dim(" (DAG template)"));
   console.log(chalk.green("  ✓ ") + ".gitignore");
   console.log(chalk.green("  ✓ ") + "README.md");
 
   console.log(chalk.hex("#f97316")(`\n🦴 Done! Next steps:\n`));
   console.log(chalk.dim(`  cd ${projectName}`));
   console.log(chalk.dim("  npx openskelo start"));
+  console.log(chalk.dim(`  npx openskelo run start --example ${selected.dagFile} --context-json '{\"prompt\":\"hello\"}'`));
   console.log();
 }

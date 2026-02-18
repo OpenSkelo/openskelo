@@ -3,6 +3,7 @@
  */
 
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -58,6 +59,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   approvalWaiters.clear();
 
   const app = new Hono();
+  app.use("/api/dag/*", cors());
   const engine = createBlockEngine();
   const examplesBaseDir = opts?.examplesDir ?? resolve(process.cwd(), "examples");
 
