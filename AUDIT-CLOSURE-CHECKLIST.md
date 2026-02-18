@@ -71,7 +71,7 @@ Legend:
   - Proof: `376cd2e`
 - [ ] Rate limiting
 - [x] Request size limits on `/api/dag/*` (configurable `OPENSKELO_MAX_REQUEST_BYTES`)
-  - Proof: `pending-commit`
+  - Proof: `5eaf696`
 - [ ] Optional auth model
 - [ ] SSE client lifecycle hardening (IDs/dedupe)
 - [ ] Error contract/pagination consistency polish
