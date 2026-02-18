@@ -17,6 +17,7 @@ import { createOpenAICompatibleProvider } from "../core/openai-compatible-provid
 import { createDB, getDB } from "../core/db.js";
 import { toSkeloError } from "../core/errors.js";
 import { jsonError } from "./dag-api-errors.js";
+import { buildApprovalNotificationText } from "./dag-api-approval-text.js";
 import type { DAGDef, DAGRun, BlockInstance } from "../core/block.js";
 import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
 import type { SkeloConfig, ProviderAdapter } from "../types.js";
@@ -108,31 +109,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       return;
     }
 
-    const token = String(approval.token ?? "");
-    const blockId = String(approval.block_id ?? "");
-    const prompt = String(approval.prompt ?? "Approval required");
-
-    const preview = approval.context_preview as Record<string, unknown> | undefined;
-    const previewText = preview
-      ? Object.entries(preview)
-          .slice(0, 4)
-          .map(([k, v]) => `• ${k}: ${String(typeof v === 'string' ? v : JSON.stringify(v)).slice(0, 180)}`)
-          .join("\n")
-      : "• (no input preview)";
-
-    const text = [
-      "🛑 OpenSkelo needs your approval",
-      `Workflow: ${run.dag_name}`,
-      `Step: ${blockId}`,
-      `Why: ${prompt}`,
-      "",
-      "Context snapshot:",
-      previewText,
-      "",
-      "Reply with: APPROVE",
-      "or: REJECT <reason>",
-      `(You can also specify run id: APPROVE ${run.id})`
-    ].join("\n");
+    const text = buildApprovalNotificationText(run, approval);
 
     await runCommand("openclaw", [
       "message",
