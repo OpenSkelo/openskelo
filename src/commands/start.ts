@@ -19,26 +19,11 @@ export async function startServer(opts: { port: number; dashboard: boolean }) {
   }
 
   // Initialize database
-  const db = createDB();
+  createDB();
   console.log(chalk.green("  ✓ ") + "Database initialized (.skelo/skelo.db)");
 
-  // Sync agents from config to DB
-  const syncAgent = db.prepare(`
-    INSERT OR REPLACE INTO agents (id, role, capabilities, provider, model, config)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  for (const [id, agent] of Object.entries(config.agents)) {
-    syncAgent.run(
-      id,
-      agent.role,
-      JSON.stringify(agent.capabilities),
-      agent.provider,
-      agent.model,
-      JSON.stringify(agent.config ?? {})
-    );
-  }
   const agentCount = Object.keys(config.agents).length;
-  console.log(chalk.green("  ✓ ") + `${agentCount} agent${agentCount !== 1 ? "s" : ""} registered`);
+  console.log(chalk.green("  ✓ ") + `${agentCount} agent${agentCount !== 1 ? "s" : ""} configured`);
 
   const pipelineCount = Object.keys(config.pipelines).length;
   const gateCount = config.gates.length;

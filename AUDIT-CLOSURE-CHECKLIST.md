@@ -126,6 +126,7 @@ Legend:
    - Slice A complete: DAG-first API startup path no longer requires task engine wiring
    - Slice B complete: legacy task CLI removed from command surface; legacy /api tasks/log routes removed
    - Slice C progress: legacy core modules (`task-engine`, `gate-engine`, `router`) removed from active codebase
+   - Slice C progress: DB init now creates DAG tables only
 2. Remove hardcoded Telegram target default
 3. Regex ReDoS hardening
 4. YAML line/column diagnostics
