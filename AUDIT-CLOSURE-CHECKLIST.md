@@ -80,7 +80,7 @@ Legend:
 - [x] SSE client lifecycle hardening (client IDs + dedupe + cleanup)
   - Proof: `fe61393`
 - [x] Error contract/pagination consistency polish (pagination on `/api/dag/runs` + DAG error envelopes standardized to `{error, code, details?}`)
-  - Proof: `pending-commit`
+  - Proof: `d4cfa9d`
 
 ## 9) DX & CLI
 - [x] DAG-first CLI commands (`skelo run ...`)
