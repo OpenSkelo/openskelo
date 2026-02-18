@@ -131,6 +131,10 @@ export interface DispatchResult {
   tokensUsed?: number;
   actualAgentId?: string;
   actualModel?: string;
+  /** Transport used to execute the block (e.g., openclaw) */
+  actualProvider?: string;
+  /** Billable model provider when known (e.g., openai, anthropic) */
+  actualModelProvider?: string;
   repairAttempted?: boolean;
   repairSucceeded?: boolean;
 }

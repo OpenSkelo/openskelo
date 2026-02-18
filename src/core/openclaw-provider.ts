@@ -21,10 +21,8 @@ export interface OpenClawProviderOpts {
 }
 
 const DEFAULT_AGENT_MAP: Record<string, string> = {
-  manager: "manager",
-  worker: "worker",
-  reviewer: "reviewer",
-  specialist: "specialist",
+  // Keep minimal safe defaults; prefer configured IDs from request.agent.id.
+  main: "main",
 };
 
 export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): ProviderAdapter {
@@ -62,6 +60,8 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
                 tokensUsed: 0,
                 actualAgentId: "main",
                 actualModel: opts.model ?? request.agent.model,
+                actualProvider: "openclaw",
+                actualModelProvider: inferModelProvider(opts.model ?? request.agent.model),
               };
             }
           }
@@ -84,6 +84,8 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
           const meta = (parsed.result as Record<string, unknown>)?.meta as Record<string, unknown> | undefined;
           const agentMeta = meta?.agentMeta as Record<string, unknown> | undefined;
           const usage = agentMeta?.usage as Record<string, number> | undefined;
+          const runtimeModel = (agentMeta?.model as string | undefined) ?? (opts.model ?? request.agent.model);
+          const runtimeModelProvider = inferModelProvider(runtimeModel) ?? inferModelProvider(agentMeta?.provider as string | undefined);
 
           if (text) {
             const norm = await normalizeStructuredOutput(
@@ -100,7 +102,9 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
               sessionId: (agentMeta?.sessionId as string) ?? runId ?? `oc_${Date.now()}`,
               tokensUsed: (usage?.input ?? 0) + (usage?.output ?? 0),
               actualAgentId: agentId,
-              actualModel: opts.model ?? request.agent.model,
+              actualModel: runtimeModel,
+              actualProvider: "openclaw",
+              actualModelProvider: runtimeModelProvider,
               repairAttempted: norm.repairAttempted,
               repairSucceeded: norm.repairSucceeded,
             };
@@ -123,6 +127,8 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
               tokensUsed: 0,
               actualAgentId: agentId,
               actualModel: opts.model ?? request.agent.model,
+              actualProvider: "openclaw",
+              actualModelProvider: inferModelProvider(opts.model ?? request.agent.model),
               repairAttempted: norm.repairAttempted,
               repairSucceeded: norm.repairSucceeded,
             };
@@ -145,6 +151,8 @@ export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): Provide
           tokensUsed: 0,
           actualAgentId: agentId,
           actualModel: opts.model ?? request.agent.model,
+          actualProvider: "openclaw",
+          actualModelProvider: inferModelProvider(opts.model ?? request.agent.model),
           repairAttempted: norm.repairAttempted,
           repairSucceeded: norm.repairSucceeded,
         };
@@ -261,13 +269,18 @@ function runCommand(
 }
 
 function resolveAgent(request: DispatchRequest, agentMap: Record<string, string>): string {
+  // 1) Explicit per-agent mapping override
   if (request.agent?.id && agentMap[request.agent.id]) {
     return agentMap[request.agent.id];
   }
+  // 2) Role mapping override
   if (request.agent?.role && agentMap[request.agent.role]) {
     return agentMap[request.agent.role];
   }
-  return agentMap.worker ?? "worker";
+  // 3) Prefer configured runtime agent id directly (avoids unknown role-literal IDs)
+  if (request.agent?.id) return request.agent.id;
+  // 4) Last-resort fallback
+  return agentMap.main ?? "main";
 }
 
 function buildAgentPrompt(request: DispatchRequest): string {
@@ -386,6 +399,21 @@ function matchesSchema(value: Record<string, unknown>, schema: Record<string, un
   }
 
   return true;
+}
+
+
+function inferModelProvider(modelOrProvider?: string): string | undefined {
+  if (!modelOrProvider) return undefined;
+  const v = modelOrProvider.toLowerCase();
+  if (v.includes('openai') || v.startsWith('gpt-') || v.includes('o3') || v.includes('o1')) return 'openai';
+  if (v.includes('anthropic') || v.includes('claude')) return 'anthropic';
+  if (v.includes('google') || v.includes('gemini')) return 'google';
+  if (v.includes('minimax')) return 'minimax';
+  if (v.includes('deepseek')) return 'deepseek';
+  if (v.includes('mistral')) return 'mistral';
+  if (v.includes('llama') || v.includes('ollama')) return 'ollama';
+  if (['openai','anthropic','google','minimax','deepseek','mistral','ollama'].includes(v)) return v;
+  return undefined;
 }
 
 function tryParseJSON(str: string): Record<string, unknown> | null {

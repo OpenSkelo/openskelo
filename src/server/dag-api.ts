@@ -11,10 +11,11 @@ import { parse as parseYaml } from "yaml";
 import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
 import { createOpenClawProvider } from "../core/openclaw-provider.js";
+import { createMockProvider } from "../core/mock-provider.js";
 import { createDB, getDB } from "../core/db.js";
 import type { DAGDef, DAGRun, BlockInstance } from "../core/block.js";
 import type { ExecutorResult, TraceEntry } from "../core/dag-executor.js";
-import type { SkeloConfig } from "../types.js";
+import type { SkeloConfig, ProviderAdapter } from "../types.js";
 
 interface DAGEvent {
   type: "run:start" | "block:start" | "block:complete" | "block:fail" | "run:complete" | "run:fail" | "approval:requested" | "approval:decided";
@@ -314,27 +315,70 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       };
     }
 
-    const providerMode = (body.provider as string) ?? "openclaw";
-    if (providerMode !== "openclaw") {
-      return { error: "Only provider=openclaw is enabled in this build", status: 400 as const };
+    const providerMode = (body.provider as string | undefined)?.trim();
+
+    const roleDerivedMapping = Object.entries(config.agents).reduce((acc, [id, a]) => {
+      // keep first role match stable; avoid silent overwrite when multiple agents share a role
+      if (!acc[a.role]) acc[a.role] = id;
+      // id passthrough mapping
+      acc[id] = id;
+      return acc;
+    }, {} as Record<string, string>);
+
+    const userMapping = (body.agentMapping as Record<string, string> | undefined) ?? {};
+    const unknownTargets = Object.values(userMapping).filter((v) => !config.agents[v]);
+    if (unknownTargets.length > 0) {
+      return {
+        error: `Invalid agentMapping target(s): ${unknownTargets.join(", ")}. Known agents: ${Object.keys(config.agents).join(", ")}`,
+        status: 400 as const,
+      };
     }
 
-    const roleDerivedMapping = Object.fromEntries(
-      Object.entries(config.agents).map(([id, a]) => [a.role, id])
-    ) as Record<string, string>;
-
-    const provider = createOpenClawProvider({
+    const openclawProvider = createOpenClawProvider({
       agentMapping: {
         ...roleDerivedMapping,
-        ...(body.agentMapping as Record<string, string> | undefined),
+        ...userMapping,
       },
       timeoutSeconds: Math.min((body.timeoutSeconds as number) ?? 300, Math.ceil(safety.maxBlockDurationMs / 1000)),
       model: (body.model as string | undefined) ?? "openai-codex/gpt-5.3-codex",
       thinking: body.thinking as string | undefined,
     });
 
-    const providers: Record<string, typeof provider> = {};
-    for (const p of config.providers) providers[p.name] = provider;
+    const mockProvider = createMockProvider({
+      minDelay: 200,
+      maxDelay: 900,
+      failureRate: 0,
+    });
+
+    const providers: Record<string, ProviderAdapter> = {};
+    for (const p of config.providers) {
+      if (p.type === "openclaw") {
+        providers[p.name] = openclawProvider;
+      } else if ((body.devMode as boolean) === true) {
+        // Dev-mode fallback for non-wired provider types
+        providers[p.name] = mockProvider;
+      } else {
+        return {
+          error: `Provider '${p.name}' (type=${p.type}) is not wired in adapter factory yet. Use an openclaw provider or enable devMode for mock fallback.`,
+          status: 400 as const,
+        };
+      }
+    }
+
+    // Optional provider override by name or type: route all agent providers to selected adapter
+    if (providerMode) {
+      const byName = config.providers.find((p) => p.name === providerMode);
+      const byType = config.providers.find((p) => p.type === providerMode);
+      const selected = byName ?? byType;
+      if (!selected) {
+        return {
+          error: `Unknown provider '${providerMode}'. Available: ${config.providers.map((p) => p.name).join(", ")}`,
+          status: 400 as const,
+        };
+      }
+      const selectedAdapter = providers[selected.name];
+      for (const key of Object.keys(providers)) providers[key] = selectedAdapter;
+    }
 
     const runAbortController = new AbortController();
     let runIdRef = "";

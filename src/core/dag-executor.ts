@@ -250,7 +250,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       const provider = opts.providers[agent.provider];
       run.blocks[blockId].active_agent_id = agent.id;
       run.blocks[blockId].active_model = agent.model;
-      run.blocks[blockId].active_provider = agent.provider;
+      run.blocks[blockId].active_provider = provider?.name ?? agent.provider;
     }
 
     opts.onBlockStart?.(run, blockId);
@@ -462,7 +462,8 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       const err = `Output contract failed: ${contract.errors.join("; ")}`;
       const execution: BlockExecution = {
         agent_id: dispatchResult.actualAgentId ?? agent.id,
-        provider: agent.provider,
+        provider: dispatchResult.actualModelProvider ?? dispatchResult.actualProvider ?? agent.provider,
+        transport_provider: dispatchResult.actualProvider ?? agent.provider,
         model: dispatchResult.actualModel ?? agent.model,
         raw_output: dispatchResult.output ?? "",
         tokens_in: dispatchResult.tokensUsed ?? 0,
@@ -493,13 +494,17 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       return;
     }
 
-    // Update runtime assignee/model to actual dispatched worker when provider reports it
+    // Update runtime assignee/model/provider to actual dispatched worker when provider reports it
     if (dispatchResult.actualAgentId) run.blocks[blockId].active_agent_id = dispatchResult.actualAgentId;
     if (dispatchResult.actualModel) run.blocks[blockId].active_model = dispatchResult.actualModel;
+    if (dispatchResult.actualProvider || dispatchResult.actualModelProvider) {
+      run.blocks[blockId].active_provider = dispatchResult.actualModelProvider ?? dispatchResult.actualProvider;
+    }
 
     const execution: BlockExecution = {
       agent_id: dispatchResult.actualAgentId ?? agent.id,
-      provider: agent.provider,
+      provider: dispatchResult.actualModelProvider ?? dispatchResult.actualProvider ?? agent.provider,
+      transport_provider: dispatchResult.actualProvider ?? agent.provider,
       model: dispatchResult.actualModel ?? agent.model,
       raw_output: dispatchResult.output ?? "",
       tokens_in: dispatchResult.tokensUsed ?? 0,

@@ -80,19 +80,40 @@ describe("DAG API integration", () => {
     expect(examples.examples.length).toBeGreaterThan(0);
   });
 
-  it("rejects unsupported provider on run start", async () => {
+  it("rejects unknown provider override on run start", async () => {
     const ctx = setupDagTestApp();
     cleanups.push(ctx.cleanup);
 
     const res = await ctx.app.request("/api/dag/run", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ example: "coding-pipeline.yaml", provider: "mock", context: { prompt: "x" } }),
+      body: JSON.stringify({ example: "coding-pipeline.yaml", provider: "does-not-exist", context: { prompt: "x" } }),
     });
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain("Only provider=openclaw");
+    expect(body.error).toContain("Unknown provider");
+  });
+
+  it("rejects invalid agentMapping targets", async () => {
+    const ctx = setupDagTestApp();
+    cleanups.push(ctx.cleanup);
+
+    const res = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        example: "coding-pipeline.yaml",
+        provider: "openclaw",
+        devMode: true,
+        context: { prompt: "x" },
+        agentMapping: { reviewer: "not-a-real-agent" },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("Invalid agentMapping target");
   });
 
   it("creates run + supports stop and replay/status paths", async () => {

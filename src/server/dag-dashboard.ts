@@ -359,6 +359,22 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       width: 70px;
     }
 
+    .run-state-pill {
+      display: inline-block;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 11px;
+      line-height: 18px;
+      text-transform: lowercase;
+      background: var(--surface2);
+    }
+    .run-state-pending, .run-state-running { border-color: var(--yellow); color: var(--yellow); }
+    .run-state-paused_approval { border-color: var(--blue); color: var(--blue); }
+    .run-state-completed { border-color: var(--green); color: var(--green); }
+    .run-state-iterated { border-color: var(--cyan); color: var(--cyan); }
+    .run-state-failed, .run-state-cancelled { border-color: var(--red); color: var(--red); }
+
     .event-log {
       display: flex;
       flex-direction: column;
@@ -499,9 +515,16 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       <div class="run-actions">
         <button class="primary" id="runBtn" disabled>▶ Run DAG</button>
         <button id="stopBtn" style="display:none;background:var(--red);border-color:var(--red);color:white;font-weight:600">■ Stop</button>
+        <button id="refreshRunBtn" title="Refresh current run status from API">↻ Refresh</button>
       </div>
     </div>
   </div>
+
+  <div id="approvalBanner" style="display:none;padding:10px 16px;border-bottom:1px solid var(--border);background:rgba(59,130,246,.12);color:#bfdbfe;font-size:13px;font-weight:600">
+    ⏸ Waiting for approval at block: <span id="approvalBannerBlock">—</span>
+  </div>
+
+  <div id="streamToast" style="display:none;position:fixed;right:16px;bottom:16px;z-index:9999;background:rgba(10,14,26,.96);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:8px;font-size:12px;box-shadow:0 6px 24px rgba(0,0,0,.35)"></div>
 
   <div class="main">
     <div class="dag-canvas" id="dagCanvas">
@@ -545,7 +568,9 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         <div class="run-info" id="runInfo" style="margin-top:12px">
           <div><span class="label">Run ID:</span> <span id="runId">—</span></div>
           <div><span class="label">DAG:</span> <span id="runDag">—</span></div>
-          <div><span class="label">Status:</span> <span id="runStatus">—</span></div>
+          <div><span class="label">Status:</span> <span id="runStatus" class="run-state-pill">—</span></div>
+          <div><span class="label">Stream:</span> <span id="streamStatus">disconnected</span></div>
+          <div><span class="label">Last evt:</span> <span id="lastEventAt">—</span></div>
           <div><span class="label">Elapsed:</span> <span id="runElapsed">—</span></div>
           <div><span class="label">Cycle:</span> <span id="runCycle">1/—</span></div>
           <div><span class="label">Run chain:</span> <span id="runChain">—</span></div>
@@ -628,6 +653,43 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     let dagZoom = 1;
     let currentFilter = 'all';
     let followSwitchInFlight = false;
+    let toastTimer = null;
+
+    function setApprovalBanner(show, blockId) {
+      const bar = document.getElementById('approvalBanner');
+      const block = document.getElementById('approvalBannerBlock');
+      if (!bar || !block) return;
+      bar.style.display = show ? 'block' : 'none';
+      if (show) block.textContent = blockId || 'unknown';
+    }
+
+    function showToast(msg, ms = 2600) {
+      const el = document.getElementById('streamToast');
+      if (!el) return;
+      el.textContent = msg;
+      el.style.display = 'block';
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { el.style.display = 'none'; }, ms);
+    }
+
+    function setRunStatus(status) {
+      const el = document.getElementById('runStatus');
+      if (!el) return;
+      const normalized = (status || '—').toString();
+      el.textContent = normalized;
+      el.className = 'run-state-pill run-state-' + normalized;
+    }
+
+    function setStreamStatus(text) {
+      const el = document.getElementById('streamStatus');
+      if (el) el.textContent = text;
+    }
+
+    function markEventSeen(ts) {
+      const t = ts ? new Date(ts) : new Date();
+      const el = document.getElementById('lastEventAt');
+      if (el) el.textContent = t.toLocaleTimeString();
+    }
 
     // Load examples
     async function loadDagByFile(file) {
@@ -673,6 +735,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
     document.getElementById('runBtn').addEventListener('click', runDAG);
     document.getElementById('stopBtn').addEventListener('click', stopDAG);
+    document.getElementById('refreshRunBtn').addEventListener('click', () => refreshRunData());
     document.getElementById('topicInput').addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
@@ -767,9 +830,11 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       if (livePoll) { clearInterval(livePoll); livePoll = null; }
       if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
       if (eventSource) { eventSource.close(); eventSource = null; }
+      setStreamStatus('disconnected');
       currentRunId = null;
       pendingApproval = null;
-      document.getElementById('runStatus').textContent = 'stale-run';
+      setApprovalBanner(false);
+      setRunStatus('stale-run');
       document.getElementById('runBtn').disabled = false;
       document.getElementById('runBtn').textContent = '▶ Run DAG';
       document.getElementById('stopBtn').style.display = 'none';
@@ -807,6 +872,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       const data = await res.json().catch(() => ({}));
 
       pendingApproval = null;
+      setApprovalBanner(false);
       document.getElementById('approvalPanel').style.display = 'none';
       const fbEl = document.getElementById('approvalFeedback');
       if (fbEl) fbEl.value = '';
@@ -815,7 +881,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       if (data && data.iterated_run_id) {
         currentRunId = data.iterated_run_id;
         document.getElementById('runId').textContent = currentRunId;
-        document.getElementById('runStatus').textContent = 'running';
+        setRunStatus('running');
         setupSSE(currentRunId);
         addEventLog({
           type: 'run:start',
@@ -824,6 +890,54 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
           timestamp: new Date().toISOString(),
         });
       }
+    }
+
+    function setupSSE(runId) {
+      if (!runId) return;
+      if (eventSource) { eventSource.close(); eventSource = null; }
+      if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
+      const sseUrl = API + '/api/dag/runs/' + runId + '/events';
+      setStreamStatus('connecting…');
+      logNetwork('SSE', sseUrl, 'connecting');
+      eventSource = new EventSource(sseUrl);
+      eventSource.onopen = () => {
+        lastSseEventAt = Date.now();
+        setStreamStatus('connected');
+        markEventSeen();
+        logNetwork('SSE', sseUrl, 'connected');
+        if (livePoll) { clearInterval(livePoll); livePoll = null; }
+      };
+      eventSource.onerror = () => {
+        setStreamStatus('reconnecting…');
+        showToast('Live event stream disconnected — reconnecting…');
+      };
+
+      const onSseEvent = (handler) => (e) => {
+        lastSseEventAt = Date.now();
+        handler(JSON.parse(e.data));
+      };
+      eventSource.addEventListener('block:start', onSseEvent(handleEvent));
+      eventSource.addEventListener('block:complete', onSseEvent(handleEvent));
+      eventSource.addEventListener('block:fail', onSseEvent(handleEvent));
+      eventSource.addEventListener('approval:requested', onSseEvent(handleEvent));
+      eventSource.addEventListener('approval:decided', onSseEvent(handleEvent));
+      eventSource.addEventListener('run:start', onSseEvent(handleEvent));
+      eventSource.addEventListener('run:complete', onSseEvent(handleRunEnd));
+      eventSource.addEventListener('run:fail', onSseEvent(handleRunEnd));
+
+      sseWatchdog = setInterval(async () => {
+        if (!currentRunId) return;
+        const staleFor = Date.now() - lastSseEventAt;
+        if (staleFor > 5000 && !livePoll) {
+          setStreamStatus('polling fallback');
+          showToast('Switched to polling fallback (stream stale)');
+          livePoll = setInterval(async () => {
+            await refreshRunData();
+            if (LIVE_MODE) focusActiveBlock();
+          }, 2000);
+          addEventLog({ type: 'transport:warn', run_id: currentRunId, data: { status: 'SSE stale, fallback polling enabled' }, timestamp: new Date().toISOString() });
+        }
+      }, 1500);
     }
 
     async function runDAG() {
@@ -893,64 +1007,29 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       if (livePoll) { clearInterval(livePoll); livePoll = null; }
       document.getElementById('runId').textContent = data.run_id.slice(0, 16);
       document.getElementById('runDag').textContent = data.dag_name;
-      document.getElementById('runStatus').textContent = 'running';
+      setRunStatus('running');
       document.getElementById('statTotal').textContent = data.blocks.length;
 
       // Connect SSE
-      if (eventSource) eventSource.close();
-      if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
-      const sseUrl = API + '/api/dag/runs/' + data.run_id + '/events';
-      logNetwork('SSE', sseUrl, 'connecting');
-      eventSource = new EventSource(sseUrl);
-      eventSource.onopen = () => {
-        lastSseEventAt = Date.now();
-        logNetwork('SSE', sseUrl, 'connected');
-        // If SSE is healthy, disable fallback polling
-        if (livePoll) { clearInterval(livePoll); livePoll = null; }
-      };
-      eventSource.onerror = () => {
-        // SSE had trouble; watchdog will activate fallback polling if needed
-      };
+      setupSSE(data.run_id);
 
-      // Watchdog: if no SSE event for >5s, enable temporary fallback polling
-      sseWatchdog = setInterval(async () => {
-        if (!currentRunId) return;
-        const staleFor = Date.now() - lastSseEventAt;
-        if (staleFor > 5000 && !livePoll) {
-          livePoll = setInterval(async () => {
-            await refreshRunData();
-            if (LIVE_MODE) focusActiveBlock();
-          }, 2000);
-          addEventLog({ type: 'transport:warn', run_id: currentRunId, data: { status: 'SSE stale, fallback polling enabled' }, timestamp: new Date().toISOString() });
-        }
-      }, 1500);
-
-      const onSseEvent = (handler) => (e) => {
-        lastSseEventAt = Date.now();
-        handler(JSON.parse(e.data));
-      };
-      eventSource.addEventListener('block:start', onSseEvent(handleEvent));
-      eventSource.addEventListener('block:complete', onSseEvent(handleEvent));
-      eventSource.addEventListener('block:fail', onSseEvent(handleEvent));
-      eventSource.addEventListener('approval:requested', onSseEvent(handleEvent));
-      eventSource.addEventListener('approval:decided', onSseEvent(handleEvent));
-      eventSource.addEventListener('run:start', onSseEvent(handleEvent));
-      eventSource.addEventListener('run:complete', onSseEvent(handleRunEnd));
-      eventSource.addEventListener('run:fail', onSseEvent(handleRunEnd));
       } catch (err) {
         btn.disabled = false;
         btn.textContent = '▶ Run DAG';
         document.getElementById('stopBtn').style.display = 'none';
+        setStreamStatus('disconnected');
         clearInterval(elapsedInterval);
         const msg = err?.message || String(err);
-        document.getElementById('runStatus').textContent = 'failed';
+        setRunStatus('failed');
         addEventLog({ type: 'run:fail', run_id: 'ui', data: { status: msg }, timestamp: new Date().toISOString() });
       }
     }
 
     function handleEvent(event) {
+      markEventSeen(event.timestamp);
       if (event.type === 'approval:requested') {
         pendingApproval = event.data;
+        setApprovalBanner(true, event.block_id || event.data?.block_id || 'unknown');
         document.getElementById('approvalPanel').style.display = 'block';
         document.getElementById('approvalText').textContent = (event.data.prompt || 'Approval needed') + ' [' + (event.block_id || '') + ']';
       }
@@ -973,6 +1052,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       }
       if (event.type === 'approval:decided') {
         pendingApproval = null;
+        setApprovalBanner(false);
         document.getElementById('approvalPanel').style.display = 'none';
       }
 
@@ -1033,7 +1113,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     function handleRunEnd(event) {
       handleEvent(event);
       clearInterval(elapsedInterval);
-      document.getElementById('runStatus').textContent = event.data.status;
+      setRunStatus(event.data.status);
       const btn = document.getElementById('runBtn');
       btn.disabled = false;
       btn.textContent = '▶ Run DAG';
@@ -1047,6 +1127,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       if (livePoll) { clearInterval(livePoll); livePoll = null; }
       if (sseWatchdog) { clearInterval(sseWatchdog); sseWatchdog = null; }
       if (eventSource) { eventSource.close(); eventSource = null; }
+      setStreamStatus('disconnected');
     }
 
     function updateStats() {
@@ -1171,6 +1252,8 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         active_agent_id: block.active_agent_id,
         active_model: block.active_model,
         active_provider: block.active_provider,
+        transport_provider: block.execution?.transport_provider,
+        model_provider: block.execution?.provider,
         schema_guided_mode: block.active_schema_guided === true,
         inputs: block.inputs,
         outputs: block.outputs,
@@ -1328,7 +1411,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         // Snapshot truth sync (for SSE drops or reconnect gaps)
         const run = currentRunData?.run;
         if (run?.status) {
-          document.getElementById('runStatus').textContent = run.status;
+          setRunStatus(run.status);
           Object.entries(run.blocks || {}).forEach(([id, b]) => {
             const node = document.getElementById('block-' + id);
             if (!node) return;
@@ -1372,8 +1455,11 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
 
         if (currentRunData.approval && currentRunData.approval.status === 'pending') {
           pendingApproval = currentRunData.approval;
+          setApprovalBanner(true, pendingApproval.block_id || 'unknown');
           document.getElementById('approvalPanel').style.display = 'block';
           document.getElementById('approvalText').textContent = (pendingApproval.prompt || 'Approval needed') + ' [' + (pendingApproval.block_id || '') + ']';
+        } else {
+          setApprovalBanner(false);
         }
         if (LIVE_MODE) updateLivePreview();
       } catch (_) {}

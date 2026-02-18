@@ -239,8 +239,11 @@ export interface BlockExecution {
   /** Agent that executed this block */
   agent_id: string;
 
-  /** Provider used */
+  /** Billable model provider used (e.g., openai, anthropic). Backward-compatible field. */
   provider: string;
+
+  /** Transport used to execute this block (e.g., openclaw adapter) */
+  transport_provider?: string;
 
   /** Model used */
   model: string;
