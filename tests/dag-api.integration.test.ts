@@ -135,6 +135,30 @@ describe("DAG API integration", () => {
     expect(body.error).toContain("Request too large");
   });
 
+  it("enforces rate limits on dag endpoints", async () => {
+    const prevMax = process.env.OPENSKELO_RATE_LIMIT_MAX;
+    const prevWindow = process.env.OPENSKELO_RATE_LIMIT_WINDOW_MS;
+    process.env.OPENSKELO_RATE_LIMIT_MAX = "1";
+    process.env.OPENSKELO_RATE_LIMIT_WINDOW_MS = "60000";
+
+    const ctx = setupDagTestApp();
+    cleanups.push(() => {
+      if (prevMax === undefined) delete process.env.OPENSKELO_RATE_LIMIT_MAX;
+      else process.env.OPENSKELO_RATE_LIMIT_MAX = prevMax;
+      if (prevWindow === undefined) delete process.env.OPENSKELO_RATE_LIMIT_WINDOW_MS;
+      else process.env.OPENSKELO_RATE_LIMIT_WINDOW_MS = prevWindow;
+      ctx.cleanup();
+    });
+
+    const first = await ctx.app.request("/api/dag/examples", { headers: { "x-forwarded-for": "rate-test" } });
+    expect(first.status).toBe(200);
+
+    const second = await ctx.app.request("/api/dag/examples", { headers: { "x-forwarded-for": "rate-test" } });
+    expect(second.status).toBe(429);
+    const body = (await second.json()) as { error: string };
+    expect(body.error).toContain("Rate limit exceeded");
+  });
+
   it("routes provider override by name/type to the correct adapter endpoints", async () => {
     const examplesDir = mkdtempSync(join(tmpdir(), "openskelo-dag-examples-"));
     mkdirSync(examplesDir, { recursive: true });

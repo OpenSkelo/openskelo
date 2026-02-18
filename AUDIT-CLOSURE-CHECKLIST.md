@@ -69,7 +69,8 @@ Legend:
 ## 8) API & Server
 - [x] Legacy `/api/tasks*` deprecation headers
   - Proof: `376cd2e`
-- [ ] Rate limiting
+- [x] Rate limiting on `/api/dag/*` (configurable window/max)
+  - Proof: `pending-commit`
 - [x] Request size limits on `/api/dag/*` (configurable `OPENSKELO_MAX_REQUEST_BYTES`)
   - Proof: `5eaf696`
 - [ ] Optional auth model

@@ -250,6 +250,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   }
 
   const maxRequestBytes = Number(process.env.OPENSKELO_MAX_REQUEST_BYTES ?? String(512 * 1024));
+  const rateLimitWindowMs = Number(process.env.OPENSKELO_RATE_LIMIT_WINDOW_MS ?? "60000");
+  const rateLimitMax = Number(process.env.OPENSKELO_RATE_LIMIT_MAX ?? "120");
+  const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+
   app.use("/api/dag/*", async (c, next) => {
     const lenHeader = c.req.header("content-length");
     if (lenHeader) {
@@ -258,10 +262,23 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         return c.json({ error: `Request too large. Max ${maxRequestBytes} bytes` }, 413);
       }
     }
+
+    const clientKey = String(c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "local");
+    const now = Date.now();
+    const existing = rateBuckets.get(clientKey);
+    if (!existing || existing.resetAt <= now) {
+      rateBuckets.set(clientKey, { count: 1, resetAt: now + rateLimitWindowMs });
+    } else {
+      existing.count += 1;
+      if (existing.count > rateLimitMax) {
+        return c.json({ error: "Rate limit exceeded", retryAfterMs: Math.max(0, existing.resetAt - now) }, 429);
+      }
+    }
+
     await next();
   });
 
-  app.get("/api/dag/safety", (c) => c.json({ safety, limits: { maxRequestBytes } }));
+  app.get("/api/dag/safety", (c) => c.json({ safety, limits: { maxRequestBytes, rateLimitWindowMs, rateLimitMax } }));
 
   // Startup orphan sweep (durable runs marked running with no active execution)
   try {
