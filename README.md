@@ -44,18 +44,21 @@ OpenSkelo is different. It's not another agent framework — it's the **skeleton
 ## Quick Start (DAG-first)
 
 ```bash
-# Clone and install
-npm install
+# Start runtime
+npx openskelo start
 
-# Run a bundled DAG example (recommended until template migration lands)
-npx openskelo run start --example basic --watch
+# Run a bundled DAG example
+npx openskelo run start --example coding-pipeline.yaml --context-json '{"prompt":"Build a login endpoint"}'
+
+# Or use planner thin-slice from natural language
+npx openskelo autopilot "Add rate limiting to the API"
 ```
 
 Then open:
-- Dashboard: `http://localhost:4040/dashboard`
+- Dashboard: `http://localhost:4040/dag`
 - DAG API: `http://localhost:4040/api/dag/*`
 
-> Note: `skelo init --template ...` is being migrated to emit DAG block format. For now, use `examples/*.yaml` as canonical starter configs.
+> `skelo init --template ...` now generates v2 DAG-first project structure.
 
 ## How It Works
 
@@ -158,6 +161,24 @@ Gates are rules that **cannot be bypassed silently**. Block execution and progre
 
 > `semantic_review` is the deterministic keyword-coverage baseline. `llm_review` is the second-model semantic judge gate with structured criterion scoring.
 
+Minimal `llm_review` example:
+
+```yaml
+post_gates:
+  - name: semantic-judge
+    check:
+      type: llm_review
+      port: draft
+      provider: local
+      model: llama3:8b
+      criteria:
+        - "Includes error handling"
+        - "Mentions tests"
+      pass_threshold: 1.0
+      timeout_ms: 15000
+    error: "Draft failed semantic quality review"
+```
+
 The `shell` check remains an escape hatch (explicitly opt-in) for environment-specific validation.
 
 ## Templates
@@ -236,9 +257,9 @@ OpenSkelo's canonical runtime is the DAG API (`/api/dag/*`).
 
 ## Known Gaps (Post-audit follow-up)
 
-- `skelo init` templates are being migrated to DAG block format (currently legacy-shaped output).
-- `semantic_review` remains keyword coverage baseline; `llm_review` is now available for second-model semantic judging.
-- DAG-route CORS hardening is tracked as a priority for browser-first integrations.
+- Planner is currently thin-slice heuristic generation; model-native DAG planning can be expanded.
+- `llm_review` test matrix still needs explicit provider-error and timeout-path cases.
+- Viral demo artifact package (terminal-first shareable output + recorded walkthrough) is next shipping lane.
 
 ## 60-Second Demo
 

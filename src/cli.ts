@@ -4,6 +4,7 @@ import { initProject } from "./commands/init.js";
 import { startServer } from "./commands/start.js";
 import { statusCommand } from "./commands/status.js";
 import { runCommands } from "./commands/run.js";
+import { autopilotCommand } from "./commands/autopilot.js";
 
 const VERSION = "0.1.0";
 
@@ -62,6 +63,17 @@ const run = program
   .description("Operate DAG runs via /api/dag/* (canonical runtime)");
 
 runCommands(run);
+
+// ── autopilot ──
+program
+  .command("autopilot <goal>")
+  .description("Generate a DAG from a natural-language goal and execute it")
+  .option("--api <url>", "API base URL", process.env.OPENSKELO_API ?? "http://localhost:4040")
+  .option("--provider <nameOrType>", "Provider override")
+  .option("--dry-run", "Print planned DAG JSON and exit", false)
+  .action(async (goal, opts) => {
+    await autopilotCommand(goal, opts);
+  });
 
 // ── validate ──
 program

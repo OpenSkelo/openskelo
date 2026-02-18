@@ -102,17 +102,17 @@ Exit criteria:
 ## Phase 3 — Planner Thin-Slice (`autopilot`) (P1)
 
 ### Build
-- [ ] Add `openskelo autopilot "<goal>"` command
-- [ ] Generate DAG YAML from natural language prompt
-- [ ] Validate with parser; retry on validation errors
-- [ ] Execute validated DAG
+- [x] Add `openskelo autopilot "<goal>"` command
+- [x] Generate DAG YAML from natural language prompt
+- [x] Validate with parser; retry on validation errors
+- [x] Execute validated DAG
 
 ### Tests
-- [ ] 3 canned prompts succeed end-to-end
-- [ ] validation failure/retry path test
+- [x] 3 canned prompts covered in planner tests (coding + research + retry path)
+- [x] validation failure/retry path test
 
 ### Docs
-- [ ] Add quickstart for autopilot command
+- [x] Add quickstart for autopilot command
 
 Exit criteria:
 - NL goal → valid DAG → execution works deterministically
