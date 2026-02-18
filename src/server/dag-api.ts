@@ -252,9 +252,19 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   const maxRequestBytes = Number(process.env.OPENSKELO_MAX_REQUEST_BYTES ?? String(512 * 1024));
   const rateLimitWindowMs = Number(process.env.OPENSKELO_RATE_LIMIT_WINDOW_MS ?? "60000");
   const rateLimitMax = Number(process.env.OPENSKELO_RATE_LIMIT_MAX ?? "120");
+  const configuredApiKey = String(process.env.OPENSKELO_API_KEY ?? "").trim();
   const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
   app.use("/api/dag/*", async (c, next) => {
+    if (configuredApiKey) {
+      const auth = String(c.req.header("authorization") ?? "");
+      const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+      const xApiKey = String(c.req.header("x-api-key") ?? "").trim();
+      const presented = bearer || xApiKey;
+      if (presented !== configuredApiKey) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+    }
     const lenHeader = c.req.header("content-length");
     if (lenHeader) {
       const n = Number(lenHeader);
@@ -278,7 +288,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     await next();
   });
 
-  app.get("/api/dag/safety", (c) => c.json({ safety, limits: { maxRequestBytes, rateLimitWindowMs, rateLimitMax } }));
+  app.get("/api/dag/safety", (c) => c.json({ safety, limits: { maxRequestBytes, rateLimitWindowMs, rateLimitMax }, auth: { apiKeyRequired: Boolean(configuredApiKey) } }));
 
   // Startup orphan sweep (durable runs marked running with no active execution)
   try {

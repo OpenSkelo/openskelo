@@ -159,6 +159,31 @@ describe("DAG API integration", () => {
     expect(body.error).toContain("Rate limit exceeded");
   });
 
+  it("enforces optional API key auth on dag endpoints", async () => {
+    const prevApiKey = process.env.OPENSKELO_API_KEY;
+    process.env.OPENSKELO_API_KEY = "secret123";
+
+    const ctx = setupDagTestApp();
+    cleanups.push(() => {
+      if (prevApiKey === undefined) delete process.env.OPENSKELO_API_KEY;
+      else process.env.OPENSKELO_API_KEY = prevApiKey;
+      ctx.cleanup();
+    });
+
+    const unauthorized = await ctx.app.request("/api/dag/examples");
+    expect(unauthorized.status).toBe(401);
+
+    const authorizedBearer = await ctx.app.request("/api/dag/examples", {
+      headers: { authorization: "Bearer secret123" },
+    });
+    expect(authorizedBearer.status).toBe(200);
+
+    const authorizedHeader = await ctx.app.request("/api/dag/examples", {
+      headers: { "x-api-key": "secret123" },
+    });
+    expect(authorizedHeader.status).toBe(200);
+  });
+
   it("routes provider override by name/type to the correct adapter endpoints", async () => {
     const examplesDir = mkdtempSync(join(tmpdir(), "openskelo-dag-examples-"));
     mkdirSync(examplesDir, { recursive: true });
