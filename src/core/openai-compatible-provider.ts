@@ -4,6 +4,7 @@ import { buildPrompt } from "./provider-utils.js";
 export interface OpenAICompatibleProviderOpts {
   name: string;
   baseUrl?: string;
+  apiKey?: string;
   apiKeyEnv?: string;
   authHeader?: string;
   model?: string;
@@ -21,7 +22,7 @@ export function createOpenAICompatibleProvider(opts: OpenAICompatibleProviderOpt
     async dispatch(request: DispatchRequest): Promise<DispatchResult> {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
-      const apiKey = opts.apiKeyEnv ? process.env[opts.apiKeyEnv] : process.env.OPENAI_API_KEY;
+      const apiKey = opts.apiKey ?? (opts.apiKeyEnv ? process.env[opts.apiKeyEnv] : process.env.OPENAI_API_KEY);
 
       try {
         const messages: Array<{ role: string; content: string }> = [];

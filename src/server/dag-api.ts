@@ -16,6 +16,7 @@ import { createMockProvider } from "../core/mock-provider.js";
 import { createOllamaProvider } from "../core/ollama-provider.js";
 import { createOpenAICompatibleProvider } from "../core/openai-compatible-provider.js";
 import { createDB, getDB } from "../core/db.js";
+import { getProviderToken } from "../core/auth.js";
 import { toSkeloError } from "../core/errors.js";
 import { jsonError } from "./dag-api-errors.js";
 import { buildApprovalNotificationText } from "./dag-api-approval-text.js";
@@ -432,9 +433,11 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         const authHeader = typeof p.config?.authHeader === "string" ? p.config.authHeader : undefined;
         const baseUrl = p.type === "openrouter" ? (p.url ?? "https://openrouter.ai/api/v1") : p.url;
         const apiKeyEnv = p.type === "openrouter" ? (p.env ?? "OPENROUTER_API_KEY") : p.env;
+        const authToken = getProviderToken(p.name) ?? getProviderToken(p.type);
         providers[p.name] = createOpenAICompatibleProvider({
           name: p.name,
           baseUrl,
+          apiKey: authToken ?? undefined,
           apiKeyEnv,
           authHeader,
           timeoutMs: Math.min(Number(body.timeoutSeconds ?? 120) * 1000, safety.maxBlockDurationMs),
