@@ -230,20 +230,22 @@ skelo validate                 # Validate skelo.yaml
 When running, OpenSkelo exposes a REST API.
 
 - Canonical runtime: `/api/dag/*`
-- Legacy (deprecated): `/api/tasks*`
+- Legacy `/api/tasks*` runtime: removed in hard-cut release
 
 ```
-GET    /api/health          — Pipeline health
+GET    /api/health          — Runtime health
 GET    /api/config          — Current configuration
-GET    /api/tasks           — List tasks (?status=, ?pipeline=)
-POST   /api/tasks           — Create task
-PATCH  /api/tasks/:id       — Update task (gates enforced)
-GET    /api/tasks/:id       — Get task detail
-GET    /api/tasks/counts    — Task counts by status
-GET    /api/agents          — List agents
-GET    /api/gates           — List gates
-GET    /api/logs            — Audit log (?task=, ?limit=)
-GET    /api/gate-log        — Gate evaluation log
+GET    /api/agents          — List configured agents
+GET    /api/gates           — List configured gates
+
+POST   /api/dag/run         — Start DAG run
+GET    /api/dag/runs        — List runs
+GET    /api/dag/runs/:id    — Run state
+GET    /api/dag/runs/:id/replay?since=<seq> — Durable replay events
+POST   /api/dag/runs/:id/approvals — Approve/reject pending approval
+POST   /api/dag/runs/:id/stop — Stop run
+POST   /api/dag/runs/stop-all — Emergency stop all runs
+GET    /api/dag/safety      — Effective safety policy
 ```
 
 ## DAG API Reliability Contracts

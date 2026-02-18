@@ -267,36 +267,26 @@ pipelines:
 
 ---
 
-## How Work Flows
+## How Work Flows (Canonical DAG Runtime)
 
 ```
-User Input
+User Input / Context
     ↓
-Create Task (POST /api/tasks)
+POST /api/dag/run
     ↓
-PENDING
+DAG run created (run_id)
     ↓
-Transition: PENDING → IN_PROGRESS
+Executor resolves ready blocks
     ↓
-Gate: needs-assignee (must have "assigned" field)
+Pre-gates + optional approval checks
     ↓
-Router finds available "worker" agent
+Provider dispatch
     ↓
-Agent executes work (via Provider adapter)
+Post-gates + contract checks
     ↓
-Transition: IN_PROGRESS → REVIEW
+Outputs propagate to downstream blocks
     ↓
-Router finds available "reviewer" agent
-    ↓
-Agent reviews (approve or bounce)
-    ↓
-If bounce: REVIEW → IN_PROGRESS (bounce_count++)
-    ↓
-If approve: REVIEW → DONE
-    ↓
-Gate: done-evidence (notes must be ≥10 chars)
-    ↓
-Done
+Run completes / fails / iterates
 ```
 
 ---
@@ -307,15 +297,16 @@ Done
 |--------|----------|-------------|
 | GET | `/api/health` | Server health |
 | GET | `/api/config` | Current config |
-| GET | `/api/tasks` | List tasks |
-| POST | `/api/tasks` | Create task |
-| GET | `/api/tasks/:id` | Get task |
-| PATCH | `/api/tasks/:id` | Update task (transition) |
-| GET | `/api/tasks/counts` | Task counts by status |
-| GET | `/api/agents` | List agents |
-| GET | `/api/gates` | List gates |
-| GET | `/api/logs` | Audit log |
-| GET | `/api/gate-log` | Gate execution log |
+| GET | `/api/agents` | List configured agents |
+| GET | `/api/gates` | List configured gates |
+| POST | `/api/dag/run` | Start DAG run |
+| GET | `/api/dag/runs` | List runs |
+| GET | `/api/dag/runs/:id` | Get run state |
+| GET | `/api/dag/runs/:id/replay?since=<seq>` | Replay durable events |
+| POST | `/api/dag/runs/:id/approvals` | Approve/reject pending approval |
+| POST | `/api/dag/runs/:id/stop` | Stop one run |
+| POST | `/api/dag/runs/stop-all` | Stop all active runs |
+| GET | `/api/dag/safety` | Effective safety policy |
 
 ## DAG Runtime Contracts (Canonical)
 
