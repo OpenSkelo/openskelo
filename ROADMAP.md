@@ -6,6 +6,8 @@ _Owner: Nora + Andy_
 This is the single source of truth for OpenSkelo priorities.
 As new threads/snapshots appear, they get merged here under the correct section.
 
+Execution checklist reference: `docs/EXECUTION-CHECKLIST.md`
+
 ---
 
 ## 0) Product North Star
