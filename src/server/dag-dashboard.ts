@@ -580,6 +580,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
             <button id="jumpLatestBtn" style="padding:4px 8px;font-size:11px">latest</button>
           </div>
           <div style="margin-top:4px"><label style="font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:4px"><input type="checkbox" id="followLatestIterated" checked /> follow latest iterated run</label></div>
+          <div id="blockStallBanner" style="display:none;margin-top:8px;padding:7px 8px;border:1px solid var(--yellow);border-radius:6px;background:rgba(234,179,8,0.10);font-size:11px;color:#fde68a"></div>
         </div>
         <div id="iterationHistory" style="margin-top:8px;font-size:11px;color:var(--text-dim);max-height:120px;overflow:auto;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 8px">
           No iteration history yet
@@ -660,6 +661,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
     let followSwitchInFlight = false;
     let toastTimer = null;
     let lastPreviewSignature = null;
+    let maxBlockDurationMs = 10 * 60 * 1000;
 
     function setApprovalBanner(show, blockId) {
       const bar = document.getElementById('approvalBanner');
@@ -695,6 +697,63 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       const t = ts ? new Date(ts) : new Date();
       const el = document.getElementById('lastEventAt');
       if (el) el.textContent = t.toLocaleTimeString();
+    }
+
+    async function loadSafetyConfig() {
+      try {
+        const res = await apiFetch(API + '/api/dag/safety');
+        if (!res.ok) return;
+        const data = await res.json();
+        const maybe = Number(data?.safety?.maxBlockDurationMs);
+        if (Number.isFinite(maybe) && maybe > 0) maxBlockDurationMs = maybe;
+      } catch (_) {}
+    }
+
+    function updateBlockStallBanner(run) {
+      const banner = document.getElementById('blockStallBanner');
+      if (!banner) return;
+      if (!run || run.status !== 'running' || !run.blocks) {
+        banner.style.display = 'none';
+        banner.textContent = '';
+        return;
+      }
+
+      let activeId = null;
+      let activeStartedAt = null;
+      for (const [id, b] of Object.entries(run.blocks || {})) {
+        if (b?.status === 'running') {
+          activeId = id;
+          activeStartedAt = b?.started_at || b?.startedAt || b?.updated_at || null;
+          break;
+        }
+      }
+      if (!activeId || !activeStartedAt) {
+        banner.style.display = 'none';
+        banner.textContent = '';
+        return;
+      }
+
+      const started = new Date(String(activeStartedAt)).getTime();
+      if (!started) {
+        banner.style.display = 'none';
+        banner.textContent = '';
+        return;
+      }
+
+      const elapsed = Date.now() - started;
+      const warnAfter = Math.max(15000, Math.floor(maxBlockDurationMs * 0.6));
+      if (elapsed < warnAfter) {
+        banner.style.display = 'none';
+        banner.textContent = '';
+        return;
+      }
+
+      const remaining = Math.max(0, maxBlockDurationMs - elapsed);
+      const elapsedSec = Math.floor(elapsed / 1000);
+      const remainingSec = Math.floor(remaining / 1000);
+      banner.style.display = 'block';
+      banner.textContent = '⏳ Block ' + activeId + ' running for ' + elapsedSec + 's' +
+        (remaining > 0 ? (' · timeout in ~' + remainingSec + 's') : ' · timeout exceeded, waiting for backend guard');
     }
 
     // Load examples
@@ -1475,6 +1534,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
         const run = currentRunData?.run;
         if (run?.status) {
           setRunStatus(run.status);
+          updateBlockStallBanner(run);
           Object.entries(run.blocks || {}).forEach(([id, b]) => {
             const node = document.getElementById('block-' + id);
             if (!node) return;
@@ -1698,6 +1758,7 @@ export function getDAGDashboardHTML(projectName: string, port: number, opts?: { 
       }
     }
 
+    loadSafetyConfig();
     loadExamples();
   </script>
 </body>
