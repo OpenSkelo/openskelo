@@ -792,16 +792,16 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
   async function resolveApproval(runId: string, token: string | null, body: Record<string, unknown>) {
     const entry = activeRuns.get(runId);
-    if (!entry) return { status: 404 as const, payload: { error: "Not found" } };
+    if (!entry) return { status: 404 as const, payload: { error: "Not found", code: "NOT_FOUND" } };
 
     const request = entry.run.context.__approval_request as Record<string, unknown> | undefined;
     if (!request || request.status !== "pending") {
-      return { status: 400 as const, payload: { error: "No pending approval" } };
+      return { status: 400 as const, payload: { error: "No pending approval", code: "NO_PENDING_APPROVAL" } };
     }
 
     // token optional for UX: allow tokenless approvals when runId matches and request is pending
     if (token && token !== "latest" && request.token !== token) {
-      return { status: 403 as const, payload: { error: "Invalid approval token" } };
+      return { status: 403 as const, payload: { error: "Invalid approval token", code: "INVALID_APPROVAL_TOKEN" } };
     }
 
     const decision = (body.decision as string) ?? "reject";

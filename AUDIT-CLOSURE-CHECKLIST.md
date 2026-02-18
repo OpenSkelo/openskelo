@@ -79,7 +79,8 @@ Legend:
   - Proof: `31320cc`
 - [x] SSE client lifecycle hardening (client IDs + dedupe + cleanup)
   - Proof: `fe61393`
-- [~] Error contract/pagination consistency polish (pagination added on `/api/dag/runs`; DAG endpoints now return `{error, code, details?}` in key paths; full unification still pending)
+- [x] Error contract/pagination consistency polish (pagination on `/api/dag/runs` + DAG error envelopes standardized to `{error, code, details?}`)
+  - Proof: `pending-commit`
 
 ## 9) DX & CLI
 - [x] DAG-first CLI commands (`skelo run ...`)
