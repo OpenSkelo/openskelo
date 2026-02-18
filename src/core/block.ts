@@ -1513,7 +1513,7 @@ function topoSort(blocks: BlockDef[], edges: Edge[]): string[] {
 // Supports literals, logical/binary/unary expressions, conditionals,
 // array/object literals, and member access rooted at allowed identifiers.
 // Disallows function calls, assignments, constructors, and global access.
-function evaluateSafeExpression(expression: string, scope: Record<string, unknown>): unknown {
+export function evaluateSafeExpression(expression: string, scope: Record<string, unknown>): unknown {
   const program = parseExpression(expression, { ecmaVersion: 2020 }) as unknown as {
     type: string;
     body?: Array<Record<string, unknown>>;
