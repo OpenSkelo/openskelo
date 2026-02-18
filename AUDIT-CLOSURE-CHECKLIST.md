@@ -59,7 +59,8 @@ Legend:
 - [x] Improve scheduling beyond batch `Promise.allSettled` (dynamic in-flight race scheduling)
   - Proof: `63dd573`
 - [ ] Add richer stuck diagnostics
-- [~] Per-block timeout enforcement (safety caps present; strict end-to-end proof pending)
+- [x] Per-block timeout enforcement with strict timeout failure path coverage (`DISPATCH_TIMEOUT`)
+  - Proof: `pending-commit`
 - [ ] Cost/budget enforcement
 
 ## 7) State Management & Durability

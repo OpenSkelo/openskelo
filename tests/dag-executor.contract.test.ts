@@ -130,6 +130,40 @@ describe("DAG executor output contract", () => {
     expect(run.blocks.spec.outputs.dev_plan).toBe("ship it");
   });
 
+  it("fails with timeout when block dispatch exceeds timeout_ms", async () => {
+    const timeoutDag: DAGDef = {
+      ...baseDag,
+      blocks: baseDag.blocks.map((b) => ({ ...b, timeout_ms: 30 })),
+    };
+
+    const failures: Array<{ err: string; code?: string }> = [];
+    const provider: ProviderAdapter = {
+      name: "slow",
+      type: "slow",
+      async dispatch(req: DispatchRequest) {
+        await new Promise<void>((resolve, reject) => {
+          const t = setTimeout(resolve, 200);
+          req.abortSignal?.addEventListener("abort", () => {
+            clearTimeout(t);
+            reject(new Error(String(req.abortSignal?.reason ?? "aborted")));
+          }, { once: true });
+        });
+        return { success: true, output: JSON.stringify({ game_spec: { ok: true }, dev_plan: "late" }) };
+      },
+    };
+
+    const ex = createDAGExecutor({
+      providers: { local: provider },
+      agents,
+      onBlockFail: (_r, _b, err, code) => failures.push({ err, code }),
+    });
+
+    const { run } = await ex.execute(timeoutDag, { prompt: "x" });
+    expect(run.status).toBe("failed");
+    expect(failures[0]?.code).toBe("DISPATCH_TIMEOUT");
+    expect(failures[0]?.err.toLowerCase()).toContain("timed out");
+  });
+
   it("continues from spec to build across repeated runs", async () => {
     for (let i = 0; i < 5; i++) {
       let call = 0;

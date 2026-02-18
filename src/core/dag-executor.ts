@@ -383,7 +383,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     let dispatchResult: DispatchResult;
     try {
-      dispatchResult = await provider.dispatch(dispatchRequest);
+      dispatchResult = await dispatchWithTimeout(provider, dispatchRequest, blockDef.timeout_ms);
     } catch (err) {
       const error = err instanceof Error ? err.message : "Unknown dispatch error";
       if (run.status === "cancelled" || opts.isCancelled?.() || opts.abortSignal?.aborted) {
@@ -391,7 +391,11 @@ export function createDAGExecutor(opts: ExecutorOpts) {
         return;
       }
       engine.failBlock(run, blockId, error, blockDef);
-      opts.onBlockFail?.(run, blockId, error, "DISPATCH_EXCEPTION", { stage: "dispatch", message: error });
+      const timeoutHit = /timed out/i.test(error);
+      opts.onBlockFail?.(run, blockId, error, timeoutHit ? "DISPATCH_TIMEOUT" : "DISPATCH_EXCEPTION", {
+        stage: timeoutHit ? "timeout" : "dispatch",
+        message: error,
+      });
       trace.push({
         block_id: blockId,
         instance_id: run.blocks[blockId].instance_id,
@@ -452,7 +456,7 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
         let attemptErrors: string[] = [];
         try {
-          const repairResult = await provider.dispatch(repairRequest);
+          const repairResult = await dispatchWithTimeout(provider, repairRequest, blockDef.timeout_ms);
           if (repairResult.success) {
             dispatchResult = repairResult;
             outputs = parseAgentOutputs(blockDef, dispatchResult.output ?? "");
@@ -876,6 +880,37 @@ function parseAgentOutputs(blockDef: BlockDef, rawOutput: string): Record<string
   }
 
   return outputs;
+}
+
+async function dispatchWithTimeout(
+  provider: ProviderAdapter,
+  request: DispatchRequest,
+  timeoutMs?: number
+): Promise<DispatchResult> {
+  const effectiveTimeout = Number(timeoutMs ?? 0);
+  if (!Number.isFinite(effectiveTimeout) || effectiveTimeout <= 0) {
+    return provider.dispatch(request);
+  }
+
+  const ctl = new AbortController();
+  const relayAbort = () => ctl.abort(request.abortSignal?.reason ?? "upstream abort");
+  request.abortSignal?.addEventListener("abort", relayAbort, { once: true });
+
+  const timer = setTimeout(() => {
+    ctl.abort(`dispatch timed out after ${effectiveTimeout}ms`);
+  }, effectiveTimeout);
+
+  try {
+    return await provider.dispatch({ ...request, abortSignal: ctl.signal });
+  } catch (err) {
+    if (ctl.signal.aborted && String(ctl.signal.reason ?? "").includes("timed out")) {
+      throw new Error(String(ctl.signal.reason));
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    request.abortSignal?.removeEventListener("abort", relayAbort);
+  }
 }
 
 function sleep(ms: number): Promise<void> {
