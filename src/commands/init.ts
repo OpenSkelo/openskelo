@@ -25,6 +25,12 @@ interface ProviderPreset {
   models: Array<{ value: string; label: string }>;
 }
 
+interface ProviderChoice {
+  value: string;
+  label: string;
+  preset?: keyof typeof PROVIDER_PRESETS;
+}
+
 const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   anthropic: {
     key: "anthropic",
@@ -75,6 +81,16 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     ],
   },
 };
+
+const PROVIDER_CHOICES: ProviderChoice[] = [
+  { value: "openai", label: "OpenAI (Code + API key)", preset: "openai" },
+  { value: "anthropic", label: "Anthropic", preset: "anthropic" },
+  { value: "minimax", label: "MiniMax" },
+  { value: "openrouter", label: "OpenRouter", preset: "openrouter" },
+  { value: "ollama", label: "Ollama (local)", preset: "ollama" },
+  { value: "custom", label: "Custom provider" },
+  { value: "skip", label: "Skip for now" },
+];
 
 const LEGACY_TEMPLATES: Record<string, InitTemplate> = {
   coding: {
@@ -428,68 +444,136 @@ async function initAgentProject(name?: string, opts?: InitOpts) {
 
   if (interactive) {
     intro("🦴 OpenSkelo init");
-    log.info("Welcome to OpenSkelo. Let’s connect your provider first.");
+    log.info("Model/auth provider");
 
-    const selectedProvider = await select({
-      message: "Select provider",
-      options: [
-        { value: "anthropic", label: PROVIDER_PRESETS.anthropic.label },
-        { value: "openai", label: PROVIDER_PRESETS.openai.label },
-        { value: "openrouter", label: PROVIDER_PRESETS.openrouter.label },
-        { value: "ollama", label: PROVIDER_PRESETS.ollama.label },
-        { value: "custom", label: "+ Custom OpenAI-compatible endpoint" },
-      ],
-    });
-    if (isCancel(selectedProvider)) return;
+    let selectedProvider: string | symbol = "skip";
 
-    if (selectedProvider === "custom") {
-      const customName = await text({ message: "Provider name", initialValue: "minimax" });
-      if (isCancel(customName)) return;
-      provider = String(customName).trim() || "custom-openai";
+    while (true) {
+      selectedProvider = await select({
+        message: "Model/auth provider",
+        options: PROVIDER_CHOICES.map((p) => ({ value: p.value, label: p.label })),
+      });
+      if (isCancel(selectedProvider)) return;
 
-      const customUrl = await text({ message: "Base URL", initialValue: "https://api.example.com/v1" });
-      if (isCancel(customUrl)) return;
-      providerUrl = String(customUrl).trim();
+      if (selectedProvider === "minimax") {
+        const minimaxAuth = await select({
+          message: "MiniMax auth method",
+          options: [
+            { value: "oauth", label: "MiniMax OAuth (coming soon)" },
+            { value: "m25", label: "MiniMax M2.5" },
+            { value: "m25cn", label: "MiniMax M2.5 (CN)" },
+            { value: "m25light", label: "MiniMax M2.5 Lightning" },
+            { value: "back", label: "Back" },
+          ],
+        });
+        if (isCancel(minimaxAuth)) return;
+        if (minimaxAuth === "back") continue;
+        if (minimaxAuth === "oauth") throw new Error("MiniMax OAuth is not supported yet. Use API key mode.");
 
-      const customEnv = await text({ message: "API key environment variable", initialValue: "CUSTOM_API_KEY" });
-      if (isCancel(customEnv)) return;
-      providerEnv = String(customEnv).trim() || "CUSTOM_API_KEY";
+        provider = "minimax";
+        providerType = "openai";
+        providerUrl = "https://api.minimax.chat/v1";
+        providerEnv = "MINIMAX_API_KEY";
+        model = minimaxAuth === "m25cn" ? "MiniMax-M2.5" : minimaxAuth === "m25light" ? "MiniMax-M2.5-Lightning" : "MiniMax-M2.5";
 
-      providerType = "openai";
+        const key = await promptRequiredApiKey("Enter MiniMax API key");
+        if (key === null) return;
+        apiKey = key;
+        break;
+      }
 
-      const customModel = await text({ message: "Default model identifier", initialValue: "MiniMax-M2.5" });
-      if (isCancel(customModel)) return;
-      model = String(customModel).trim() || "MiniMax-M2.5";
+      if (selectedProvider === "custom") {
+        const customName = await text({ message: "Provider name", initialValue: "custom-openai" });
+        if (isCancel(customName)) return;
+        provider = String(customName).trim() || "custom-openai";
 
-      const key = await password({ message: `API key for ${provider} (stored in .skelo/secrets.enc.yaml)`, mask: "•" });
-      if (isCancel(key)) return;
-      apiKey = String(key).trim();
-    } else {
-      const preset = PROVIDER_PRESETS[String(selectedProvider)];
+        const customUrl = await text({ message: "Base URL", initialValue: "https://api.example.com/v1" });
+        if (isCancel(customUrl)) return;
+        providerUrl = String(customUrl).trim();
+
+        const customEnv = await text({ message: "API key environment variable", initialValue: "CUSTOM_API_KEY" });
+        if (isCancel(customEnv)) return;
+        providerEnv = String(customEnv).trim() || "CUSTOM_API_KEY";
+
+        providerType = "openai";
+
+        const key = await promptRequiredApiKey("Enter API key");
+        if (key === null) return;
+        apiKey = key;
+
+        const selectedDefault = await select({
+          message: "Default model",
+          options: [
+            { value: "keep", label: "Keep current (MiniMax-M2.5)" },
+            { value: "manual", label: "Enter model manually" },
+            { value: "MiniMax-M2", label: "MiniMax-M2" },
+            { value: "MiniMax-M2.1", label: "MiniMax-M2.1" },
+            { value: "MiniMax-M2.5", label: "MiniMax-M2.5" },
+          ],
+        });
+        if (isCancel(selectedDefault)) return;
+        if (selectedDefault === "manual") {
+          const customModel = await text({ message: "Model identifier", initialValue: model });
+          if (isCancel(customModel)) return;
+          model = String(customModel).trim() || model;
+        } else if (selectedDefault === "keep") {
+          model = "MiniMax-M2.5";
+        } else {
+          model = String(selectedDefault);
+        }
+
+        break;
+      }
+
+      if (selectedProvider === "skip") {
+        provider = "ollama";
+        providerType = "ollama";
+        providerUrl = "http://localhost:11434";
+        providerEnv = "";
+        model = "llama3:8b";
+        break;
+      }
+
+      const presetChoice = PROVIDER_CHOICES.find((p) => p.value === selectedProvider)?.preset;
+      if (!presetChoice) continue;
+      const preset = PROVIDER_PRESETS[presetChoice];
+
       provider = preset.key;
       providerType = preset.type;
       providerUrl = preset.url;
       providerEnv = preset.env;
 
       if (providerType !== "ollama") {
-        const key = await password({ message: `${providerEnv} value`, mask: "•" });
-        if (isCancel(key)) return;
-        apiKey = String(key).trim();
+        const key = await promptRequiredApiKey(`Enter ${providerEnv}`);
+        if (key === null) return;
+        apiKey = key;
       }
 
       const selectedModel = await select({
-        message: "Select default model",
-        options: preset.models.map((m) => ({ value: m.value, label: m.label })),
+        message: "Default model",
+        options: [
+          { value: "keep", label: `Keep current (${preset.models[0]?.value ?? model})` },
+          { value: "manual", label: "Enter model manually" },
+          ...preset.models.map((m) => ({ value: m.value, label: m.label })),
+        ],
       });
       if (isCancel(selectedModel)) return;
-      model = String(selectedModel);
+      if (selectedModel === "manual") {
+        const m = await text({ message: "Model identifier", initialValue: model });
+        if (isCancel(m)) return;
+        model = String(m).trim() || model;
+      } else if (selectedModel === "keep") {
+        model = preset.models[0]?.value ?? model;
+      } else {
+        model = String(selectedModel);
+      }
+
+      break;
     }
 
-    if (providerType !== "ollama" && apiKey) {
+    if (providerType !== "ollama") {
       const ok = await validateProviderKey(providerType, providerUrl, apiKey);
-      if (!ok) {
-        throw new Error(`Provider auth check failed for ${provider} (${providerUrl}). Verify API key and try again.`);
-      }
+      if (!ok) throw new Error(`Provider auth check failed for ${provider} (${providerUrl}). Verify API key and try again.`);
       log.success("API key validated");
     }
 
@@ -587,6 +671,16 @@ function buildSecrets(providerName: string, providerType: "anthropic" | "openai"
   if (providerType === "anthropic") return `anthropic_api_key: ${apiKey}\n`;
   if (providerName === "openai") return `openai_api_key: ${apiKey}\n`;
   return `${providerName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}_api_key: ${apiKey}\n`;
+}
+
+async function promptRequiredApiKey(message: string): Promise<string | null> {
+  while (true) {
+    const key = await password({ message, mask: "•" });
+    if (isCancel(key)) return null;
+    const value = String(key).trim();
+    if (value) return value;
+    log.warn("Required");
+  }
 }
 
 function readDefaultRulesTemplate(): string {
