@@ -11,9 +11,11 @@ interface SpawnPlan {
 }
 
 const spawnPlans: SpawnPlan[] = [];
+const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
 
 vi.mock("node:child_process", () => {
   function spawn(_cmd: string, _args: string[]) {
+    spawnCalls.push({ cmd: _cmd, args: _args });
     const plan = spawnPlans.shift() ?? { stdout: "", stderr: "", exitCode: 0 };
     const child = new EventEmitter() as EventEmitter & {
       stdout: EventEmitter;
@@ -63,6 +65,7 @@ function baseRequest(): DispatchRequest {
 describe("openclaw provider", () => {
   beforeEach(() => {
     spawnPlans.length = 0;
+    spawnCalls.length = 0;
     vi.restoreAllMocks();
   });
 
@@ -140,6 +143,29 @@ describe("openclaw provider", () => {
     expect(res.success).toBe(false);
     expect(res.error).toContain("timed out");
     vi.useRealTimers();
+  });
+
+  it("injects request.system into prompt sent to openclaw", async () => {
+    spawnPlans.push({
+      stdout: JSON.stringify({
+        runId: "run-1",
+        result: { payloads: [{ text: '{"result":"ok"}' }] },
+      }),
+      exitCode: 0,
+    });
+
+    const req = baseRequest();
+    req.system = "ROLE: You are a strict analyst.";
+
+    const provider = createOpenClawProvider();
+    const res = await provider.dispatch(req);
+
+    expect(res.success).toBe(true);
+    const messageArgIndex = spawnCalls[0].args.indexOf("--message");
+    expect(messageArgIndex).toBeGreaterThan(-1);
+    const prompt = spawnCalls[0].args[messageArgIndex + 1];
+    expect(prompt).toContain("## System Context");
+    expect(prompt).toContain("ROLE: You are a strict analyst.");
   });
 
   it("healthCheck returns true on running status output", async () => {
