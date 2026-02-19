@@ -42,8 +42,25 @@ const runEvents = new Map<string, DAGEvent[]>();
 const sseClients = new Map<string, Set<(event: DAGEvent) => void>>();
 const sseClientRegistry = new Map<string, Map<string, (event: DAGEvent) => void>>();
 const approvalWaiters = new Map<string, Set<() => void>>();
+const runStallCounts = new Map<string, number>();
 
 export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string }) {
+  // Isolate state per API instance (important for tests/restarts)
+  for (const t of runSafetyTimers.values()) clearTimeout(t);
+  for (const t of runStallTimers.values()) clearTimeout(t);
+  for (const ctl of runAbortControllers.values()) {
+    if (!ctl.signal.aborted) ctl.abort("dag-api reinit");
+  }
+  activeRuns.clear();
+  runAbortControllers.clear();
+  runSafetyTimers.clear();
+  runStallTimers.clear();
+  runEvents.clear();
+  sseClients.clear();
+  sseClientRegistry.clear();
+  approvalWaiters.clear();
+  runStallCounts.clear();
+
   const app = new Hono();
   app.use("/api/dag/*", cors());
   const engine = createBlockEngine();
@@ -173,6 +190,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       for (const resolve of waiters) resolve();
       approvalWaiters.delete(runId);
     }
+    runStallCounts.delete(runId);
   }
 
   function waitForApprovalSignal(runId: string): Promise<void> {
@@ -201,8 +219,12 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
       const hasRunningBlock = Object.values(live.run.blocks).some((b) => b.status === "running");
       if (hasRunningBlock) {
-        armStallTimer(runId);
-        return;
+        const attempts = (runStallCounts.get(runId) ?? 0) + 1;
+        runStallCounts.set(runId, attempts);
+        if (attempts <= 3) {
+          armStallTimer(runId);
+          return;
+        }
       }
 
       live.run.status = "cancelled";
@@ -258,6 +280,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
 
     if (["run:start", "block:start", "block:complete", "block:fail", "approval:requested", "approval:decided"].includes(event.type)) {
+      if (["block:start", "block:complete", "block:fail", "approval:decided"].includes(event.type)) {
+        runStallCounts.set(runId, 0);
+      }
       armStallTimer(runId);
     }
   }
@@ -376,9 +401,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     const providerMode = (body.provider as string | undefined)?.trim();
 
-    const roleDerivedMapping = Object.entries(config.agents).reduce((acc, [_id, a]) => {
+    const roleDerivedMapping = Object.entries(config.agents).reduce((acc, [id, a]) => {
       // keep first role match stable; avoid silent overwrite when multiple agents share a role
-      if (!acc[a.role]) acc[a.role] = a.role === "manager" ? "pipeline" : _id;
+      if (!acc[a.role]) {
+        const managerTarget = config.agents.pipeline ? "pipeline" : id;
+        acc[a.role] = a.role === "manager" ? managerTarget : id;
+      }
+      // preserve explicit id passthrough mapping
+      acc[id] = id;
       return acc;
     }, {} as Record<string, string>);
 
