@@ -24,8 +24,19 @@ vi.mock("../src/commands/chat.js", () => ({
       outputs: { default: "hello" },
       tokens: { input: 10, output: 5 },
       cost: 0.001,
+      durationMs: 12,
     },
     gates: [{ name: "x", passed: true }],
+  })),
+}));
+
+vi.mock("../src/core/db.js", () => ({
+  createDB: vi.fn(() => ({})),
+}));
+
+vi.mock("../src/persistence/cost-tracker.js", () => ({
+  CostTracker: vi.fn().mockImplementation(() => ({
+    record: vi.fn(async () => undefined),
   })),
 }));
 

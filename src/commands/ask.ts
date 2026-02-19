@@ -3,6 +3,9 @@ import { cwd } from "node:process";
 import { resolve } from "node:path";
 import { loadAgent } from "../agents/loader.js";
 import { executeChatTurn, buildSystemPrompt, createRuntime } from "./chat.js";
+import { createDB } from "../core/db.js";
+import { CostTracker } from "../persistence/cost-tracker.js";
+import { randomUUID } from "node:crypto";
 
 export async function askCommand(
   agentId: string,
@@ -18,6 +21,18 @@ export async function askCommand(
 
   const turn = await executeChatTurn(runtime, agent, projectDir, prompt, []);
   const failed = turn.gates.filter((g) => !g.passed);
+
+  const db = createDB(projectDir);
+  const tracker = new CostTracker(db);
+  await tracker.record({
+    agentId: agent.id,
+    runId: `ask_${randomUUID()}`,
+    model: turn.result.modelUsed,
+    inputTokens: turn.result.tokens.input,
+    outputTokens: turn.result.tokens.output,
+    costUsd: turn.result.cost,
+    durationMs: turn.result.durationMs,
+  });
 
   if (opts?.json) {
     console.log(

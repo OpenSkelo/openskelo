@@ -13,6 +13,9 @@ import { OpenAIProvider } from "../runtimes/providers/openai.js";
 import { createOpenRouterProvider } from "../runtimes/providers/openrouter.js";
 import type { LLMProvider, Message } from "../runtimes/providers/types.js";
 import { getProviderToken } from "../core/auth.js";
+import { createDB } from "../core/db.js";
+import { CostTracker } from "../persistence/cost-tracker.js";
+import { randomUUID } from "node:crypto";
 
 interface ChatState {
   history: Message[];
@@ -32,6 +35,8 @@ export async function chatCommand(agentId: string, opts?: { projectDir?: string 
   const agentDir = resolve(projectDir, "agents", agentId);
   const agent = await loadAgent(agentDir);
   const runtime = createRuntime(agent, projectDir);
+  const db = createDB(projectDir);
+  const costTracker = new CostTracker(db);
   const state: ChatState = { history: [], sessionCost: 0, sessionInputTokens: 0, sessionOutputTokens: 0 };
 
   console.log(chalk.cyan(`\nChatting with ${agent.name} (${agent.model.primary}) — type /quit to exit\n`));
@@ -70,6 +75,16 @@ export async function chatCommand(agentId: string, opts?: { projectDir?: string 
         console.log(`\n${agent.name}: ${turn.result.content}\n`);
         printGates(turn.gates);
         console.log(chalk.dim(`Tokens: ${turn.result.tokens.input} in / ${turn.result.tokens.output} out | Cost: $${turn.result.cost.toFixed(6)} | Model: ${turn.result.modelUsed}\n`));
+
+        await costTracker.record({
+          agentId: agent.id,
+          runId: `chat_${randomUUID()}`,
+          model: turn.result.modelUsed,
+          inputTokens: turn.result.tokens.input,
+          outputTokens: turn.result.tokens.output,
+          costUsd: turn.result.cost,
+          durationMs: turn.result.durationMs,
+        });
 
         state.history.push({ role: "user", content: input });
         state.history.push({ role: "assistant", content: turn.result.content });
