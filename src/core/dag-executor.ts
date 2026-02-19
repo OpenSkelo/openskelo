@@ -528,6 +528,9 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     const systemParts: string[] = [];
     if (blockCtx?.role) systemParts.push(blockCtx.role);
+    if (blockCtx?.rules) systemParts.push(`## RULES — NEVER VIOLATE\n\n${blockCtx.rules}`);
+    if (blockCtx?.policies) systemParts.push(blockCtx.policies);
+    if (blockCtx?.skill_summaries) systemParts.push(blockCtx.skill_summaries);
     if (blockCtx?.context) systemParts.push(blockCtx.context);
     const system = systemParts.length > 0 ? systemParts.join("\n\n---\n\n") : undefined;
 
