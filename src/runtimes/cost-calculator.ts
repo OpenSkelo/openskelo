@@ -6,12 +6,20 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "gpt-4o": { input: 2.5, output: 10.0 },
 };
 
+const UNKNOWN_MODEL_WARNED = new Set<string>();
+
 export function calculateCost(
   model: string,
   usage: { inputTokens: number; outputTokens: number }
 ): number {
   const pricing = MODEL_PRICING[model];
-  if (!pricing) return 0;
+  if (!pricing) {
+    if (!UNKNOWN_MODEL_WARNED.has(model)) {
+      UNKNOWN_MODEL_WARNED.add(model);
+      console.warn(`[cost] Unknown model '${model}' — cost tracking unavailable. Add pricing to cost-calculator.ts`);
+    }
+    return 0;
+  }
 
   const inputCost = (usage.inputTokens / 1_000_000) * pricing.input;
   const outputCost = (usage.outputTokens / 1_000_000) * pricing.output;

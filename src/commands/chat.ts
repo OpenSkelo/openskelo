@@ -187,11 +187,19 @@ export function evaluateAgentGates(agent: AgentConfig, content: string): GateRes
     }
 
     if (check.type === "expression") {
-      return { name: g.name, passed: true };
+      return {
+        name: g.name,
+        passed: false,
+        reason: g.error ?? "Gate type 'expression' is not implemented in chat runtime yet",
+      };
     }
 
     if (check.type === "llm_review") {
-      return { name: g.name, passed: true }; // deferred in chat v1
+      return {
+        name: g.name,
+        passed: false,
+        reason: g.error ?? "Gate type 'llm_review' is not implemented in chat runtime yet",
+      };
     }
 
     return { name: g.name, passed: true };
@@ -304,7 +312,7 @@ function resolveToken(provider: ResolvedProvider, projectDir: string): string {
   const authToken = getProviderToken(provider.name) ?? getProviderToken(provider.kind);
   if (authToken) return authToken;
 
-  const secretsPath = join(projectDir, ".skelo", "secrets.enc.yaml");
+  const secretsPath = join(projectDir, ".skelo", "secrets.yaml");
   if (existsSync(secretsPath)) {
     try {
       const parsed = yaml.parse(readFileSync(secretsPath, "utf-8")) as Record<string, string>;
@@ -322,5 +330,5 @@ function resolveToken(provider: ResolvedProvider, projectDir: string): string {
     }
   }
 
-  throw new Error(`Missing API key for ${provider.name}. Set ${envName}, ~/.skelo/auth.json, or .skelo/secrets.enc.yaml`);
+  throw new Error(`Missing API key for ${provider.name}. Set ${envName}, ~/.skelo/auth.json, or .skelo/secrets.yaml`);
 }

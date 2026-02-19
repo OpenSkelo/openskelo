@@ -15,7 +15,7 @@ describe("init agent scaffold", () => {
       const root = join(base, "agent-proj");
 
       expect(existsSync(join(root, "skelo.yaml"))).toBe(true);
-      expect(existsSync(join(root, ".skelo", "secrets.enc.yaml"))).toBe(true);
+      expect(existsSync(join(root, ".skelo", "secrets.yaml"))).toBe(true);
       expect(existsSync(join(root, "agents", "nora", "agent.yaml"))).toBe(true);
       expect(existsSync(join(root, "agents", "nora", "role.md"))).toBe(true);
       expect(existsSync(join(root, "agents", "nora", "task.md"))).toBe(true);

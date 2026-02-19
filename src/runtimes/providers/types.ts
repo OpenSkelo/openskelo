@@ -28,6 +28,8 @@ export interface CompletionResponse {
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  toolUseId?: string;
+  toolCalls?: ToolCall[];
 }
 
 export interface ToolCall {

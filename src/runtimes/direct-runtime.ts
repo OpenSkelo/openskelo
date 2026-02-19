@@ -139,9 +139,11 @@ export class DirectRuntime {
         };
       }
 
-      if (response.content) {
-        messages.push({ role: "assistant", content: response.content });
-      }
+      messages.push({
+        role: "assistant",
+        content: response.content ?? "",
+        toolCalls: response.toolCalls,
+      });
 
       for (const call of response.toolCalls) {
         const toolStart = Date.now();
@@ -158,6 +160,7 @@ export class DirectRuntime {
           messages.push({
             role: "tool",
             content: result.content,
+            toolUseId: call.id,
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -168,7 +171,7 @@ export class DirectRuntime {
             isError: true,
             durationMs: Date.now() - toolStart,
           });
-          messages.push({ role: "tool", content: `Error executing tool: ${message}` });
+          messages.push({ role: "tool", content: `Error executing tool: ${message}`, toolUseId: call.id });
         }
       }
     }

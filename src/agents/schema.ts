@@ -87,10 +87,13 @@ export const AgentYamlSchema = z.object({
   runtime: z.enum(["direct", "deterministic"]).default("direct"),
   model: ModelConfigSchema,
   autonomy: z.enum(["read_only", "draft", "write", "admin"]).default("read_only"),
-  permissions: z
-    .unknown()
-    .optional()
-    .transform((v) => PermissionsSchema.parse((v ?? {}) as Record<string, unknown>)),
+  permissions: PermissionsSchema.default({
+    can_create_agents: false,
+    can_modify_connections: false,
+    can_spend_per_run: 0.5,
+    can_spend_per_day: 2.0,
+    max_delegation_depth: 0,
+  }),
   inputs: z.array(PortSchema).default([]),
   outputs: z.array(PortSchema).default([{ name: "default", type: "string", required: false }]),
   gates: z.object({

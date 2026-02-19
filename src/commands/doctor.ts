@@ -2,7 +2,6 @@ import chalk from "chalk";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import yaml from "yaml";
-import { loadConfig } from "../core/config.js";
 import { getProviderToken } from "../core/auth.js";
 import type { Provider } from "../types.js";
 
@@ -11,9 +10,9 @@ type CheckStatus = "ok" | "warn" | "fail";
 export async function doctorCommand(opts?: { projectDir?: string }): Promise<void> {
   try {
     const dir = resolve(opts?.projectDir ?? process.cwd());
-    const cfg = loadConfig(dir);
+    const providers = loadProviders(dir);
 
-    if (!cfg.providers?.length) {
+    if (!providers.length) {
       console.log(chalk.yellow("⚠ No providers configured in skelo.yaml"));
       return;
     }
@@ -24,7 +23,7 @@ export async function doctorCommand(opts?: { projectDir?: string }): Promise<voi
     console.log(chalk.bold("🩺 OpenSkelo Doctor"));
     console.log(chalk.dim(`project: ${dir}`));
 
-    for (const provider of cfg.providers) {
+    for (const provider of providers) {
       const result = await checkProvider(provider, dir);
       if (result.status === "fail") failCount++;
       if (result.status === "warn") warnCount++;
@@ -51,6 +50,14 @@ export async function doctorCommand(opts?: { projectDir?: string }): Promise<voi
   }
 }
 
+function loadProviders(projectDir: string): Provider[] {
+  const skeloPath = join(projectDir, "skelo.yaml");
+  if (!existsSync(skeloPath)) throw new Error("skelo.yaml not found");
+  const parsed = yaml.parse(readFileSync(skeloPath, "utf-8")) as Record<string, unknown>;
+  const list = Array.isArray(parsed?.providers) ? parsed.providers : [];
+  return list as Provider[];
+}
+
 async function checkProvider(provider: Provider, projectDir: string): Promise<{ status: CheckStatus; message: string }> {
   if (provider.type === "ollama") {
     const base = (provider.url ?? "http://localhost:11434").replace(/\/$/, "");
@@ -68,7 +75,7 @@ async function checkProvider(provider: Provider, projectDir: string): Promise<{ 
   const token = resolveProviderToken(provider, projectDir);
   if (!token) {
     const envHint = provider.env ?? defaultEnvName(provider.type);
-    return { status: "fail", message: `missing API key (set ${envHint} or .skelo/secrets.enc.yaml)` };
+    return { status: "fail", message: `missing API key (set ${envHint} or .skelo/secrets.yaml)` };
   }
 
   const headers: Record<string, string> = { "content-type": "application/json" };
@@ -98,7 +105,7 @@ function resolveProviderToken(provider: Provider, projectDir: string): string | 
   const authToken = getProviderToken(provider.name) ?? getProviderToken(provider.type);
   if (authToken) return authToken;
 
-  const secretsPath = join(projectDir, ".skelo", "secrets.enc.yaml");
+  const secretsPath = join(projectDir, ".skelo", "secrets.yaml");
   if (!existsSync(secretsPath)) return null;
 
   try {

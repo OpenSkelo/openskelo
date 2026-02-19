@@ -1,8 +1,9 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "fs";
-import { resolve, join } from "path";
+import { resolve, join, dirname } from "path";
 import chalk from "chalk";
 import { text, select, password, confirm, isCancel, intro, outro, log } from "@clack/prompts";
 import { stringify } from "yaml";
+import { fileURLToPath } from "url";
 import { AgentYamlSchema } from "../agents/schema.js";
 
 interface InitTemplate {
@@ -641,9 +642,9 @@ async function initAgentProject(name?: string, opts?: InitOpts) {
   const agentYaml = AgentYamlSchema.parse(agentYamlRaw);
 
   writeFileSync(join(dir, "skelo.yaml"), stringify(skelo));
-  writeFileSync(join(dir, ".skelo", "secrets.enc.yaml"), buildSecrets(provider, providerType, apiKey));
+  writeFileSync(join(dir, ".skelo", "secrets.yaml"), buildSecrets(provider, providerType, apiKey));
   writeFileSync(join(dir, ".gitignore"), [
-    ".skelo/secrets.enc.yaml",
+    ".skelo/secrets.yaml",
     ".skelo/db/",
     ".skelo/logs/",
     ".skelo/cache/",
@@ -673,11 +674,12 @@ async function initAgentProject(name?: string, opts?: InitOpts) {
 }
 
 function buildSecrets(providerName: string, providerType: "anthropic" | "openai" | "openrouter" | "ollama", apiKey: string): string {
-  if (!apiKey || providerType === "ollama") return "# Add secrets here\n";
-  if (providerType === "openrouter") return `openrouter_api_key: ${apiKey}\n`;
-  if (providerType === "anthropic") return `anthropic_api_key: ${apiKey}\n`;
-  if (providerName === "openai") return `openai_api_key: ${apiKey}\n`;
-  return `${providerName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}_api_key: ${apiKey}\n`;
+  const header = "# WARNING: plaintext secrets. Do NOT commit this file.\n";
+  if (!apiKey || providerType === "ollama") return `${header}# Add secrets here\n`;
+  if (providerType === "openrouter") return `${header}openrouter_api_key: ${apiKey}\n`;
+  if (providerType === "anthropic") return `${header}anthropic_api_key: ${apiKey}\n`;
+  if (providerName === "openai") return `${header}openai_api_key: ${apiKey}\n`;
+  return `${header}${providerName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}_api_key: ${apiKey}\n`;
 }
 
 async function promptRequiredApiKey(message: string): Promise<string | null> {
@@ -691,10 +693,21 @@ async function promptRequiredApiKey(message: string): Promise<string | null> {
 }
 
 function readDefaultRulesTemplate(): string {
-  const p = resolve(process.cwd(), "registry", "templates", "default-rules.md");
-  try {
-    return readFileSync(p, "utf-8");
-  } catch {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(moduleDir, "..", "..", "registry", "templates", "default-rules.md"),
+    resolve(process.cwd(), "registry", "templates", "default-rules.md"),
+  ];
+
+  for (const p of candidates) {
+    try {
+      return readFileSync(p, "utf-8");
+    } catch {
+      // try next candidate
+    }
+  }
+
+  {
     return [
       "# Rules",
       "",
