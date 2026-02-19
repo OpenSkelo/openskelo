@@ -42,17 +42,40 @@ describe("block_dir integration", () => {
   function setupFiles() {
     const dir = join(tempDir, "blocks", "analyst");
     mkdirSync(join(dir, "context"), { recursive: true });
+    mkdirSync(join(dir, "skills"), { recursive: true });
+    mkdirSync(join(dir, "policies"), { recursive: true });
     writeFileSync(join(dir, "role.md"), "ROLE: You are a specialist analyst.");
+    writeFileSync(join(dir, "rules.md"), "RULE: Never fabricate data.");
     writeFileSync(join(dir, "task.md"), "TASK: Return exactly one concise summary.");
     writeFileSync(join(dir, "context", "b.md"), "CTX-B");
     writeFileSync(join(dir, "context", "a.md"), "CTX-A");
+    writeFileSync(
+      join(dir, "skills", "analysis.md"),
+      [
+        "---",
+        "name: analyst-skill",
+        "description: Analyze topics with concise output",
+        "---",
+        "Full body that should not be injected.",
+      ].join("\n")
+    );
+    writeFileSync(
+      join(dir, "policies", "GP-001.yaml"),
+      [
+        "id: GP-001",
+        "status: active",
+        "trigger: after summarizing",
+        "action: verify claims",
+        "severity: P1",
+      ].join("\n")
+    );
   }
 
   const agents = {
     worker: { role: "worker", capabilities: ["general"], provider: "local", model: "test-model" },
   };
 
-  it("role.md and context files appear in system prompt in order", async () => {
+  it("system prompt follows role → rules → policies → skills → context order", async () => {
     setupFiles();
     let captured: DispatchRequest | null = null;
 
@@ -70,10 +93,22 @@ describe("block_dir integration", () => {
 
     expect(run.status).toBe("completed");
     expect(captured?.system).toContain("ROLE: You are a specialist analyst.");
+    expect(captured?.system).toContain("RULES — NEVER VIOLATE");
+    expect(captured?.system).toContain("RULE: Never fabricate data.");
+    expect(captured?.system).toContain("GATING POLICIES");
+    expect(captured?.system).toContain("GP-001");
+    expect(captured?.system).toContain("<available_skills>");
+    expect(captured?.system).toContain("analyst-skill");
+    expect(captured?.system).not.toContain("Full body that should not be injected");
     expect(captured?.system).toContain("CTX-A");
     expect(captured?.system).toContain("CTX-B");
-    expect((captured?.system ?? "").indexOf("ROLE:")).toBeLessThan((captured?.system ?? "").indexOf("CTX-A"));
-    expect((captured?.system ?? "").indexOf("CTX-A")).toBeLessThan((captured?.system ?? "").indexOf("CTX-B"));
+
+    const sys = captured?.system ?? "";
+    expect(sys.indexOf("ROLE:")).toBeLessThan(sys.indexOf("RULES — NEVER VIOLATE"));
+    expect(sys.indexOf("RULES — NEVER VIOLATE")).toBeLessThan(sys.indexOf("GATING POLICIES"));
+    expect(sys.indexOf("GATING POLICIES")).toBeLessThan(sys.indexOf("<available_skills>"));
+    expect(sys.indexOf("<available_skills>")).toBeLessThan(sys.indexOf("CTX-A"));
+    expect(sys.indexOf("CTX-A")).toBeLessThan(sys.indexOf("CTX-B"));
   });
 
   it("task.md is prepended to description before default block prompt", async () => {
