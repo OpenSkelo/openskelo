@@ -42,6 +42,7 @@ const runEvents = new Map<string, DAGEvent[]>();
 const sseClients = new Map<string, Set<(event: DAGEvent) => void>>();
 const sseClientRegistry = new Map<string, Map<string, (event: DAGEvent) => void>>();
 const approvalWaiters = new Map<string, Set<() => void>>();
+const runStallCounts = new Map<string, number>();
 
 export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string }) {
   // Isolate state per API instance (important for tests/restarts)
@@ -58,6 +59,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   sseClients.clear();
   sseClientRegistry.clear();
   approvalWaiters.clear();
+  runStallCounts.clear();
 
   const app = new Hono();
   app.use("/api/dag/*", cors());
@@ -188,6 +190,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       for (const resolve of waiters) resolve();
       approvalWaiters.delete(runId);
     }
+    runStallCounts.delete(runId);
   }
 
   function waitForApprovalSignal(runId: string): Promise<void> {
@@ -214,6 +217,17 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       if (!live) return;
       if (live.run.status === "completed" || live.run.status === "failed" || live.run.status === "cancelled") return;
 
+      const hasRunningBlock = Object.values(live.run.blocks).some((b) => b.status === "running");
+      if (hasRunningBlock) {
+        const attempts = (runStallCounts.get(runId) ?? 0) + 1;
+        runStallCounts.set(runId, attempts);
+        if (attempts <= 3) {
+          console.warn(`[dag-api] stall grace for run ${runId}: running block still active (attempt ${attempts}/3)`);
+          armStallTimer(runId);
+          return;
+        }
+      }
+
       live.run.status = "cancelled";
       for (const block of Object.values(live.run.blocks)) {
         if (block.status === "running" || block.status === "pending" || block.status === "ready" || block.status === "retrying") {
@@ -222,7 +236,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       }
 
       const ctl = runAbortControllers.get(runId);
-      if (ctl && !ctl.signal.aborted) ctl.abort("run stalled");
+      if (ctl && !ctl.signal.aborted) {
+        console.warn(`[dag-api] aborting run ${runId}: stall_detected`);
+        ctl.abort("stall_detected");
+      }
       runAbortControllers.delete(runId);
       clearRunGuards(runId);
       persistRunSnapshot(live);
@@ -264,6 +281,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
 
     if (["run:start", "block:start", "block:complete", "block:fail", "approval:requested", "approval:decided"].includes(event.type)) {
+      if (["block:start", "block:complete", "block:fail", "approval:decided"].includes(event.type)) {
+        runStallCounts.set(runId, 0);
+      }
       armStallTimer(runId);
     }
   }
@@ -382,10 +402,17 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     const providerMode = (body.provider as string | undefined)?.trim();
 
+    const pipelineAgentKey = Object.keys(config.agents).find((k) => k === "pipeline")
+      ?? Object.entries(config.agents).find(([, a]) => String(a.role) === "pipeline")?.[0]
+      ?? null;
+
     const roleDerivedMapping = Object.entries(config.agents).reduce((acc, [id, a]) => {
       // keep first role match stable; avoid silent overwrite when multiple agents share a role
-      if (!acc[a.role]) acc[a.role] = id;
-      // id passthrough mapping
+      if (!acc[a.role]) {
+        const managerTarget = pipelineAgentKey ?? id;
+        acc[a.role] = a.role === "manager" ? managerTarget : id;
+      }
+      // preserve explicit id passthrough mapping
       acc[id] = id;
       return acc;
     }, {} as Record<string, string>);
@@ -632,7 +659,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         }
       }
       const ctl = runAbortControllers.get(initialRun.id);
-      if (ctl && !ctl.signal.aborted) ctl.abort("run exceeded max duration");
+      if (ctl && !ctl.signal.aborted) {
+        console.warn(`[dag-api] aborting run ${initialRun.id}: run exceeded max duration`);
+        ctl.abort("run exceeded max duration");
+      }
       runAbortControllers.delete(initialRun.id);
       clearRunGuards(initialRun.id);
       persistRunSnapshot(live);
@@ -1083,7 +1113,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       }
 
       const ctl = runAbortControllers.get(runId);
-      if (ctl && !ctl.signal.aborted) ctl.abort("emergency stop-all");
+      if (ctl && !ctl.signal.aborted) {
+        console.warn(`[dag-api] aborting run ${runId}: emergency stop-all`);
+        ctl.abort("emergency stop-all");
+      }
       runAbortControllers.delete(runId);
       clearRunGuards(runId);
 
@@ -1108,7 +1141,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     if (entry) {
       entry.run.status = "cancelled";
       const ctl = runAbortControllers.get(runId);
-      if (ctl && !ctl.signal.aborted) ctl.abort("run stopped by user");
+      if (ctl && !ctl.signal.aborted) {
+        console.warn(`[dag-api] aborting run ${runId}: run stopped by user`);
+        ctl.abort("run stopped by user");
+      }
       runAbortControllers.delete(runId);
       clearRunGuards(runId);
       for (const block of Object.values(entry.run.blocks)) {
