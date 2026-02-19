@@ -231,26 +231,41 @@ export function buildSystemPrompt(agent: AgentConfig, projectDir: string): strin
 }
 
 export function createRuntime(agent: AgentConfig, projectDir: string): DirectRuntime {
-  const providerName = inferProviderName(agent.model.primary, projectDir, agent.id);
-  const token = resolveToken(providerName, projectDir);
+  const resolved = resolveProvider(agent.model.primary, projectDir, agent.id);
+  const token = resolveToken(resolved, projectDir);
 
   const providers = new Map<string, LLMProvider>();
   const modelMap = new Map<string, string>();
 
-  if (providerName === "anthropic") providers.set("anthropic", new AnthropicProvider(token));
-  if (providerName === "openai") providers.set("openai", new OpenAIProvider(token));
-  if (providerName === "openrouter") providers.set("openrouter", createOpenRouterProvider(token));
-
-  modelMap.set(agent.model.primary, providerName);
-  for (const fb of agent.model.fallbacks ?? []) modelMap.set(fb, providerName);
+  if (resolved.kind === "anthropic") {
+    providers.set("anthropic", new AnthropicProvider(token, resolved.baseUrl));
+    modelMap.set(agent.model.primary, "anthropic");
+    for (const fb of agent.model.fallbacks ?? []) modelMap.set(fb, "anthropic");
+  } else if (resolved.kind === "openrouter") {
+    providers.set("openrouter", createOpenRouterProvider(token));
+    modelMap.set(agent.model.primary, "openrouter");
+    for (const fb of agent.model.fallbacks ?? []) modelMap.set(fb, "openrouter");
+  } else {
+    const providerKey = "openai";
+    providers.set(providerKey, new OpenAIProvider(token, resolved.baseUrl, resolved.name));
+    modelMap.set(agent.model.primary, providerKey);
+    for (const fb of agent.model.fallbacks ?? []) modelMap.set(fb, providerKey);
+  }
 
   return new DirectRuntime({ providers, modelToProvider: modelMap });
 }
 
-function inferProviderName(model: string, projectDir: string, agentId: string): "anthropic" | "openai" | "openrouter" {
-  if (model.startsWith("claude-")) return "anthropic";
-  if (model.includes("/")) return "openrouter";
-  if (model.startsWith("gpt-")) return "openai";
+type ResolvedProvider = {
+  kind: "anthropic" | "openai" | "openrouter";
+  name: string;
+  env?: string;
+  baseUrl?: string;
+};
+
+function resolveProvider(model: string, projectDir: string, agentId: string): ResolvedProvider {
+  if (model.startsWith("claude-")) return { kind: "anthropic", name: "anthropic" };
+  if (model.includes("/")) return { kind: "openrouter", name: "openrouter" };
+  if (model.startsWith("gpt-")) return { kind: "openai", name: "openai" };
 
   const skeloPath = join(projectDir, "skelo.yaml");
   if (existsSync(skeloPath)) {
@@ -261,33 +276,51 @@ function inferProviderName(model: string, projectDir: string, agentId: string): 
       const configured = agents?.[agentId]?.provider;
       const provider = providers.find((p: any) => p?.name === configured);
       const type = String(provider?.type ?? "");
-      if (type === "anthropic" || type === "openai" || type === "openrouter") return type;
+      const name = String(provider?.name ?? type ?? "openai");
+      const env = typeof provider?.env === "string" ? String(provider.env) : undefined;
+      const baseUrl = typeof provider?.url === "string" ? String(provider.url) : undefined;
+      if (type === "anthropic" || type === "openai" || type === "openrouter") {
+        return { kind: type, name, env, baseUrl };
+      }
     } catch {
       // ignore
     }
   }
 
-  return "openai";
+  return { kind: "openai", name: "openai" };
 }
 
-function resolveToken(provider: "anthropic" | "openai" | "openrouter", projectDir: string): string {
-  const envName = provider === "anthropic" ? "ANTHROPIC_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : "OPENROUTER_API_KEY";
+function resolveToken(provider: ResolvedProvider, projectDir: string): string {
+  const defaultEnvName = provider.kind === "anthropic"
+    ? "ANTHROPIC_API_KEY"
+    : provider.kind === "openrouter"
+      ? "OPENROUTER_API_KEY"
+      : "OPENAI_API_KEY";
+
+  const envName = provider.env || defaultEnvName;
   const envToken = process.env[envName];
   if (envToken) return envToken;
 
-  const authToken = getProviderToken(provider);
+  const authToken = getProviderToken(provider.name) ?? getProviderToken(provider.kind);
   if (authToken) return authToken;
 
   const secretsPath = join(projectDir, ".skelo", "secrets.enc.yaml");
   if (existsSync(secretsPath)) {
     try {
       const parsed = yaml.parse(readFileSync(secretsPath, "utf-8")) as Record<string, string>;
-      const keyName = provider === "anthropic" ? "anthropic_api_key" : provider === "openai" ? "openai_api_key" : "openrouter_api_key";
-      if (parsed?.[keyName]) return parsed[keyName];
+      const secretKeys = [
+        `${provider.name}_api_key`,
+        `${provider.kind}_api_key`,
+        provider.kind === "openai" ? "openai_api_key" : undefined,
+      ].filter(Boolean) as string[];
+
+      for (const key of secretKeys) {
+        if (parsed?.[key]) return parsed[key];
+      }
     } catch {
       // ignore
     }
   }
 
-  throw new Error(`Missing API key for ${provider}. Set ${envName}, ~/.skelo/auth.json, or .skelo/secrets.enc.yaml`);
+  throw new Error(`Missing API key for ${provider.name}. Set ${envName}, ~/.skelo/auth.json, or .skelo/secrets.enc.yaml`);
 }
