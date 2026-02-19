@@ -88,4 +88,32 @@ describe("validate command smoke", () => {
     await expect(validateCommand("with-block-dir.yaml")).resolves.toBeUndefined();
     expect(logSpy).toHaveBeenCalled();
   });
+
+  it("validates agent project when no target is provided", async () => {
+    const dir = withTempDir();
+    vi.spyOn(process, "cwd").mockReturnValue(dir);
+
+    mkdirSync(join(dir, "agents", "nora"), { recursive: true });
+    writeFileSync(
+      join(dir, "agents", "nora", "agent.yaml"),
+      `id: nora\nname: Nora\nmodel:\n  primary: gpt-4o-mini\n`
+    );
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await expect(validateCommand()).resolves.toBeUndefined();
+    expect(logSpy.mock.calls.join("\n")).toContain("agent");
+  });
+
+  it("fails clearly when no target and no agents directory", async () => {
+    const dir = withTempDir();
+    vi.spyOn(process, "cwd").mockReturnValue(dir);
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation((code?: number) => {
+      throw new Error(`EXIT:${code ?? 0}`);
+    });
+
+    await expect(validateCommand()).rejects.toThrow("EXIT:1");
+    expect(errSpy.mock.calls.join("\n")).toContain("No target provided");
+  });
 });
