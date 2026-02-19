@@ -244,7 +244,8 @@ function runCommand(
     };
 
     const onAbort = () => {
-      const reason = String(abortSignal?.reason ?? "run stop");
+      const raw = abortSignal?.reason;
+      const reason = raw instanceof Error ? raw.message : String(raw ?? "run stop");
       try { child.kill("SIGKILL"); } catch { /* ignore */ }
       finishReject(new Error(`Dispatch aborted: ${reason}`));
     };
@@ -279,7 +280,7 @@ function resolveAgent(request: DispatchRequest, agentMap: Record<string, string>
   if (request.agent?.id && agentMap[request.agent.id]) {
     return agentMap[request.agent.id];
   }
-  // 2) Prefer configured runtime agent id directly
+  // 2) Explicit runtime agent id (best effort); unknown ids will trigger provider fallback-to-main logic
   if (request.agent?.id) return request.agent.id;
   // 3) Role mapping override
   if (request.agent?.role && agentMap[request.agent.role]) {

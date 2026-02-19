@@ -222,6 +222,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         const attempts = (runStallCounts.get(runId) ?? 0) + 1;
         runStallCounts.set(runId, attempts);
         if (attempts <= 3) {
+          console.warn(`[dag-api] stall grace for run ${runId}: running block still active (attempt ${attempts}/3)`);
           armStallTimer(runId);
           return;
         }
@@ -401,10 +402,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     const providerMode = (body.provider as string | undefined)?.trim();
 
+    const pipelineAgentKey = Object.keys(config.agents).find((k) => k === "pipeline")
+      ?? Object.entries(config.agents).find(([, a]) => String(a.role) === "pipeline")?.[0]
+      ?? null;
+
     const roleDerivedMapping = Object.entries(config.agents).reduce((acc, [id, a]) => {
       // keep first role match stable; avoid silent overwrite when multiple agents share a role
       if (!acc[a.role]) {
-        const managerTarget = config.agents.pipeline ? "pipeline" : id;
+        const managerTarget = pipelineAgentKey ?? id;
         acc[a.role] = a.role === "manager" ? managerTarget : id;
       }
       // preserve explicit id passthrough mapping
