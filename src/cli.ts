@@ -12,6 +12,7 @@ import { explainCommand } from "./commands/explain.js";
 import { newCommand } from "./commands/new.js";
 import { authCommands } from "./commands/auth.js";
 import { onboardCommand } from "./commands/onboard.js";
+import { chatCommand } from "./commands/chat.js";
 
 const VERSION = "0.1.0";
 
@@ -52,6 +53,14 @@ program
   .option("--blocks <csv>", "Comma-separated block ids", "plan,build,test")
   .action(async (name, opts) => {
     await newCommand(name, opts);
+  });
+
+// ── chat ──
+program
+  .command("chat <agentId>")
+  .description("Interactive chat with an agent")
+  .action(async (agentId) => {
+    await chatCommand(agentId);
   });
 
 // ── start ──
