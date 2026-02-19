@@ -44,21 +44,6 @@ const sseClientRegistry = new Map<string, Map<string, (event: DAGEvent) => void>
 const approvalWaiters = new Map<string, Set<() => void>>();
 
 export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string }) {
-  // Isolate state per API instance (important for tests/restarts)
-  for (const t of runSafetyTimers.values()) clearTimeout(t);
-  for (const t of runStallTimers.values()) clearTimeout(t);
-  for (const ctl of runAbortControllers.values()) {
-    if (!ctl.signal.aborted) ctl.abort("dag-api reinit");
-  }
-  activeRuns.clear();
-  runAbortControllers.clear();
-  runSafetyTimers.clear();
-  runStallTimers.clear();
-  runEvents.clear();
-  sseClients.clear();
-  sseClientRegistry.clear();
-  approvalWaiters.clear();
-
   const app = new Hono();
   app.use("/api/dag/*", cors());
   const engine = createBlockEngine();
@@ -214,6 +199,12 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       if (!live) return;
       if (live.run.status === "completed" || live.run.status === "failed" || live.run.status === "cancelled") return;
 
+      const hasRunningBlock = Object.values(live.run.blocks).some((b) => b.status === "running");
+      if (hasRunningBlock) {
+        armStallTimer(runId);
+        return;
+      }
+
       live.run.status = "cancelled";
       for (const block of Object.values(live.run.blocks)) {
         if (block.status === "running" || block.status === "pending" || block.status === "ready" || block.status === "retrying") {
@@ -222,7 +213,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       }
 
       const ctl = runAbortControllers.get(runId);
-      if (ctl && !ctl.signal.aborted) ctl.abort("run stalled");
+      if (ctl && !ctl.signal.aborted) ctl.abort("stall_detected");
       runAbortControllers.delete(runId);
       clearRunGuards(runId);
       persistRunSnapshot(live);
