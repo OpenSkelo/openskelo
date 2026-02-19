@@ -135,10 +135,10 @@ program
 
 // ── validate ──
 program
-  .command("validate <dagFile>")
-  .description("Validate a DAG YAML file and required entry inputs")
-  .action(async (dagFile) => {
-    await validateCommand(dagFile);
+  .command("validate [target]")
+  .description("Validate agent project (default) or a DAG YAML file")
+  .action(async (target) => {
+    await validateCommand(target);
   });
 
 // ── explain ──
