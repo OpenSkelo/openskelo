@@ -38,10 +38,10 @@ onboardCommand(program);
 // ── init ──
 program
   .command("init [name]")
-  .description("Create a new OpenSkelo pipeline project (advanced/manual setup)")
-  .option("-t, --template <template>", "Use a preset template", "coding")
+  .description("Interactive first-run setup for an OpenSkelo agent project")
+  .option("-t, --template <template>", "Use preset legacy DAG template (coding|research|content|custom) or 'agent'", "agent")
   .action(async (name, opts) => {
-    await initProject(name, opts.template);
+    await initProject(name, opts.template, { interactive: true });
   });
 
 // ── new ──
