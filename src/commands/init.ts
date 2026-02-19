@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "fs";
 import { resolve, join } from "path";
 import chalk from "chalk";
-import { text, select, password, isCancel, intro, outro, log } from "@clack/prompts";
+import { text, select, password, confirm, isCancel, intro, outro, log } from "@clack/prompts";
 import { stringify } from "yaml";
 import { AgentYamlSchema } from "../agents/schema.js";
 
@@ -573,8 +573,15 @@ async function initAgentProject(name?: string, opts?: InitOpts) {
 
     if (providerType !== "ollama") {
       const ok = await validateProviderKey(providerType, providerUrl, apiKey);
-      if (!ok) throw new Error(`Provider auth check failed for ${provider} (${providerUrl}). Verify API key and try again.`);
-      log.success("API key validated");
+      if (!ok) {
+        log.warn(`Could not validate API key for ${provider} at ${providerUrl}.`);
+        const proceed = await confirm({ message: "Continue setup anyway?" });
+        if (isCancel(proceed) || !proceed) {
+          throw new Error(`Provider auth check failed for ${provider} (${providerUrl}). Verify API key and try again.`);
+        }
+      } else {
+        log.success("API key validated");
+      }
     }
 
     const an = await text({ message: "First agent id", initialValue: "nora" });
