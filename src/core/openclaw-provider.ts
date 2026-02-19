@@ -289,6 +289,13 @@ function buildAgentPrompt(request: DispatchRequest): string {
   lines.push(`You are executing a block in an OpenSkelo DAG pipeline.`);
   lines.push(`Block: ${request.title}`);
   lines.push(`Pipeline: ${request.pipeline}`);
+
+  if (request.system && request.system.trim()) {
+    lines.push("");
+    lines.push("## System Context");
+    lines.push(request.system);
+  }
+
   lines.push("");
   lines.push("## Task");
   lines.push(request.description);
