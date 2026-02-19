@@ -42,9 +42,8 @@ onboardCommand(program);
 program
   .command("init [name]")
   .description("Interactive first-run setup for an OpenSkelo agent project")
-  .option("-t, --template <template>", "Use preset legacy DAG template (coding|research|content|custom) or 'agent'", "agent")
-  .action(async (name, opts) => {
-    await initProject(name, opts.template, { interactive: true });
+  .action(async (name) => {
+    await initProject(name, "agent", { interactive: true });
   });
 
 // ── new ──

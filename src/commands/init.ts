@@ -423,8 +423,8 @@ edges: []
 };
 
 export async function initProject(name?: string, template = "agent", opts?: InitOpts) {
-  if (template in LEGACY_TEMPLATES) {
-    return initLegacyProject(name, template, opts);
+  if (template !== "agent") {
+    throw new Error(`Legacy init templates are deprecated. Use 'skelo init' for agent-first scaffolding.`);
   }
   return initAgentProject(name, opts);
 }
