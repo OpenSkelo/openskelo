@@ -280,12 +280,12 @@ function resolveAgent(request: DispatchRequest, agentMap: Record<string, string>
   if (request.agent?.id && agentMap[request.agent.id]) {
     return agentMap[request.agent.id];
   }
-  // 2) Explicit runtime agent id (best effort); unknown ids will trigger provider fallback-to-main logic
-  if (request.agent?.id) return request.agent.id;
-  // 3) Role mapping override
+  // 2) Role mapping override (preferred before raw id passthrough)
   if (request.agent?.role && agentMap[request.agent.role]) {
     return agentMap[request.agent.role];
   }
+  // 3) Prefer configured runtime agent id directly (best effort)
+  if (request.agent?.id) return request.agent.id;
   // 4) Last-resort fallback
   return agentMap.main ?? "main";
 }

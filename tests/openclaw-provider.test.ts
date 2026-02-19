@@ -93,6 +93,7 @@ describe("openclaw provider", () => {
   it("falls back to main on unknown agent id", async () => {
     const req = baseRequest();
     req.agent.id = "nonexistent";
+    req.agent.role = "unknown";
 
     spawnPlans.push({ stderr: "Unknown agent id: nonexistent", exitCode: 2 });
     spawnPlans.push({
