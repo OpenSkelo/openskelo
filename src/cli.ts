@@ -14,6 +14,7 @@ import { authCommands } from "./commands/auth.js";
 import { onboardCommand } from "./commands/onboard.js";
 import { chatCommand } from "./commands/chat.js";
 import { askCommand } from "./commands/ask.js";
+import { doctorCommand } from "./commands/doctor.js";
 
 const VERSION = "0.1.0";
 
@@ -150,6 +151,13 @@ program
   });
 
 // ── agents ──
+program
+  .command("doctor")
+  .description("Health check for provider connectivity/auth")
+  .action(async () => {
+    await doctorCommand();
+  });
+
 program
   .command("agents")
   .description("List registered agents with current status")
