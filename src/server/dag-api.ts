@@ -484,6 +484,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         maxTokensPerRun: Number(process.env.OPENSKELO_MAX_TOKENS_PER_RUN ?? "0"),
         maxTokensPerBlock: Number(process.env.OPENSKELO_MAX_TOKENS_PER_BLOCK ?? "0"),
       },
+      projectRoot: process.cwd(),
       abortSignal: runAbortController.signal,
       isCancelled: () => (runIdRef ? activeRuns.get(runIdRef)?.run.status === "cancelled" : false),
       waitForApproval: async (run) => {
