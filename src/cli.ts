@@ -13,6 +13,7 @@ import { newCommand } from "./commands/new.js";
 import { authCommands } from "./commands/auth.js";
 import { onboardCommand } from "./commands/onboard.js";
 import { chatCommand } from "./commands/chat.js";
+import { askCommand } from "./commands/ask.js";
 
 const VERSION = "0.1.0";
 
@@ -61,6 +62,14 @@ program
   .description("Interactive chat with an agent")
   .action(async (agentId) => {
     await chatCommand(agentId);
+  });
+
+program
+  .command("ask <agentId> <prompt>")
+  .description("Run a single non-interactive agent turn")
+  .option("--json", "Print structured JSON output", false)
+  .action(async (agentId, prompt, opts) => {
+    await askCommand(agentId, prompt, opts);
   });
 
 // ── start ──

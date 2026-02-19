@@ -204,7 +204,7 @@ function buildUserPrompt(input: string, history: Message[], feedback: string): s
   return chunks.join("\n\n---\n\n");
 }
 
-function buildSystemPrompt(agent: AgentConfig, projectDir: string): string {
+export function buildSystemPrompt(agent: AgentConfig, projectDir: string): string {
   const ctx = loadBlockContext(`agents/${agent.id}`, projectDir);
   const sections: string[] = [];
   if (ctx.role) sections.push(ctx.role);
@@ -215,7 +215,7 @@ function buildSystemPrompt(agent: AgentConfig, projectDir: string): string {
   return sections.join("\n\n---\n\n");
 }
 
-function createRuntime(agent: AgentConfig, projectDir: string): DirectRuntime {
+export function createRuntime(agent: AgentConfig, projectDir: string): DirectRuntime {
   const providerName = inferProviderName(agent.model.primary, projectDir, agent.id);
   const token = resolveToken(providerName, projectDir);
 
