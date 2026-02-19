@@ -272,6 +272,7 @@ type ResolvedProvider = {
 
 function resolveProvider(model: string, projectDir: string, agentId: string): ResolvedProvider {
   if (model.startsWith("claude-")) return { kind: "anthropic", name: "anthropic" };
+  if (model.startsWith("MiniMax-")) return { kind: "openai", name: "minimax", env: "MINIMAX_API_KEY", baseUrl: "https://api.minimax.io/v1" };
   if (model.includes("/")) return { kind: "openrouter", name: "openrouter" };
   if (model.startsWith("gpt-")) return { kind: "openai", name: "openai" };
 
@@ -289,6 +290,14 @@ function resolveProvider(model: string, projectDir: string, agentId: string): Re
       const baseUrl = typeof provider?.url === "string" ? String(provider.url) : undefined;
       if (type === "anthropic" || type === "openai" || type === "openrouter") {
         return { kind: type, name, env, baseUrl };
+      }
+      if (type === "minimax") {
+        return {
+          kind: "openai",
+          name: name || "minimax",
+          env: env || "MINIMAX_API_KEY",
+          baseUrl: baseUrl || "https://api.minimax.io/v1",
+        };
       }
     } catch {
       // ignore

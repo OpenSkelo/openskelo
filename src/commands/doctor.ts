@@ -130,6 +130,7 @@ function defaultBaseUrl(type: Provider["type"]): string {
   if (type === "openrouter") return "https://openrouter.ai/api/v1";
   if (type === "anthropic") return "https://api.anthropic.com/v1";
   if (type === "openai") return "https://api.openai.com/v1";
+  if (type === "minimax") return "https://api.minimax.io/v1";
   if (type === "ollama") return "http://localhost:11434";
   return "";
 }
@@ -138,6 +139,7 @@ function defaultEnvName(type: Provider["type"]): string {
   if (type === "openrouter") return "OPENROUTER_API_KEY";
   if (type === "anthropic") return "ANTHROPIC_API_KEY";
   if (type === "openai") return "OPENAI_API_KEY";
+  if (type === "minimax") return "MINIMAX_API_KEY";
   return "API_KEY";
 }
 
@@ -145,5 +147,6 @@ function defaultSecretKey(type: Provider["type"]): string {
   if (type === "openrouter") return "openrouter_api_key";
   if (type === "anthropic") return "anthropic_api_key";
   if (type === "openai") return "openai_api_key";
+  if (type === "minimax") return "minimax_api_key";
   return "api_key";
 }

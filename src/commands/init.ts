@@ -20,7 +20,7 @@ interface InitOpts {
 interface ProviderPreset {
   key: string;
   label: string;
-  type: "anthropic" | "openai" | "openrouter" | "ollama";
+  type: "anthropic" | "openai" | "openrouter" | "minimax" | "ollama";
   url: string;
   env: string;
   models: Array<{ value: string; label: string }>;
@@ -69,6 +69,18 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
       { value: "meta-llama/llama-3.1-70b-instruct", label: "meta-llama/llama-3.1-70b-instruct" },
     ],
   },
+  minimax: {
+    key: "minimax",
+    label: "MiniMax",
+    type: "minimax",
+    url: "https://api.minimax.io/v1",
+    env: "MINIMAX_API_KEY",
+    models: [
+      { value: "MiniMax-M2.5", label: "MiniMax-M2.5" },
+      { value: "MiniMax-M2.1", label: "MiniMax-M2.1" },
+      { value: "MiniMax-M2", label: "MiniMax-M2" },
+    ],
+  },
   ollama: {
     key: "ollama",
     label: "Ollama (local)",
@@ -86,7 +98,7 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
 const PROVIDER_CHOICES: ProviderChoice[] = [
   { value: "openai", label: "OpenAI (Code + API key)", preset: "openai" },
   { value: "anthropic", label: "Anthropic", preset: "anthropic" },
-  { value: "minimax", label: "MiniMax" },
+  { value: "minimax", label: "MiniMax", preset: "minimax" },
   { value: "openrouter", label: "OpenRouter", preset: "openrouter" },
   { value: "ollama", label: "Ollama (local)", preset: "ollama" },
   { value: "custom", label: "Custom provider" },
@@ -438,7 +450,7 @@ async function initAgentProject(name?: string, opts?: InitOpts) {
   let agentName = "nora";
   let model = "claude-sonnet-4-5";
   let provider = "anthropic";
-  let providerType: "anthropic" | "openai" | "openrouter" | "ollama" = "anthropic";
+  let providerType: "anthropic" | "openai" | "openrouter" | "minimax" | "ollama" = "anthropic";
   let providerUrl = PROVIDER_PRESETS.anthropic.url;
   let providerEnv = PROVIDER_PRESETS.anthropic.env;
   let apiKey = "";
@@ -673,11 +685,12 @@ async function initAgentProject(name?: string, opts?: InitOpts) {
   }
 }
 
-function buildSecrets(providerName: string, providerType: "anthropic" | "openai" | "openrouter" | "ollama", apiKey: string): string {
+function buildSecrets(providerName: string, providerType: "anthropic" | "openai" | "openrouter" | "minimax" | "ollama", apiKey: string): string {
   const header = "# WARNING: plaintext secrets. Do NOT commit this file.\n";
   if (!apiKey || providerType === "ollama") return `${header}# Add secrets here\n`;
   if (providerType === "openrouter") return `${header}openrouter_api_key: ${apiKey}\n`;
   if (providerType === "anthropic") return `${header}anthropic_api_key: ${apiKey}\n`;
+  if (providerType === "minimax") return `${header}minimax_api_key: ${apiKey}\n`;
   if (providerName === "openai") return `${header}openai_api_key: ${apiKey}\n`;
   return `${header}${providerName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}_api_key: ${apiKey}\n`;
 }
@@ -720,7 +733,7 @@ function readDefaultRulesTemplate(): string {
 }
 
 async function validateProviderKey(
-  providerType: "anthropic" | "openai" | "openrouter" | "ollama",
+  providerType: "anthropic" | "openai" | "openrouter" | "minimax" | "ollama",
   baseUrl: string,
   apiKey: string
 ): Promise<boolean> {
