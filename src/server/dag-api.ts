@@ -213,7 +213,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       }
 
       const ctl = runAbortControllers.get(runId);
-      if (ctl && !ctl.signal.aborted) ctl.abort("stall_detected");
+      if (ctl && !ctl.signal.aborted) {
+        console.warn(`[dag-api] aborting run ${runId}: stall_detected`);
+        ctl.abort("stall_detected");
+      }
       runAbortControllers.delete(runId);
       clearRunGuards(runId);
       persistRunSnapshot(live);
@@ -373,11 +376,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     const providerMode = (body.provider as string | undefined)?.trim();
 
-    const roleDerivedMapping = Object.entries(config.agents).reduce((acc, [id, a]) => {
+    const roleDerivedMapping = Object.entries(config.agents).reduce((acc, [_id, a]) => {
       // keep first role match stable; avoid silent overwrite when multiple agents share a role
-      if (!acc[a.role]) acc[a.role] = id;
-      // id passthrough mapping
-      acc[id] = id;
+      if (!acc[a.role]) acc[a.role] = a.role === "manager" ? "pipeline" : _id;
       return acc;
     }, {} as Record<string, string>);
 
@@ -623,7 +624,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         }
       }
       const ctl = runAbortControllers.get(initialRun.id);
-      if (ctl && !ctl.signal.aborted) ctl.abort("run exceeded max duration");
+      if (ctl && !ctl.signal.aborted) {
+        console.warn(`[dag-api] aborting run ${initialRun.id}: run exceeded max duration`);
+        ctl.abort("run exceeded max duration");
+      }
       runAbortControllers.delete(initialRun.id);
       clearRunGuards(initialRun.id);
       persistRunSnapshot(live);
@@ -1074,7 +1078,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       }
 
       const ctl = runAbortControllers.get(runId);
-      if (ctl && !ctl.signal.aborted) ctl.abort("emergency stop-all");
+      if (ctl && !ctl.signal.aborted) {
+        console.warn(`[dag-api] aborting run ${runId}: emergency stop-all`);
+        ctl.abort("emergency stop-all");
+      }
       runAbortControllers.delete(runId);
       clearRunGuards(runId);
 
@@ -1099,7 +1106,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     if (entry) {
       entry.run.status = "cancelled";
       const ctl = runAbortControllers.get(runId);
-      if (ctl && !ctl.signal.aborted) ctl.abort("run stopped by user");
+      if (ctl && !ctl.signal.aborted) {
+        console.warn(`[dag-api] aborting run ${runId}: run stopped by user`);
+        ctl.abort("run stopped by user");
+      }
       runAbortControllers.delete(runId);
       clearRunGuards(runId);
       for (const block of Object.values(entry.run.blocks)) {

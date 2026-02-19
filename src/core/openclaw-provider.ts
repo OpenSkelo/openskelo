@@ -21,8 +21,13 @@ export interface OpenClawProviderOpts {
 }
 
 const DEFAULT_AGENT_MAP: Record<string, string> = {
-  // Keep minimal safe defaults; prefer configured IDs from request.agent.id.
+  // Safe defaults for OpenClaw-native agent ids
   main: "main",
+  manager: "main",
+  worker: "main",
+  reviewer: "main",
+  nora: "main",
+  pipeline: "asuka",
 };
 
 export function createOpenClawProvider(opts: OpenClawProviderOpts = {}): ProviderAdapter {
@@ -239,8 +244,9 @@ function runCommand(
     };
 
     const onAbort = () => {
+      const reason = String(abortSignal?.reason ?? "run stop");
       try { child.kill("SIGKILL"); } catch { /* ignore */ }
-      finishReject(new Error("Dispatch aborted by run stop"));
+      finishReject(new Error(`Dispatch aborted: ${reason}`));
     };
 
     if (abortSignal?.aborted) {
@@ -273,12 +279,12 @@ function resolveAgent(request: DispatchRequest, agentMap: Record<string, string>
   if (request.agent?.id && agentMap[request.agent.id]) {
     return agentMap[request.agent.id];
   }
-  // 2) Role mapping override
+  // 2) Prefer configured runtime agent id directly
+  if (request.agent?.id) return request.agent.id;
+  // 3) Role mapping override
   if (request.agent?.role && agentMap[request.agent.role]) {
     return agentMap[request.agent.role];
   }
-  // 3) Prefer configured runtime agent id directly (avoids unknown role-literal IDs)
-  if (request.agent?.id) return request.agent.id;
   // 4) Last-resort fallback
   return agentMap.main ?? "main";
 }
