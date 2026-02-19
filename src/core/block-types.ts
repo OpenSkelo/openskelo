@@ -63,6 +63,9 @@ export interface BlockDef {
   /** Additional contract-repair attempts after first parse (default: 1) */
   contract_repair_attempts?: number;
 
+  /** Optional directory containing role.md, task.md, and context/ files */
+  block_dir?: string;
+
   /** Arbitrary user metadata */
   metadata?: Record<string, unknown>;
 }

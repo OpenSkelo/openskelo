@@ -16,6 +16,7 @@
 
 import { createBlockEngine, evaluateBlockGate } from "./block.js";
 import { runDeterministicHandler } from "./deterministic.js";
+import { loadBlockContext } from "./block-context.js";
 import type {
   BlockDef,
   BlockExecution,
@@ -85,6 +86,9 @@ export interface ExecutorOpts {
     maxTokensPerRun?: number;
     maxTokensPerBlock?: number;
   };
+
+  /** Absolute path to project root, used to resolve block_dir paths */
+  projectRoot?: string;
 }
 
 export interface ExecutorResult {
@@ -518,11 +522,26 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       return;
     }
 
+    const blockCtx = blockDef.block_dir
+      ? loadBlockContext(blockDef.block_dir, opts.projectRoot ?? process.cwd())
+      : null;
+
+    const systemParts: string[] = [];
+    if (blockCtx?.role) systemParts.push(blockCtx.role);
+    if (blockCtx?.context) systemParts.push(blockCtx.context);
+    const system = systemParts.length > 0 ? systemParts.join("\n\n---\n\n") : undefined;
+
+    const userParts: string[] = [];
+    if (blockCtx?.task) userParts.push(blockCtx.task);
+    userParts.push(buildBlockPrompt(blockDef, inputs));
+    const description = userParts.join("\n\n---\n\n");
+
     const dispatchRequest: DispatchRequest = {
       taskId: run.blocks[blockId].instance_id,
       pipeline: dag.name,
       title: blockDef.name,
-      description: buildBlockPrompt(blockDef, inputs),
+      description,
+      system,
       context: inputs,
       acceptanceCriteria: blockDef.post_gates.map(g => g.error),
       bounceCount: run.blocks[blockId].retry_state.attempt - 1,

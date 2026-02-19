@@ -133,6 +133,7 @@ function parseBlockDef(raw: Record<string, unknown>): BlockDef {
     timeout_ms: raw.timeout_ms as number | undefined,
     strict_output: raw.strict_output === false ? false : true,
     contract_repair_attempts: Number(raw.contract_repair_attempts ?? 1),
+    block_dir: typeof raw.block_dir === "string" && raw.block_dir.trim() ? raw.block_dir.trim() : undefined,
     metadata: raw.metadata as Record<string, unknown> | undefined,
   };
 }
