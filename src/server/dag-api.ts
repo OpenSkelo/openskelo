@@ -43,6 +43,7 @@ const sseClients = new Map<string, Set<(event: DAGEvent) => void>>();
 const sseClientRegistry = new Map<string, Map<string, (event: DAGEvent) => void>>();
 const approvalWaiters = new Map<string, Set<() => void>>();
 const runStallCounts = new Map<string, number>();
+const runQueueClaimTokens = new Map<string, string>();
 
 export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string }) {
   // Isolate state per API instance (important for tests/restarts)
@@ -60,6 +61,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   sseClientRegistry.clear();
   approvalWaiters.clear();
   runStallCounts.clear();
+  runQueueClaimTokens.clear();
 
   const app = new Hono();
   app.use("/api/dag/*", cors());
@@ -173,7 +175,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         lease_expires_at = NULL,
         started_at = COALESCE(started_at, ?),
         updated_at = ?
-    WHERE run_id = ? AND status IN ('claimed', 'pending')
+    WHERE run_id = ? AND status = 'claimed' AND claim_token = ?
   `);
   const markQueueFinished = db.prepare(`
     UPDATE dag_run_queue
@@ -184,7 +186,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         last_error = ?,
         finished_at = ?,
         updated_at = ?
-    WHERE run_id = ?
+    WHERE run_id = ? AND status IN ('claimed', 'running') AND claim_token = ?
   `);
 
   async function notifyApprovalViaTelegram(run: DAGRun, approval: Record<string, unknown>): Promise<void> {
@@ -245,7 +247,10 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
   function markQueueRunFinal(runId: string, status: "completed" | "failed" | "cancelled", error?: string): void {
     const now = new Date().toISOString();
-    markQueueFinished.run(status, error ?? null, now, now, runId);
+    const claimToken = runQueueClaimTokens.get(runId);
+    if (!claimToken) return;
+    markQueueFinished.run(status, error ?? null, now, now, runId, claimToken);
+    runQueueClaimTokens.delete(runId);
   }
 
   type QueueClaim = {
@@ -316,7 +321,11 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           }
 
           const now = new Date().toISOString();
-          markQueueRunning.run(`dag-api:${reason}`, claim.claim_token, now, now, claim.run_id);
+          const markRunning = markQueueRunning.run(`dag-api:${reason}`, claim.claim_token, now, now, claim.run_id, claim.claim_token);
+          if (Number(markRunning.changes ?? 0) !== 1) {
+            continue;
+          }
+          runQueueClaimTokens.set(claim.run_id, claim.claim_token);
 
           void (async () => {
             try {
@@ -327,11 +336,11 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
               if ((started as { error?: string }).error) {
                 const msg = (started as { error: string }).error;
                 markQueueRunFinal(claim.run_id, "failed", msg);
-                void pumpQueuedRuns("queue-start-error");
               }
             } catch (err) {
               markQueueRunFinal(claim.run_id, "failed", err instanceof Error ? err.message : String(err));
-              void pumpQueuedRuns("queue-start-crash");
+            } finally {
+              void pumpQueuedRuns("slot-freed");
             }
           })();
         }
@@ -879,11 +888,6 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     {
       const entry = activeRuns.get(initialRun.id);
       if (entry) persistRunSnapshot(entry);
-    }
-
-    if (opts?.queuedRunId) {
-      const now = new Date().toISOString();
-      markQueueRunning.run("dag-api:launcher", null, now, now, initialRun.id);
     }
 
     broadcast(initialRun.id, {
