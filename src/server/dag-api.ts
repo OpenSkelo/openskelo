@@ -456,10 +456,18 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         });
         continue;
       }
-      if (p.type === "openai" || p.type === "anthropic" || p.type === "http" || p.type === "openrouter") {
+      if (p.type === "openai" || p.type === "anthropic" || p.type === "http" || p.type === "openrouter" || p.type === "minimax") {
         const authHeader = typeof p.config?.authHeader === "string" ? p.config.authHeader : undefined;
-        const baseUrl = p.type === "openrouter" ? (p.url ?? "https://openrouter.ai/api/v1") : p.url;
-        const apiKeyEnv = p.type === "openrouter" ? (p.env ?? "OPENROUTER_API_KEY") : p.env;
+        const baseUrl = p.type === "openrouter"
+          ? (p.url ?? "https://openrouter.ai/api/v1")
+          : p.type === "minimax"
+            ? (p.url ?? "https://api.minimax.io/v1")
+            : p.url;
+        const apiKeyEnv = p.type === "openrouter"
+          ? (p.env ?? "OPENROUTER_API_KEY")
+          : p.type === "minimax"
+            ? (p.env ?? "MINIMAX_API_KEY")
+            : p.env;
         const authToken = getProviderToken(p.name) ?? getProviderToken(p.type);
         providers[p.name] = createOpenAICompatibleProvider({
           name: p.name,

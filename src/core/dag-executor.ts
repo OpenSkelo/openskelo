@@ -14,7 +14,8 @@
  * of independent blocks (blocks with no shared dependencies).
  */
 
-import { createBlockEngine, evaluateBlockGate } from "./block.js";
+import { createBlockEngine } from "./block.js";
+import { evaluateBlockGates } from "./gate-runtime.js";
 import { runDeterministicHandler } from "./deterministic.js";
 import { loadBlockContext } from "./block-context.js";
 import type {
@@ -282,13 +283,40 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     engine.startBlock(run, blockId, inputs);
 
-    // Resolve agent early so UI can show who is working while running
-    const agent = resolveAgent(blockDef);
-    if (agent) {
-      const provider = opts.providers[agent.provider];
-      run.blocks[blockId].active_agent_id = agent.id;
-      run.blocks[blockId].active_model = agent.model;
-      run.blocks[blockId].active_provider = provider?.name ?? agent.provider;
+    // Resolve agent early so UI can show who is working while running.
+    // Deterministic blocks may intentionally omit agent routing.
+    const isDeterministicBlock = (blockDef.mode ?? "ai") === "deterministic";
+    const hasExplicitAgentRef = Boolean(blockDef.agent?.specific || blockDef.agent?.role || blockDef.agent?.capability);
+    const shouldResolveAgent = !isDeterministicBlock || hasExplicitAgentRef;
+
+    let agent: { id: string; role: string; provider: string; model: string } | null = null;
+    if (shouldResolveAgent) {
+      try {
+        agent = resolveAgent(blockDef);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Ambiguous agent routing";
+        engine.failBlock(run, blockId, msg, blockDef);
+        opts.onBlockFail?.(run, blockId, msg, "AGENT_ROUTE_AMBIGUOUS", { stage: "dispatch", message: msg });
+        trace.push({
+          block_id: blockId,
+          instance_id: run.blocks[blockId].instance_id,
+          status: "failed",
+          inputs,
+          outputs: {},
+          pre_gates: [],
+          post_gates: [],
+          execution: null,
+          duration_ms: Date.now() - startTime,
+        });
+        return;
+      }
+
+      if (agent) {
+        const provider = opts.providers[agent.provider];
+        run.blocks[blockId].active_agent_id = agent.id;
+        run.blocks[blockId].active_model = agent.model;
+        run.blocks[blockId].active_provider = provider?.name ?? agent.provider;
+      }
     }
 
     opts.onBlockStart?.(run, blockId);
@@ -528,6 +556,9 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     const systemParts: string[] = [];
     if (blockCtx?.role) systemParts.push(blockCtx.role);
+    if (blockCtx?.rules) systemParts.push(`## RULES — NEVER VIOLATE\n\n${blockCtx.rules}`);
+    if (blockCtx?.policies) systemParts.push(blockCtx.policies);
+    if (blockCtx?.skill_summaries) systemParts.push(blockCtx.skill_summaries);
     if (blockCtx?.context) systemParts.push(blockCtx.context);
     const system = systemParts.length > 0 ? systemParts.join("\n\n---\n\n") : undefined;
 
@@ -900,28 +931,41 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       return { id: ref.specific, ...agent };
     }
 
+    const hasExplicitRoutingCriteria = Boolean(ref.role || ref.capability);
+    const assertDeterministic = (stage: string, candidates: Array<[string, { role: string; capabilities: string[]; provider: string; model: string }]>) => {
+      if (!hasExplicitRoutingCriteria) return;
+      if (candidates.length <= 1) return;
+      const ids = candidates.map(([id]) => id).sort().join(", ");
+      throw new Error(
+        `Ambiguous routing for block '${blockDef.id}' at ${stage}: matched ${candidates.length} agents [${ids}]. Use agent.specific or narrow role/capability.`
+      );
+    };
+
     // By role + capability
     let candidates = Object.entries(opts.agents).filter(([_, a]) => {
       if (ref.role && a.role !== ref.role) return false;
       if (ref.capability && !a.capabilities.includes(ref.capability)) return false;
       return true;
     });
+    assertDeterministic("role+capability", candidates);
 
-    // Fallback: if no exact match, try role-only, then any agent
+    // Fallback: if no exact match, try role-only
     if (candidates.length === 0 && ref.capability) {
       candidates = Object.entries(opts.agents).filter(([_, a]) => {
         if (ref.role && a.role !== ref.role) return false;
         return true;
       });
+      assertDeterministic("role-only fallback", candidates);
     }
+
+    // Last resort: any agent (kept for backward compatibility when no explicit routing criteria).
     if (candidates.length === 0) {
-      // Last resort: pick any available agent
       candidates = Object.entries(opts.agents);
+      assertDeterministic("any-agent fallback", candidates);
     }
 
     if (candidates.length === 0) return null;
 
-    // Pick first match (could add load balancing later)
     const [id, agent] = candidates[0];
     return { id, ...agent };
   }
@@ -1141,17 +1185,15 @@ function parseAgentOutputs(blockDef: BlockDef, rawOutput: string): Record<string
     } catch { /* not valid JSON in code block */ }
   }
 
-  // Fallback: if single output port, use the raw output
+  // Fallback policy (strict):
+  // - single-port blocks may map raw output to that port
+  // - multi-port blocks NEVER silently stuff raw output into the first key
+  // - if an explicit `raw` port exists, map there; otherwise return parsed keys only
   const outputKeys = Object.keys(blockDef.outputs);
   if (outputKeys.length === 1) {
     outputs[outputKeys[0]] = rawOutput;
-  } else {
-    // Last resort: stuff everything in a "raw" key if it exists, otherwise first port
-    if (blockDef.outputs["raw"]) {
-      outputs["raw"] = rawOutput;
-    } else if (outputKeys.length > 0) {
-      outputs[outputKeys[0]] = rawOutput;
-    }
+  } else if (blockDef.outputs["raw"]) {
+    outputs["raw"] = rawOutput;
   }
 
   return outputs;
@@ -1199,61 +1241,25 @@ async function evaluateGatesWithLLM(
     providers: Record<string, ProviderAdapter>;
   }
 ): Promise<GateResult[]> {
-  const results: GateResult[] = [];
+  return evaluateBlockGates(gates, {
+    inputs: ctx.inputs,
+    outputs: ctx.outputs,
+    llmReview: async ({ gate, systemPrompt, reviewPrompt }) => {
+      const providerName = gate.check.provider ?? ctx.defaultAgent?.provider;
+      const provider = providerName ? ctx.providers[providerName] : undefined;
+      if (!providerName || !provider) {
+        return {
+          success: false,
+          error: `llm_review provider not found: ${providerName ?? "<none>"}`,
+          audit: {
+            provider: providerName ?? null,
+            model: gate.check.model ?? ctx.defaultAgent?.model ?? "unknown",
+            failure: "provider_not_found",
+          },
+        };
+      }
 
-  for (const gate of gates) {
-    if (gate.check.type !== "llm_review") {
-      results.push(evaluateBlockGate(gate, ctx.inputs, ctx.outputs));
-      continue;
-    }
-
-    const ports = { ...ctx.inputs, ...ctx.outputs };
-    const candidate = ports[gate.check.port];
-    if (candidate === undefined || candidate === null || String(candidate).trim() === "") {
-      results.push({
-        name: gate.name,
-        passed: false,
-        reason: `${gate.error} (target port '${gate.check.port}' is empty)`,
-        audit: { gate_type: "llm_review", status: "failed", failure: "empty_port" },
-      });
-      continue;
-    }
-
-    const providerName = gate.check.provider ?? ctx.defaultAgent?.provider;
-    const provider = providerName ? ctx.providers[providerName] : undefined;
-    if (!providerName || !provider) {
-      results.push({
-        name: gate.name,
-        passed: false,
-        reason: `${gate.error} (llm_review provider not found: ${providerName ?? "<none>"})`,
-        audit: { gate_type: "llm_review", status: "failed", failure: "provider_not_found", provider: providerName ?? null },
-      });
-      continue;
-    }
-
-    const model = gate.check.model ?? ctx.defaultAgent?.model ?? "unknown";
-    const criteria = gate.check.criteria;
-    const passThreshold = Number(gate.check.pass_threshold ?? 1);
-
-    const systemPrompt = gate.check.system_prompt ?? "You are a strict quality reviewer.";
-    const reviewPrompt = [
-      "Evaluate the following output against each criterion.",
-      "Respond with ONLY valid JSON array; each element must have: criterion, passed (boolean), reasoning.",
-      "",
-      "OUTPUT:",
-      "---",
-      String(candidate),
-      "---",
-      "",
-      "CRITERIA:",
-      ...criteria.map((c, i) => `${i + 1}. ${c}`),
-      "",
-      "Example:",
-      '[{"criterion":"Code handles errors","passed":true,"reasoning":"Try/catch present."}]',
-    ].join("\n");
-
-    const reviewStart = Date.now();
-    try {
+      const model = gate.check.model ?? ctx.defaultAgent?.model ?? "unknown";
       const reviewReq: DispatchRequest = {
         taskId: `gate_${ctx.blockDef.id}_${gate.name}`,
         pipeline: "llm_review",
@@ -1265,7 +1271,7 @@ async function evaluateGatesWithLLM(
           block_id: ctx.blockDef.id,
           gate_name: gate.name,
         },
-        acceptanceCriteria: criteria,
+        acceptanceCriteria: gate.check.criteria,
         bounceCount: 0,
         abortSignal: undefined,
         isCancelled: undefined,
@@ -1277,126 +1283,18 @@ async function evaluateGatesWithLLM(
       };
 
       const review = await dispatchWithTimeout(provider, reviewReq, gate.check.timeout_ms ?? 15000);
-      if (!review.success) {
-        results.push({
-          name: gate.name,
-          passed: false,
-          reason: `${gate.error} (review dispatch failed: ${review.error ?? "unknown"})`,
-          audit: {
-            gate_type: "llm_review",
-            status: "failed",
-            failure: "dispatch_failed",
-            provider: providerName,
-            model,
-            criteria_count: criteria.length,
-            pass_threshold: passThreshold,
-            review_prompt: reviewPrompt,
-            raw_response: review.output ?? "",
-            tokens_used: review.tokensUsed ?? 0,
-            duration_ms: Date.now() - reviewStart,
-          },
-        });
-        continue;
-      }
-
-      const parsed = parseReviewJson(review.output ?? "");
-      if (!parsed.ok) {
-        results.push({
-          name: gate.name,
-          passed: false,
-          reason: `${gate.error} (review output invalid JSON schema)` ,
-          audit: {
-            gate_type: "llm_review",
-            status: "failed",
-            failure: "invalid_review_output",
-            provider: providerName,
-            model,
-            raw_preview: String(review.output ?? "").slice(0, 400),
-          },
-        });
-        continue;
-      }
-
-      const passedCount = parsed.criteria.filter((c) => c.passed).length;
-      const score = parsed.criteria.length === 0 ? 0 : passedCount / parsed.criteria.length;
-      const ok = score >= passThreshold;
-
-      results.push({
-        name: gate.name,
-        passed: ok,
-        reason: ok ? undefined : `${gate.error} (${passedCount}/${parsed.criteria.length} criteria passed)` ,
+      return {
+        success: review.success,
+        output: review.output,
+        error: review.error,
+        tokensUsed: review.tokensUsed,
         audit: {
-          gate_type: "llm_review",
-          status: ok ? "passed" : "failed",
-          provider: providerName,
-          model,
-          pass_threshold: passThreshold,
-          score,
-          passed_count: passedCount,
-          criteria_count: parsed.criteria.length,
-          overall_passed: ok,
-          verdicts: parsed.criteria,
-          summary: parsed.summary,
-          review_prompt: reviewPrompt,
-          raw_response: review.output ?? "",
-          tokens_used: review.tokensUsed ?? 0,
-          duration_ms: Date.now() - reviewStart,
-        },
-      });
-    } catch (err) {
-      results.push({
-        name: gate.name,
-        passed: false,
-        reason: `${gate.error} (${err instanceof Error ? err.message : "review exception"})`,
-        audit: {
-          gate_type: "llm_review",
-          status: "failed",
-          failure: "exception",
           provider: providerName,
           model,
         },
-      });
-    }
-  }
-
-  return results;
-}
-
-function parseReviewJson(raw: string): { ok: true; criteria: Array<{ criterion: string; passed: boolean; reasoning: string }>; summary?: string } | { ok: false } {
-  const candidates: string[] = [raw];
-  const code = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (code?.[1]) candidates.push(code[1]);
-
-  for (const candidate of candidates) {
-    try {
-      const parsedAny = JSON.parse(candidate) as unknown;
-      const parsed = parsedAny as Record<string, unknown>;
-
-      const arr = Array.isArray(parsedAny)
-        ? parsedAny
-        : (Array.isArray(parsed?.criteria) ? parsed.criteria : null);
-      if (!arr) continue;
-
-      const criteria = arr
-        .map((c) => c as Record<string, unknown>)
-        .filter((c) => typeof c.criterion === "string" && typeof c.passed === "boolean")
-        .map((c) => ({
-          criterion: String(c.criterion),
-          passed: Boolean(c.passed),
-          reasoning: typeof c.reasoning === "string"
-            ? c.reasoning
-            : (typeof c.reason === "string" ? c.reason : ""),
-        }));
-      if (criteria.length === 0) continue;
-
-      const summary = !Array.isArray(parsedAny) && typeof parsed.summary === "string" ? parsed.summary : undefined;
-      return { ok: true, criteria, summary };
-    } catch {
-      // try next candidate
-    }
-  }
-
-  return { ok: false };
+      };
+    },
+  });
 }
 
 async function dispatchWithTimeout(

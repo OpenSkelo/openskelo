@@ -261,4 +261,102 @@ describe("DAG executor output contract", () => {
       expect(run.blocks.build.outputs.artifact_html).toContain("<html>");
     }
   });
+
+  it("does not silently map raw output to first port for multi-output blocks", async () => {
+    const multiDag: DAGDef = {
+      name: "multi-port-no-fallback",
+      blocks: [
+        {
+          id: "writer",
+          name: "Writer",
+          inputs: { prompt: { type: "string", required: true } },
+          outputs: {
+            result: { type: "string", required: true },
+            metadata: { type: "json", required: false },
+          },
+          agent: { role: "worker" },
+          pre_gates: [],
+          post_gates: [],
+          retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+        },
+      ],
+      edges: [],
+      entrypoints: ["writer"],
+      terminals: ["writer"],
+    };
+
+    const provider = makeProvider(() => ({ success: true, output: "plain text, not json" }));
+    const failures: Array<{ err: string; code?: string }> = [];
+
+    const ex = createDAGExecutor({
+      providers: { local: provider },
+      agents,
+      onBlockFail: (_r, _b, err, code) => failures.push({ err, code }),
+    });
+
+    const { run } = await ex.execute(multiDag, { prompt: "x" });
+    expect(run.status).toBe("failed");
+    expect(failures[0]?.code).toBe("OUTPUT_CONTRACT_FAILED");
+    expect(failures[0]?.err).toContain("missing required output 'result'");
+  });
+
+  it("fails loudly on ambiguous agent routing", async () => {
+    const ambiguousAgents = {
+      worker_a: { role: "worker", capabilities: ["coding"], provider: "local", model: "test-model" },
+      worker_b: { role: "worker", capabilities: ["coding"], provider: "local", model: "test-model" },
+    };
+
+    const provider = makeProvider(() => ({ success: true, output: JSON.stringify({ game_spec: { ok: true }, dev_plan: "ok" }) }));
+    const failures: Array<{ err: string; code?: string }> = [];
+
+    const ex = createDAGExecutor({
+      providers: { local: provider },
+      agents: ambiguousAgents,
+      onBlockFail: (_r, _b, err, code) => failures.push({ err, code }),
+    });
+
+    const { run } = await ex.execute(baseDag, { prompt: "x" });
+    expect(run.status).toBe("failed");
+    expect(failures[0]?.code).toBe("AGENT_ROUTE_AMBIGUOUS");
+    expect(failures[0]?.err).toContain("Ambiguous routing");
+  });
+
+  it("executes deterministic block without agent ref even when multiple agents exist", async () => {
+    const deterministicDag: DAGDef = {
+      name: "det-no-agent",
+      blocks: [
+        {
+          id: "copy",
+          name: "Copy",
+          mode: "deterministic",
+          agent: {},
+          deterministic: {
+            handler: "builtin:transform",
+            config: { map: { out: "input" } },
+          },
+          inputs: { input: { type: "string", required: true } },
+          outputs: { out: { type: "string", required: true } },
+          pre_gates: [],
+          post_gates: [],
+          retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+        },
+      ],
+      edges: [],
+      entrypoints: ["copy"],
+      terminals: ["copy"],
+    };
+
+    const manyAgents = {
+      manager: { role: "manager", capabilities: ["planning"], provider: "local", model: "test-model" },
+      worker: { role: "worker", capabilities: ["coding"], provider: "local", model: "test-model" },
+      reviewer: { role: "reviewer", capabilities: ["qa"], provider: "local", model: "test-model" },
+    };
+
+    const provider = makeProvider(() => ({ success: true, output: "unused" }));
+    const ex = createDAGExecutor({ providers: { local: provider }, agents: manyAgents });
+
+    const { run } = await ex.execute(deterministicDag, { input: "hello" });
+    expect(run.status).toBe("completed");
+    expect(run.blocks.copy.outputs.out).toBe("hello");
+  });
 });

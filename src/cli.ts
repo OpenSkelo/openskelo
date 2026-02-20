@@ -12,6 +12,9 @@ import { explainCommand } from "./commands/explain.js";
 import { newCommand } from "./commands/new.js";
 import { authCommands } from "./commands/auth.js";
 import { onboardCommand } from "./commands/onboard.js";
+import { chatCommand } from "./commands/chat.js";
+import { askCommand } from "./commands/ask.js";
+import { doctorCommand } from "./commands/doctor.js";
 
 const VERSION = "0.1.0";
 
@@ -38,10 +41,9 @@ onboardCommand(program);
 // ── init ──
 program
   .command("init [name]")
-  .description("Create a new OpenSkelo pipeline project (advanced/manual setup)")
-  .option("-t, --template <template>", "Use a preset template", "coding")
-  .action(async (name, opts) => {
-    await initProject(name, opts.template);
+  .description("Interactive first-run setup for an OpenSkelo agent project")
+  .action(async (name) => {
+    await initProject(name, "agent", { interactive: true });
   });
 
 // ── new ──
@@ -52,6 +54,22 @@ program
   .option("--blocks <csv>", "Comma-separated block ids", "plan,build,test")
   .action(async (name, opts) => {
     await newCommand(name, opts);
+  });
+
+// ── chat ──
+program
+  .command("chat <agentId>")
+  .description("Interactive chat with an agent")
+  .action(async (agentId) => {
+    await chatCommand(agentId);
+  });
+
+program
+  .command("ask <agentId> <prompt>")
+  .description("Run a single non-interactive agent turn")
+  .option("--json", "Print structured JSON output", false)
+  .action(async (agentId, prompt, opts) => {
+    await askCommand(agentId, prompt, opts);
   });
 
 // ── start ──
@@ -117,10 +135,10 @@ program
 
 // ── validate ──
 program
-  .command("validate <dagFile>")
-  .description("Validate a DAG YAML file and required entry inputs")
-  .action(async (dagFile) => {
-    await validateCommand(dagFile);
+  .command("validate [target]")
+  .description("Validate agent project (default) or a DAG YAML file")
+  .action(async (target) => {
+    await validateCommand(target);
   });
 
 // ── explain ──
@@ -132,6 +150,13 @@ program
   });
 
 // ── agents ──
+program
+  .command("doctor")
+  .description("Health check for provider connectivity/auth")
+  .action(async () => {
+    await doctorCommand();
+  });
+
 program
   .command("agents")
   .description("List registered agents with current status")

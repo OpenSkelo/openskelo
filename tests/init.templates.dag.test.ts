@@ -3,40 +3,30 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initProject } from "../src/commands/init";
-import { parseYamlWithDiagnostics } from "../src/core/yaml-utils";
-import { createBlockEngine } from "../src/core/block";
+const LEGACY_TEMPLATES = ["coding", "research", "content", "custom"] as const;
 
-const TEMPLATES = ["coding", "research", "content", "custom"] as const;
-
-describe("init templates (v2 DAG-first)", () => {
-  it("generates DAG example files that parse successfully", async () => {
+describe("init templates (agent-first)", () => {
+  it("rejects legacy template names with a clear deprecation error", async () => {
     const base = mkdtempSync(join(tmpdir(), "openskelo-init-"));
-    const engine = createBlockEngine();
 
     try {
-      for (const template of TEMPLATES) {
-        const projectName = `proj-${template}`;
-        await initProject(projectName, template, { cwd: base });
-
-        const dagPath = join(base, projectName, "examples", `${template}.yaml`);
-        const raw = parseYamlWithDiagnostics(readFileSync(dagPath, "utf8"), dagPath);
-        const dag = engine.parseDAG(raw as Record<string, unknown>);
-
-        expect(Array.isArray(dag.blocks)).toBe(true);
-        expect(dag.blocks.length).toBeGreaterThan(0);
+      for (const template of LEGACY_TEMPLATES) {
+        await expect(initProject(`proj-${template}`, template, { cwd: base })).rejects.toThrow(
+          /Legacy init templates are deprecated/i
+        );
       }
     } finally {
       rmSync(base, { recursive: true, force: true });
     }
   });
 
-  it("does not emit legacy pipeline/stage schema in skelo.yaml", async () => {
+  it("agent init still emits modern skelo.yaml (no pipelines/stages)", async () => {
     const base = mkdtempSync(join(tmpdir(), "openskelo-init-"));
 
     try {
-      await initProject("proj-legacy-guard", "coding", { cwd: base });
+      await initProject("proj-agent", "agent", { cwd: base, interactive: false });
 
-      const cfgPath = join(base, "proj-legacy-guard", "skelo.yaml");
+      const cfgPath = join(base, "proj-agent", "skelo.yaml");
       const cfg = readFileSync(cfgPath, "utf8");
 
       expect(cfg).not.toMatch(/\bpipelines\s*:/);
