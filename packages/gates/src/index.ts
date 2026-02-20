@@ -41,6 +41,7 @@ export type {
   LlmProvider,
   LlmReviewInput,
   LlmReviewOutput,
+  SimpleJsonSchema,
 } from './types.js'
 
 export type { GateRunner, GateRunnerOptions } from './runner.js'
