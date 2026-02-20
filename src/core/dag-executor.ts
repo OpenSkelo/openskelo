@@ -283,13 +283,40 @@ export function createDAGExecutor(opts: ExecutorOpts) {
 
     engine.startBlock(run, blockId, inputs);
 
-    // Resolve agent early so UI can show who is working while running
-    const agent = resolveAgent(blockDef);
-    if (agent) {
-      const provider = opts.providers[agent.provider];
-      run.blocks[blockId].active_agent_id = agent.id;
-      run.blocks[blockId].active_model = agent.model;
-      run.blocks[blockId].active_provider = provider?.name ?? agent.provider;
+    // Resolve agent early so UI can show who is working while running.
+    // Deterministic blocks may intentionally omit agent routing.
+    const isDeterministicBlock = (blockDef.mode ?? "ai") === "deterministic";
+    const hasExplicitAgentRef = Boolean(blockDef.agent?.specific || blockDef.agent?.role || blockDef.agent?.capability);
+    const shouldResolveAgent = !isDeterministicBlock || hasExplicitAgentRef;
+
+    let agent: { id: string; role: string; provider: string; model: string } | null = null;
+    if (shouldResolveAgent) {
+      try {
+        agent = resolveAgent(blockDef);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Ambiguous agent routing";
+        engine.failBlock(run, blockId, msg, blockDef);
+        opts.onBlockFail?.(run, blockId, msg, "AGENT_ROUTE_AMBIGUOUS", { stage: "dispatch", message: msg });
+        trace.push({
+          block_id: blockId,
+          instance_id: run.blocks[blockId].instance_id,
+          status: "failed",
+          inputs,
+          outputs: {},
+          pre_gates: [],
+          post_gates: [],
+          execution: null,
+          duration_ms: Date.now() - startTime,
+        });
+        return;
+      }
+
+      if (agent) {
+        const provider = opts.providers[agent.provider];
+        run.blocks[blockId].active_agent_id = agent.id;
+        run.blocks[blockId].active_model = agent.model;
+        run.blocks[blockId].active_provider = provider?.name ?? agent.provider;
+      }
     }
 
     opts.onBlockStart?.(run, blockId);
@@ -904,28 +931,41 @@ export function createDAGExecutor(opts: ExecutorOpts) {
       return { id: ref.specific, ...agent };
     }
 
+    const hasExplicitRoutingCriteria = Boolean(ref.role || ref.capability);
+    const assertDeterministic = (stage: string, candidates: Array<[string, { role: string; capabilities: string[]; provider: string; model: string }]>) => {
+      if (!hasExplicitRoutingCriteria) return;
+      if (candidates.length <= 1) return;
+      const ids = candidates.map(([id]) => id).sort().join(", ");
+      throw new Error(
+        `Ambiguous routing for block '${blockDef.id}' at ${stage}: matched ${candidates.length} agents [${ids}]. Use agent.specific or narrow role/capability.`
+      );
+    };
+
     // By role + capability
     let candidates = Object.entries(opts.agents).filter(([_, a]) => {
       if (ref.role && a.role !== ref.role) return false;
       if (ref.capability && !a.capabilities.includes(ref.capability)) return false;
       return true;
     });
+    assertDeterministic("role+capability", candidates);
 
-    // Fallback: if no exact match, try role-only, then any agent
+    // Fallback: if no exact match, try role-only
     if (candidates.length === 0 && ref.capability) {
       candidates = Object.entries(opts.agents).filter(([_, a]) => {
         if (ref.role && a.role !== ref.role) return false;
         return true;
       });
+      assertDeterministic("role-only fallback", candidates);
     }
+
+    // Last resort: any agent (kept for backward compatibility when no explicit routing criteria).
     if (candidates.length === 0) {
-      // Last resort: pick any available agent
       candidates = Object.entries(opts.agents);
+      assertDeterministic("any-agent fallback", candidates);
     }
 
     if (candidates.length === 0) return null;
 
-    // Pick first match (could add load balancing later)
     const [id, agent] = candidates[0];
     return { id, ...agent };
   }
@@ -1145,17 +1185,15 @@ function parseAgentOutputs(blockDef: BlockDef, rawOutput: string): Record<string
     } catch { /* not valid JSON in code block */ }
   }
 
-  // Fallback: if single output port, use the raw output
+  // Fallback policy (strict):
+  // - single-port blocks may map raw output to that port
+  // - multi-port blocks NEVER silently stuff raw output into the first key
+  // - if an explicit `raw` port exists, map there; otherwise return parsed keys only
   const outputKeys = Object.keys(blockDef.outputs);
   if (outputKeys.length === 1) {
     outputs[outputKeys[0]] = rawOutput;
-  } else {
-    // Last resort: stuff everything in a "raw" key if it exists, otherwise first port
-    if (blockDef.outputs["raw"]) {
-      outputs["raw"] = rawOutput;
-    } else if (outputKeys.length > 0) {
-      outputs[outputKeys[0]] = rawOutput;
-    }
+  } else if (blockDef.outputs["raw"]) {
+    outputs["raw"] = rawOutput;
   }
 
   return outputs;
