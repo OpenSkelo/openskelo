@@ -53,11 +53,11 @@ describe('BaseCliAdapter', () => {
     expect(result.exit_code).toBe(42)
   })
 
-  it('kills process after timeout_ms', async () => {
+  it('kills process after timeout_ms with exit code 124', async () => {
     const result = await adapter.execute(
       makeTask({ backend_config: { command: 'sleep', args: ['10'], timeout_ms: 200 } })
     )
-    expect(result.exit_code).not.toBe(0)
+    expect(result.exit_code).toBe(124)
   }, 5000)
 
   it('abort() kills a tracked process', async () => {
@@ -86,6 +86,22 @@ describe('BaseCliAdapter', () => {
     )
     expect(result.structured).toBe('err\n')
   })
+
+  it('appends timeout message to stderr when process times out', async () => {
+    const stderrAdapter = new class extends BaseCliAdapter {
+      buildPrompt(task: TaskInput) { return task.prompt }
+      parseOutput(stdout: string, stderr: string, exitCode: number): AdapterResult {
+        return { output: stdout, exit_code: exitCode, duration_ms: 0, structured: stderr || null }
+      }
+    }('stderr-timeout-test', ['code'])
+
+    const result = await stderrAdapter.execute(
+      makeTask({ backend_config: { command: 'sleep', args: ['10'], timeout_ms: 200 } })
+    )
+
+    expect(result.exit_code).toBe(124)
+    expect(String(result.structured)).toContain('Process timed out')
+  }, 5000)
 
   it('passes cwd to spawn', async () => {
     const tmpDir = os.tmpdir()

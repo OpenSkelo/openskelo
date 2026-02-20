@@ -139,14 +139,22 @@ export abstract class BaseCliAdapter implements ExecutionAdapter {
 
       this.runningProcesses.set(taskId, proc)
 
-      if (stdinInput !== undefined) {
-        proc.stdin?.write(stdinInput)
-        proc.stdin?.end()
-      }
-
       let stdout = ''
       let stderr = ''
       let timeoutId: ReturnType<typeof setTimeout> | undefined
+      let timedOut = false
+
+      proc.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EPIPE') return
+        if (timeoutId) clearTimeout(timeoutId)
+        this.runningProcesses.delete(taskId)
+        reject(err)
+      })
+
+      if (stdinInput !== undefined) {
+        proc.stdin?.write(stdinInput)
+      }
+      proc.stdin?.end()
 
       proc.stdout?.on('data', (chunk: Buffer) => {
         stdout += chunk.toString()
@@ -158,6 +166,9 @@ export abstract class BaseCliAdapter implements ExecutionAdapter {
 
       if (timeoutMs) {
         timeoutId = setTimeout(() => {
+          timedOut = true
+          stderr += `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Process timed out`
+
           proc.kill('SIGTERM')
           setTimeout(() => {
             if (!proc.killed) proc.kill('SIGKILL')
@@ -174,7 +185,7 @@ export abstract class BaseCliAdapter implements ExecutionAdapter {
       proc.on('close', (code, signal) => {
         if (timeoutId) clearTimeout(timeoutId)
         this.runningProcesses.delete(taskId)
-        const exitCode = code ?? (signal ? 1 : 0)
+        const exitCode = timedOut ? 124 : (code ?? (signal ? 1 : 0))
         resolve({ stdout, stderr, exitCode })
       })
     })
