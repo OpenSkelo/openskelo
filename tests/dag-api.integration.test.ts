@@ -498,6 +498,155 @@ describe("DAG API integration", () => {
     }
   });
 
+  it("queues overflow runs with deterministic manual-rank/priority ordering", async () => {
+    const prev = process.env.OPENSKELO_MAX_CONCURRENT_RUNS;
+    process.env.OPENSKELO_MAX_CONCURRENT_RUNS = "1";
+
+    const ctx = setupDagTestApp();
+    cleanups.push(() => {
+      if (prev === undefined) delete process.env.OPENSKELO_MAX_CONCURRENT_RUNS;
+      else process.env.OPENSKELO_MAX_CONCURRENT_RUNS = prev;
+      ctx.cleanup();
+    });
+
+    const dag = {
+      name: "queue-priority-test",
+      blocks: [
+        {
+          id: "review",
+          name: "Review",
+          inputs: { prompt: "string" },
+          outputs: {},
+          mode: "approval",
+          approval: { required: true, prompt: "approve?" },
+          agent: { specific: "manager" },
+          pre_gates: [],
+          post_gates: [],
+          retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+        },
+      ],
+      edges: [],
+    };
+
+    const first = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dag, context: { prompt: "run-1" }, devMode: false }),
+    });
+    expect(first.status).toBe(201);
+    const firstBody = (await first.json()) as { run_id: string };
+    const run1 = firstBody.run_id;
+    await waitForRunStatus(ctx.app, run1, ["paused_approval"], 8000);
+
+    const second = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dag, context: { prompt: "run-2" }, priority: "P3" }),
+    });
+    expect(second.status).toBe(202);
+    const secondBody = (await second.json()) as { run_id: string; queued: boolean };
+    expect(secondBody.queued).toBe(true);
+
+    const third = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dag, context: { prompt: "run-3" }, priority: "P1" }),
+    });
+    expect(third.status).toBe(202);
+    const thirdBody = (await third.json()) as { run_id: string; queued: boolean };
+    expect(thirdBody.queued).toBe(true);
+
+    const fourth = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dag, context: { prompt: "run-4" }, priority: "P3", manual_rank: 1 }),
+    });
+    expect(fourth.status).toBe(202);
+    const fourthBody = (await fourth.json()) as { run_id: string; queued: boolean };
+    expect(fourthBody.queued).toBe(true);
+
+    const queueRes = await ctx.app.request("/api/dag/queue");
+    expect(queueRes.status).toBe(200);
+    const queueBody = (await queueRes.json()) as { queue: Array<{ run_id: string; status: string }> };
+    const pendingIds = queueBody.queue.filter((q) => q.status === "pending").map((q) => q.run_id);
+    expect(pendingIds.slice(0, 3)).toEqual([fourthBody.run_id, thirdBody.run_id, secondBody.run_id]);
+
+    const stopFirst = await ctx.app.request(`/api/dag/runs/${run1}/stop`, { method: "POST" });
+    expect(stopFirst.status).toBe(200);
+
+    const launched = await waitForRunStatus(ctx.app, fourthBody.run_id, ["paused_approval", "running"], 10000);
+    expect(["paused_approval", "running"]).toContain(launched.run.status);
+  });
+
+  it("supports queue priority/manual-rank updates via control-plane endpoints", async () => {
+    const prev = process.env.OPENSKELO_MAX_CONCURRENT_RUNS;
+    process.env.OPENSKELO_MAX_CONCURRENT_RUNS = "1";
+
+    const ctx = setupDagTestApp();
+    cleanups.push(() => {
+      if (prev === undefined) delete process.env.OPENSKELO_MAX_CONCURRENT_RUNS;
+      else process.env.OPENSKELO_MAX_CONCURRENT_RUNS = prev;
+      ctx.cleanup();
+    });
+
+    const dag = {
+      name: "queue-update-test",
+      blocks: [
+        {
+          id: "review",
+          name: "Review",
+          inputs: { prompt: "string" },
+          outputs: {},
+          mode: "approval",
+          approval: { required: true, prompt: "approve?" },
+          agent: { specific: "manager" },
+          pre_gates: [],
+          post_gates: [],
+          retry: { max_attempts: 0, backoff: "none", delay_ms: 0 },
+        },
+      ],
+      edges: [],
+    };
+
+    const blocker = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dag, context: { prompt: "blocker" } }),
+    });
+    expect(blocker.status).toBe(201);
+    const blockerBody = (await blocker.json()) as { run_id: string };
+    await waitForRunStatus(ctx.app, blockerBody.run_id, ["paused_approval"], 8000);
+
+    const queued = await ctx.app.request("/api/dag/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dag, context: { prompt: "queued" }, priority: "P3" }),
+    });
+    expect(queued.status).toBe(202);
+    const queuedBody = (await queued.json()) as { run_id: string };
+
+    const patch = await ctx.app.request(`/api/dag/queue/${queuedBody.run_id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ priority: "P0" }),
+    });
+    expect(patch.status).toBe(200);
+
+    const reorder = await ctx.app.request("/api/dag/queue/reorder", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ run_id: queuedBody.run_id, manual_rank: 5 }),
+    });
+    expect(reorder.status).toBe(200);
+
+    const queueRes = await ctx.app.request("/api/dag/queue");
+    expect(queueRes.status).toBe(200);
+    const queueBody = (await queueRes.json()) as { queue: Array<{ run_id: string; priority: number; manual_rank: number | null }> };
+    const item = queueBody.queue.find((q) => q.run_id === queuedBody.run_id);
+    expect(item?.priority).toBe(30);
+    expect(item?.manual_rank).toBe(5);
+  });
+
   it("supports emergency stop-all", async () => {
     const ctx = setupDagTestApp();
     cleanups.push(ctx.cleanup);

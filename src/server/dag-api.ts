@@ -8,6 +8,7 @@ import { streamSSE } from "hono/streaming";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { parseYamlWithDiagnostics } from "../core/yaml-utils.js";
 import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
@@ -73,7 +74,11 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     maxRetriesCap: Number(process.env.OPENSKELO_MAX_RETRIES_CAP ?? "2"),
     stallTimeoutMs: Number(process.env.OPENSKELO_STALL_TIMEOUT_MS ?? String(5 * 60 * 1000)),
     orphanTimeoutMs: Number(process.env.OPENSKELO_ORPHAN_TIMEOUT_MS ?? String(2 * 60 * 1000)),
+    queueLeaseMs: Number(process.env.OPENSKELO_QUEUE_LEASE_MS ?? "30000"),
   };
+
+  // Instance-scoped queue state (must not be module-level shared state).
+  const runQueueClaimTokens = new Map<string, string>();
 
   // Phase A durability: persist DAG runs/events/approvals
   createDB();
@@ -105,6 +110,92 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       decided_at=excluded.decided_at,
       notes=excluded.notes,
       payload_json=excluded.payload_json
+  `);
+
+  const upsertQueueEntry = db.prepare(`
+    INSERT INTO dag_run_queue (run_id, status, priority, manual_rank, claim_owner, claim_token, lease_expires_at, attempt, payload_json, last_error, created_at, updated_at, started_at, finished_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(run_id) DO UPDATE SET
+      status=excluded.status,
+      priority=excluded.priority,
+      manual_rank=excluded.manual_rank,
+      claim_owner=excluded.claim_owner,
+      claim_token=excluded.claim_token,
+      lease_expires_at=excluded.lease_expires_at,
+      attempt=excluded.attempt,
+      payload_json=excluded.payload_json,
+      last_error=excluded.last_error,
+      updated_at=excluded.updated_at,
+      started_at=excluded.started_at,
+      finished_at=excluded.finished_at
+  `);
+  const selectQueueByRun = db.prepare(`SELECT * FROM dag_run_queue WHERE run_id = ?`);
+  const selectQueueOrdered = db.prepare(`
+    SELECT run_id, status, priority, manual_rank, claim_owner, claim_token, lease_expires_at, attempt, last_error, created_at, updated_at, started_at, finished_at
+    FROM dag_run_queue
+    ORDER BY
+      CASE WHEN status = 'pending' THEN 0 WHEN status = 'claimed' THEN 1 WHEN status = 'running' THEN 2 ELSE 3 END ASC,
+      CASE WHEN manual_rank IS NULL THEN 1 ELSE 0 END ASC,
+      manual_rank ASC,
+      priority DESC,
+      created_at ASC
+  `);
+  const releaseExpiredClaims = db.prepare(`
+    UPDATE dag_run_queue
+    SET status = 'pending',
+        claim_owner = NULL,
+        claim_token = NULL,
+        lease_expires_at = NULL,
+        updated_at = ?
+    WHERE status = 'claimed' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?
+  `);
+  const selectNextPendingForClaim = db.prepare(`
+    SELECT run_id, status, priority, manual_rank, claim_owner, claim_token, lease_expires_at, attempt, payload_json, created_at, updated_at, started_at, finished_at
+    FROM dag_run_queue
+    WHERE status = 'pending'
+    ORDER BY
+      CASE WHEN manual_rank IS NULL THEN 1 ELSE 0 END ASC,
+      manual_rank ASC,
+      priority DESC,
+      created_at ASC
+    LIMIT 1
+  `);
+  const claimQueueEntry = db.prepare(`
+    UPDATE dag_run_queue
+    SET status = 'claimed',
+        claim_owner = ?,
+        claim_token = ?,
+        lease_expires_at = ?,
+        updated_at = ?
+    WHERE run_id = ? AND status = 'pending'
+  `);
+  const releaseClaimByToken = db.prepare(`
+    UPDATE dag_run_queue
+    SET status = 'pending',
+        claim_owner = NULL,
+        claim_token = NULL,
+        lease_expires_at = NULL,
+        updated_at = ?
+    WHERE run_id = ? AND status = 'claimed' AND claim_token = ?
+  `);
+  const markQueueRunning = db.prepare(`
+    UPDATE dag_run_queue
+    SET status = 'running',
+        lease_expires_at = NULL,
+        started_at = COALESCE(started_at, ?),
+        updated_at = ?
+    WHERE run_id = ? AND status = 'claimed' AND claim_token = ?
+  `);
+  const markQueueFinished = db.prepare(`
+    UPDATE dag_run_queue
+    SET status = ?,
+        lease_expires_at = NULL,
+        claim_owner = NULL,
+        claim_token = NULL,
+        last_error = ?,
+        finished_at = ?,
+        updated_at = ?
+    WHERE run_id = ? AND status IN ('claimed', 'running') AND claim_token = ?
   `);
 
   async function notifyApprovalViaTelegram(run: DAGRun, approval: Record<string, unknown>): Promise<void> {
@@ -140,12 +231,158 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     );
   }
 
+  function normalizePriority(raw: unknown): number {
+    if (typeof raw === "number" && Number.isFinite(raw)) return Math.trunc(raw);
+    const text = String(raw ?? "").trim().toUpperCase();
+    if (!text) return 0;
+    if (text === "P0" || text === "URGENT") return 30;
+    if (text === "P1" || text === "HIGH") return 20;
+    if (text === "P2" || text === "MEDIUM") return 10;
+    if (text === "P3" || text === "LOW") return 0;
+    const asNum = Number(text);
+    return Number.isFinite(asNum) ? Math.trunc(asNum) : 0;
+  }
+
+  function parseManualRank(raw: unknown): number | null {
+    if (raw === null || raw === undefined || raw === "") return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return Math.trunc(n);
+  }
+
+  function getActiveRunningCount(): number {
+    return Array.from(activeRuns.values()).filter((e) => e.run.status === "running" || e.run.status === "paused_approval").length;
+  }
+
+  function markQueueRunFinal(runId: string, status: "completed" | "failed" | "cancelled", error?: string): void {
+    const now = new Date().toISOString();
+    const row = selectQueueByRun.get(runId) as Record<string, unknown> | undefined;
+    const claimToken = runQueueClaimTokens.get(runId) ?? (row?.claim_token ? String(row.claim_token) : null);
+    if (!claimToken) return;
+    markQueueFinished.run(status, error ?? null, now, now, runId, claimToken);
+    runQueueClaimTokens.delete(runId);
+  }
+
+  type QueueClaim = {
+    run_id: string;
+    claim_token: string;
+    payload_json: string;
+  };
+
+  const claimNextQueuedRun = db.transaction((claimOwner: string, nowIso: string, leaseMs: number): QueueClaim | null => {
+    releaseExpiredClaims.run(nowIso, nowIso);
+    const candidate = selectNextPendingForClaim.get() as Record<string, unknown> | undefined;
+    if (!candidate) return null;
+
+    const runId = String(candidate.run_id ?? "");
+    if (!runId) return null;
+
+    const claimToken = `qcl_${runId}_${randomUUID()}`;
+    const leaseExpires = new Date(Date.now() + leaseMs).toISOString();
+    const result = claimQueueEntry.run(claimOwner, claimToken, leaseExpires, nowIso, runId);
+    if (Number(result.changes ?? 0) !== 1) return null;
+
+    const claimed = selectQueueByRun.get(runId) as Record<string, unknown> | undefined;
+    if (!claimed) return null;
+
+    return {
+      run_id: runId,
+      claim_token: claimToken,
+      payload_json: String(claimed.payload_json ?? "{}"),
+    };
+  });
+
+  let queuePumpActive = false;
+  let queuePumpRequested = false;
+
+  async function pumpQueuedRuns(reason: string): Promise<void> {
+    if (queuePumpActive) {
+      queuePumpRequested = true;
+      return;
+    }
+    queuePumpActive = true;
+    try {
+      do {
+        queuePumpRequested = false;
+
+        const now = new Date().toISOString();
+        releaseExpiredClaims.run(now, now);
+
+        while (getActiveRunningCount() < safety.maxConcurrentRuns) {
+          const claim = claimNextQueuedRun(`dag-api:${reason}`, new Date().toISOString(), safety.queueLeaseMs);
+          if (!claim) break;
+
+          runQueueClaimTokens.set(claim.run_id, claim.claim_token);
+
+          // Re-check capacity after claim to prevent over-launch on concurrent triggers.
+          if (getActiveRunningCount() >= safety.maxConcurrentRuns) {
+            releaseClaimByToken.run(new Date().toISOString(), claim.run_id, claim.claim_token);
+            runQueueClaimTokens.delete(claim.run_id);
+            break;
+          }
+
+          let payload: Record<string, unknown>;
+          try {
+            payload = JSON.parse(claim.payload_json) as Record<string, unknown>;
+          } catch (err) {
+            markQueueRunFinal(claim.run_id, "failed", `Invalid queue payload: ${err instanceof Error ? err.message : String(err)}`);
+            continue;
+          }
+
+          const dag = payload.dag as DAGDef | undefined;
+          const context = (payload.context as Record<string, unknown> | undefined) ?? {};
+          const body = (payload.body as Record<string, unknown> | undefined) ?? {};
+
+          if (!dag || typeof dag !== "object") {
+            markQueueRunFinal(claim.run_id, "failed", "Invalid queued DAG payload");
+            continue;
+          }
+
+          const now = new Date().toISOString();
+          const markRunning = markQueueRunning.run(now, now, claim.run_id, claim.claim_token);
+          if (Number(markRunning.changes ?? 0) !== 1) {
+            runQueueClaimTokens.delete(claim.run_id);
+            continue;
+          }
+
+          void (async () => {
+            try {
+              const started = await startDagExecution(dag, context, body, {
+                skipConcurrencyGate: true,
+                queuedRunId: claim.run_id,
+              });
+              if ((started as { error?: string }).error) {
+                const msg = (started as { error: string }).error;
+                markQueueRunFinal(claim.run_id, "failed", msg);
+              }
+            } catch (err) {
+              markQueueRunFinal(claim.run_id, "failed", err instanceof Error ? err.message : String(err));
+            } finally {
+              void pumpQueuedRuns("slot-freed");
+            }
+          })();
+        }
+      } while (queuePumpRequested);
+    } catch (err) {
+      console.error("[dag-api] queue pump error:", err instanceof Error ? err.message : err);
+      queuePumpRequested = true;
+    } finally {
+      const rerun = queuePumpRequested;
+      queuePumpActive = false;
+      if (rerun) void pumpQueuedRuns("pump-recover");
+    }
+  }
+
   function reconcileOrphanedRun(runId: string): boolean {
     if (activeRuns.has(runId)) return false;
     const row = db.prepare("SELECT id, status, run_json, updated_at FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
     if (!row) return false;
     const status = String(row.status ?? "");
     if (!["running", "paused_approval", "pending"].includes(status)) return false;
+
+    const queueRow = selectQueueByRun.get(runId) as Record<string, unknown> | undefined;
+    const queueStatus = String(queueRow?.status ?? "");
+    if (["pending", "claimed", "running"].includes(queueStatus)) return false;
 
     const updatedAt = new Date(String(row.updated_at ?? 0)).getTime();
     if (!updatedAt || (Date.now() - updatedAt) < safety.orphanTimeoutMs) return false;
@@ -243,12 +480,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       runAbortControllers.delete(runId);
       clearRunGuards(runId);
       persistRunSnapshot(live);
+      markQueueRunFinal(runId, "cancelled", "stall_timeout_exceeded");
       broadcast(runId, {
         type: "run:fail",
         run_id: runId,
         data: { status: "cancelled", reason: "stall_timeout_exceeded" },
         timestamp: new Date().toISOString(),
       });
+      void pumpQueuedRuns("stall-timeout");
     }, safety.stallTimeoutMs);
 
     runStallTimers.set(runId, t);
@@ -337,6 +576,30 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     // best effort
   }
 
+  // Startup queue recovery: clear stale claims/running leases from previous process instance.
+  try {
+    const now = new Date().toISOString();
+    const stuckRows = db.prepare("SELECT run_id FROM dag_run_queue WHERE status IN ('claimed','running')").all() as Array<Record<string, unknown>>;
+    if (stuckRows.length > 0) {
+      db.prepare("UPDATE dag_run_queue SET status = 'pending', claim_owner = NULL, claim_token = NULL, lease_expires_at = NULL, updated_at = ? WHERE status IN ('claimed','running')").run(now);
+      for (const row of stuckRows) {
+        const runId = String(row.run_id ?? "");
+        if (!runId) continue;
+        const runRow = db.prepare("SELECT status, run_json FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
+        if (!runRow) continue;
+        const runStatus = String(runRow.status ?? "");
+        if (!["running", "paused_approval", "pending"].includes(runStatus)) continue;
+        const run = JSON.parse(String(runRow.run_json ?? "{}"));
+        run.status = "pending";
+        db.prepare("UPDATE dag_runs SET status = 'pending', run_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(run), now, runId);
+      }
+    }
+  } catch {
+    // best effort
+  }
+
+  void pumpQueuedRuns("startup");
+
   // List available example DAGs
   app.get("/api/dag/examples", (c) => {
     const examples: { name: string; file: string }[] = [];
@@ -378,7 +641,15 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }
   });
 
-  async function startDagExecution(dag: DAGDef, context: Record<string, unknown>, body: Record<string, unknown>) {
+  async function startDagExecution(
+    dag: DAGDef,
+    context: Record<string, unknown>,
+    body: Record<string, unknown>,
+    opts?: {
+      skipConcurrencyGate?: boolean;
+      queuedRunId?: string;
+    }
+  ) {
     // Enforce DAG safety caps
     dag.blocks = dag.blocks.map((b) => ({
       ...b,
@@ -577,24 +848,28 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         if (entry) persistRunSnapshot(entry);
         runAbortControllers.delete(run.id);
         clearRunGuards(run.id);
+        markQueueRunFinal(run.id, "completed");
         broadcast(run.id, {
           type: "run:complete",
           run_id: run.id,
           data: { status: run.status },
           timestamp: new Date().toISOString(),
         });
+        void pumpQueuedRuns("run-complete");
       },
       onRunFail: (run) => {
         const entry = activeRuns.get(run.id);
         if (entry) persistRunSnapshot(entry);
         runAbortControllers.delete(run.id);
         clearRunGuards(run.id);
+        markQueueRunFinal(run.id, run.status === "cancelled" ? "cancelled" : "failed");
         broadcast(run.id, {
           type: "run:fail",
           run_id: run.id,
           data: { status: run.status },
           timestamp: new Date().toISOString(),
         });
+        void pumpQueuedRuns("run-fail");
       },
       onApprovalRequired: (run, blockId, approval) => {
         const entry = activeRuns.get(run.id);
@@ -628,8 +903,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       },
     });
 
-    const activeRunningCount = Array.from(activeRuns.values()).filter((e) => e.run.status === "running" || e.run.status === "paused_approval" || e.run.status === "pending").length;
-    if (activeRunningCount >= safety.maxConcurrentRuns) {
+    const activeRunningCount = getActiveRunningCount();
+    if (!opts?.skipConcurrencyGate && activeRunningCount >= safety.maxConcurrentRuns) {
       return {
         error: "Concurrency limit reached",
         limit: safety.maxConcurrentRuns,
@@ -638,12 +913,24 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       };
     }
 
-    // Create initial run state for immediate response
-    const initialRun = engine.createRun(dag, context);
+    // Create or load initial run state for immediate response
+    let initialRun: DAGRun;
+    if (opts?.queuedRunId) {
+      const row = db.prepare("SELECT run_json FROM dag_runs WHERE id = ?").get(opts.queuedRunId) as Record<string, unknown> | undefined;
+      if (row?.run_json) {
+        initialRun = JSON.parse(String(row.run_json)) as DAGRun;
+      } else {
+        initialRun = engine.createRun(dag, context);
+        initialRun.id = opts.queuedRunId;
+      }
+    } else {
+      initialRun = engine.createRun(dag, context);
+    }
+
     runIdRef = initialRun.id;
     runAbortControllers.set(initialRun.id, runAbortController);
     activeRuns.set(initialRun.id, { dag, run: initialRun });
-    runEvents.set(initialRun.id, []);
+    runEvents.set(initialRun.id, runEvents.get(initialRun.id) ?? []);
     {
       const entry = activeRuns.get(initialRun.id);
       if (entry) persistRunSnapshot(entry);
@@ -674,12 +961,14 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       runAbortControllers.delete(initialRun.id);
       clearRunGuards(initialRun.id);
       persistRunSnapshot(live);
+      markQueueRunFinal(initialRun.id, "cancelled", "max_run_duration_exceeded");
       broadcast(initialRun.id, {
         type: "run:fail",
         run_id: initialRun.id,
         data: { status: "cancelled", reason: "max_run_duration_exceeded" },
         timestamp: new Date().toISOString(),
       });
+      void pumpQueuedRuns("max-duration-timeout");
     }, safety.maxRunDurationMs);
     runSafetyTimers.set(initialRun.id, safetyTimer);
 
@@ -697,6 +986,8 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     }).catch((err) => {
       runAbortControllers.delete(initialRun.id);
       clearRunGuards(initialRun.id);
+      markQueueRunFinal(initialRun.id, "failed", err instanceof Error ? err.message : String(err));
+      void pumpQueuedRuns("run-crash");
       console.error("[dag-api] Run failed:", err);
     });
 
@@ -708,6 +999,70 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       sse_url: `/api/dag/runs/${initialRun.id}/events`,
       provider_mode: effectiveProviderMode,
       warning: providerWarning,
+      queued: false,
+    };
+  }
+
+  async function enqueueDagExecution(dag: DAGDef, context: Record<string, unknown>, body: Record<string, unknown>) {
+    const now = new Date().toISOString();
+    const run = engine.createRun(dag, context);
+
+    upsertDagRun.run(
+      run.id,
+      dag.name,
+      run.status,
+      JSON.stringify(dag),
+      JSON.stringify(run),
+      JSON.stringify([]),
+      run.created_at,
+      now
+    );
+
+    const priority = normalizePriority(body.priority);
+    const manualRank = parseManualRank(body.manual_rank ?? body.manualRank);
+    const payload = {
+      dag,
+      context,
+      body,
+    };
+
+    upsertQueueEntry.run(
+      run.id,
+      "pending",
+      priority,
+      manualRank,
+      null,
+      null,
+      null,
+      0,
+      JSON.stringify(payload),
+      null,
+      now,
+      now,
+      null,
+      null
+    );
+
+    void pumpQueuedRuns("enqueue");
+
+    const queued = selectQueueByRun.get(run.id) as Record<string, unknown> | undefined;
+
+    return {
+      run_id: run.id,
+      dag_name: dag.name,
+      blocks: dag.blocks.map((b) => ({ id: b.id, name: b.name })),
+      edges: dag.edges,
+      sse_url: `/api/dag/runs/${run.id}/events`,
+      provider_mode: (body.provider as string | undefined) ?? undefined,
+      warning: undefined,
+      queued: true,
+      queue: queued
+        ? {
+            status: String(queued.status ?? "pending"),
+            priority: Number(queued.priority ?? 0),
+            manual_rank: queued.manual_rank === null || queued.manual_rank === undefined ? null : Number(queued.manual_rank),
+          }
+        : { status: "pending", priority, manual_rank: manualRank },
     };
   }
 
@@ -747,12 +1102,20 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       return jsonError(c, 400, toSkeloError(err, "BAD_REQUEST", 400));
     }
 
-    const started = await startDagExecution(dag, context, body as Record<string, unknown>);
+    const activeRunningCount = getActiveRunningCount();
+    const shouldQueue = activeRunningCount >= safety.maxConcurrentRuns;
+
+    const started = shouldQueue
+      ? await enqueueDagExecution(dag, context, body as Record<string, unknown>)
+      : await startDagExecution(dag, context, body as Record<string, unknown>);
+
     if ((started as { error?: string }).error) {
       const status = (started as { status?: number }).status ?? 400;
       return jsonError(c, status, (started as { error: string }).error, "START_FAILED");
     }
-    return c.json(started, 201);
+
+    const httpStatus = (started as { queued?: boolean }).queued ? 202 : 201;
+    return c.json(started, httpStatus);
   });
 
   function reconstructRunFromEvents(baseRun: Record<string, unknown>, durableEvents: Array<Record<string, unknown>>): Record<string, unknown> {
@@ -1129,6 +1492,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       clearRunGuards(runId);
 
       persistRunSnapshot(entry);
+      markQueueRunFinal(runId, "cancelled", "emergency_stop_all");
       broadcast(runId, {
         type: "run:fail",
         run_id: runId,
@@ -1138,7 +1502,21 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       stopped++;
     }
 
-    return c.json({ ok: true, stopped });
+    const cancelledQueued = db.prepare("UPDATE dag_run_queue SET status = 'cancelled', last_error = ?, lease_expires_at = NULL, claim_owner = NULL, claim_token = NULL, finished_at = ?, updated_at = ? WHERE status IN ('pending','claimed')")
+      .run("emergency_stop_all", now, now);
+
+    if (Number(cancelledQueued.changes ?? 0) > 0) {
+      const rows = db.prepare("SELECT id as run_id, run_json FROM dag_runs WHERE id IN (SELECT run_id FROM dag_run_queue WHERE status = 'cancelled' AND updated_at = ?)").all(now) as Array<Record<string, unknown>>;
+      for (const row of rows) {
+        const runId = String(row.run_id ?? "");
+        const run = JSON.parse(String(row.run_json ?? "{}"));
+        run.status = "cancelled";
+        db.prepare("UPDATE dag_runs SET status = ?, run_json = ?, updated_at = ? WHERE id = ?").run("cancelled", JSON.stringify(run), now, runId);
+      }
+    }
+
+    if (stopped > 0) void pumpQueuedRuns("stop-all");
+    return c.json({ ok: true, stopped, cancelled_queued: Number(cancelledQueued.changes ?? 0) });
   });
 
   // Stop/cancel a run
@@ -1162,6 +1540,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       }
 
       persistRunSnapshot(entry);
+      markQueueRunFinal(runId, "cancelled", "run stopped by user");
 
       broadcast(runId, {
         type: "run:fail",
@@ -1170,6 +1549,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         timestamp: new Date().toISOString(),
       });
 
+      void pumpQueuedRuns("stop-active-run");
       return c.json({ status: "cancelled", mode: "active" });
     }
 
@@ -1193,6 +1573,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       now,
       runId
     );
+    markQueueRunFinal(runId, "cancelled", "durable stop");
 
     try {
       const info = insertDagEvent.run(
@@ -1209,6 +1590,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       console.error("[dag-api] failed to persist durable stop event:", err instanceof Error ? err.message : err);
     }
 
+    void pumpQueuedRuns("stop-durable-run");
     return c.json({ status: "cancelled", mode: "durable" });
   });
 
@@ -1394,6 +1776,86 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         has_more: offset + page.length < allRuns.length,
       },
     });
+  });
+
+  app.get("/api/dag/queue", (c) => {
+    const rows = selectQueueOrdered.all() as Array<Record<string, unknown>>;
+    const queue = rows.map((row, idx) => ({
+      position: idx + 1,
+      run_id: String(row.run_id ?? ""),
+      status: String(row.status ?? "pending"),
+      priority: Number(row.priority ?? 0),
+      manual_rank: row.manual_rank === null || row.manual_rank === undefined ? null : Number(row.manual_rank),
+      claim_owner: row.claim_owner ? String(row.claim_owner) : null,
+      attempt: Number(row.attempt ?? 0),
+      created_at: String(row.created_at ?? ""),
+      updated_at: String(row.updated_at ?? ""),
+      started_at: row.started_at ? String(row.started_at) : null,
+      finished_at: row.finished_at ? String(row.finished_at) : null,
+      last_error: row.last_error ? String(row.last_error) : null,
+    }));
+
+    return c.json({
+      queue,
+      policy: {
+        order: "manual_rank (override) > priority (desc) > created_at (asc)",
+        active_limit: safety.maxConcurrentRuns,
+      },
+    });
+  });
+
+  app.patch("/api/dag/queue/:id", async (c) => {
+    const runId = c.req.param("id");
+    const body = await c.req.json().catch(() => ({}));
+    const row = selectQueueByRun.get(runId) as Record<string, unknown> | undefined;
+    if (!row) return jsonError(c, 404, "Queue item not found", "NOT_FOUND");
+    const status = String(row.status ?? "");
+    if (status !== "pending") return jsonError(c, 409, `Queue item is not pending (status=${status})`, "INVALID_STATE");
+
+    const nextPriority = body.priority === undefined ? Number(row.priority ?? 0) : normalizePriority(body.priority);
+    const nextManualRank = body.manual_rank === undefined && body.manualRank === undefined
+      ? (row.manual_rank === null || row.manual_rank === undefined ? null : Number(row.manual_rank))
+      : parseManualRank(body.manual_rank ?? body.manualRank);
+
+    const now = new Date().toISOString();
+    db.prepare("UPDATE dag_run_queue SET priority = ?, manual_rank = ?, updated_at = ? WHERE run_id = ?").run(
+      nextPriority,
+      nextManualRank,
+      now,
+      runId
+    );
+
+    void pumpQueuedRuns("queue-patch");
+
+    const updated = selectQueueByRun.get(runId) as Record<string, unknown> | undefined;
+    return c.json({
+      ok: true,
+      item: {
+        run_id: runId,
+        status: String(updated?.status ?? status),
+        priority: Number(updated?.priority ?? nextPriority),
+        manual_rank: updated?.manual_rank === null || updated?.manual_rank === undefined ? null : Number(updated.manual_rank),
+      },
+    });
+  });
+
+  app.post("/api/dag/queue/reorder", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const runId = String(body.run_id ?? "").trim();
+    if (!runId) return jsonError(c, 400, "run_id is required", "INVALID_INPUT");
+
+    const row = selectQueueByRun.get(runId) as Record<string, unknown> | undefined;
+    if (!row) return jsonError(c, 404, "Queue item not found", "NOT_FOUND");
+    const status = String(row.status ?? "");
+    if (status !== "pending") return jsonError(c, 409, `Queue item is not pending (status=${status})`, "INVALID_STATE");
+
+    const rank = parseManualRank(body.manual_rank ?? body.manualRank);
+    const now = new Date().toISOString();
+    db.prepare("UPDATE dag_run_queue SET manual_rank = ?, updated_at = ? WHERE run_id = ?").run(rank, now, runId);
+
+    void pumpQueuedRuns("queue-reorder");
+
+    return c.json({ ok: true, run_id: runId, manual_rank: rank });
   });
 
   return app;

@@ -53,6 +53,32 @@ const MIGRATIONS: Array<{ id: string; sql: string }> = [
       CREATE INDEX IF NOT EXISTS idx_dag_approvals_run ON dag_approvals(run_id, status);
     `,
   },
+  {
+    id: "002_dag_run_queue_control_plane",
+    sql: `
+      CREATE TABLE IF NOT EXISTS dag_run_queue (
+        run_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        priority INTEGER NOT NULL DEFAULT 0,
+        manual_rank INTEGER,
+        claim_owner TEXT,
+        claim_token TEXT,
+        lease_expires_at TEXT,
+        attempt INTEGER NOT NULL DEFAULT 0,
+        payload_json TEXT NOT NULL,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_dag_run_queue_status_order
+        ON dag_run_queue(status, manual_rank, priority, created_at);
+      CREATE INDEX IF NOT EXISTS idx_dag_run_queue_lease
+        ON dag_run_queue(status, lease_expires_at);
+    `,
+  },
 ];
 
 let db: Database.Database | null = null;
