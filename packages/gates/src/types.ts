@@ -58,11 +58,20 @@ export interface AttemptEvent {
   duration_ms: number
 }
 
+// ═══ Simple JSON Schema ═══
+
+export interface SimpleJsonSchema {
+  type?: 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null'
+  required?: string[]
+  properties?: Record<string, SimpleJsonSchema>
+  items?: SimpleJsonSchema
+}
+
 // ═══ Gate Definitions ═══
 
 export interface JsonSchemaGate {
   type: 'json_schema'
-  schema: ZodSchema | { required?: string[]; properties?: Record<string, any> }
+  schema: ZodSchema | SimpleJsonSchema
   name?: string
 }
 

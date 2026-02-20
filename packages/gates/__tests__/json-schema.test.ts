@@ -211,6 +211,300 @@ describe('json_schema gate', () => {
     })
   })
 
+  // ── Type checking (SimpleJsonSchema) ──
+
+  describe('type checking', () => {
+    it('passes when value matches expected type: string', async () => {
+      const result = await jsonSchemaGate(
+        'hello',
+        { type: 'json_schema', schema: { type: 'string' } },
+      )
+      expect(result.passed).toBe(true)
+    })
+
+    it('fails when string expected but number given', async () => {
+      const result = await jsonSchemaGate(
+        42,
+        { type: 'json_schema', schema: { type: 'string' } },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('Expected string')
+      expect(result.reason).toContain('number')
+    })
+
+    it('passes when value matches expected type: number', async () => {
+      const result = await jsonSchemaGate(
+        42,
+        { type: 'json_schema', schema: { type: 'number' } },
+      )
+      expect(result.passed).toBe(true)
+    })
+
+    it('fails when number expected but string given', async () => {
+      const result = await jsonSchemaGate(
+        'hello',
+        { type: 'json_schema', schema: { type: 'number' } },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('Expected number')
+    })
+
+    it('passes when value matches expected type: boolean', async () => {
+      const result = await jsonSchemaGate(
+        true,
+        { type: 'json_schema', schema: { type: 'boolean' } },
+      )
+      expect(result.passed).toBe(true)
+    })
+
+    it('passes when value matches expected type: null', async () => {
+      const result = await jsonSchemaGate(
+        null,
+        { type: 'json_schema', schema: { type: 'null' } },
+      )
+      expect(result.passed).toBe(true)
+    })
+
+    it('passes when value matches expected type: array', async () => {
+      const result = await jsonSchemaGate(
+        [1, 2, 3],
+        { type: 'json_schema', schema: { type: 'array' } },
+      )
+      expect(result.passed).toBe(true)
+    })
+
+    it('fails when object expected but array given', async () => {
+      const result = await jsonSchemaGate(
+        [1, 2, 3],
+        { type: 'json_schema', schema: { type: 'object' } },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('Expected object')
+      expect(result.reason).toContain('array')
+    })
+
+    it('infers object type from properties key', async () => {
+      const result = await jsonSchemaGate(
+        'not an object',
+        { type: 'json_schema', schema: { properties: { name: { type: 'string' } } } },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('Expected object')
+    })
+
+    it('infers object type from required key', async () => {
+      const result = await jsonSchemaGate(
+        42,
+        { type: 'json_schema', schema: { required: ['name'] } },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('Expected object')
+    })
+  })
+
+  // ── Nested property validation ──
+
+  describe('nested property validation', () => {
+    it('validates nested object properties', async () => {
+      const result = await jsonSchemaGate(
+        { meta: { author: 'Alice', version: 2 } },
+        {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            properties: {
+              meta: {
+                type: 'object',
+                required: ['author', 'version'],
+                properties: {
+                  author: { type: 'string' },
+                  version: { type: 'number' },
+                },
+              },
+            },
+          },
+        },
+      )
+      expect(result.passed).toBe(true)
+    })
+
+    it('fails on type mismatch in nested property', async () => {
+      const result = await jsonSchemaGate(
+        { meta: { author: 123 } },
+        {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            properties: {
+              meta: {
+                type: 'object',
+                properties: {
+                  author: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('meta.author')
+    })
+
+    it('skips validation for absent optional properties', async () => {
+      const result = await jsonSchemaGate(
+        { name: 'test' },
+        {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              age: { type: 'number' },
+            },
+          },
+        },
+      )
+      expect(result.passed).toBe(true)
+    })
+
+    it('fails on missing required nested field', async () => {
+      const result = await jsonSchemaGate(
+        { meta: {} },
+        {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            properties: {
+              meta: {
+                type: 'object',
+                required: ['author'],
+              },
+            },
+          },
+        },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('meta.author')
+    })
+  })
+
+  // ── Array items validation ──
+
+  describe('array items validation', () => {
+    it('validates array items against items schema', async () => {
+      const result = await jsonSchemaGate(
+        ['hello', 'world'],
+        { type: 'json_schema', schema: { type: 'array', items: { type: 'string' } } },
+      )
+      expect(result.passed).toBe(true)
+    })
+
+    it('fails when array item has wrong type', async () => {
+      const result = await jsonSchemaGate(
+        ['hello', 42, 'world'],
+        { type: 'json_schema', schema: { type: 'array', items: { type: 'string' } } },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('Expected string')
+    })
+
+    it('validates array of objects', async () => {
+      const result = await jsonSchemaGate(
+        [{ name: 'Alice' }, { name: 'Bob' }],
+        {
+          type: 'json_schema',
+          schema: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['name'],
+              properties: { name: { type: 'string' } },
+            },
+          },
+        },
+      )
+      expect(result.passed).toBe(true)
+    })
+
+    it('fails on invalid item in array of objects', async () => {
+      const result = await jsonSchemaGate(
+        [{ name: 'Alice' }, { name: 123 }],
+        {
+          type: 'json_schema',
+          schema: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { name: { type: 'string' } },
+            },
+          },
+        },
+      )
+      expect(result.passed).toBe(false)
+    })
+
+    it('passes empty array against items schema', async () => {
+      const result = await jsonSchemaGate(
+        [],
+        { type: 'json_schema', schema: { type: 'array', items: { type: 'string' } } },
+      )
+      expect(result.passed).toBe(true)
+    })
+  })
+
+  // ── Path reporting ──
+
+  describe('path reporting', () => {
+    it('reports root path as $ for top-level type mismatch', async () => {
+      const result = await jsonSchemaGate(
+        'wrong',
+        { type: 'json_schema', schema: { type: 'number' } },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('$')
+    })
+
+    it('reports dotted path for nested failures', async () => {
+      const result = await jsonSchemaGate(
+        { user: { age: 'not a number' } },
+        {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            properties: {
+              user: {
+                type: 'object',
+                properties: { age: { type: 'number' } },
+              },
+            },
+          },
+        },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('user.age')
+    })
+
+    it('reports array index in path', async () => {
+      const result = await jsonSchemaGate(
+        [1, 'bad', 3],
+        { type: 'json_schema', schema: { type: 'array', items: { type: 'number' } } },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.reason).toContain('1')
+    })
+
+    it('reports details array with individual failures', async () => {
+      const result = await jsonSchemaGate(
+        {},
+        { type: 'json_schema', schema: { required: ['a', 'b', 'c'] } },
+      )
+      expect(result.passed).toBe(false)
+      expect(result.details).toHaveLength(3)
+      expect(result.details[0]).toHaveProperty('path')
+      expect(result.details[0]).toHaveProperty('message')
+    })
+  })
+
   // ── Edge cases ──
 
   describe('edge cases', () => {

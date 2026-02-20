@@ -44,3 +44,4 @@ export type {
 } from './types.js'
 
 export type { GateRunner, GateRunnerOptions } from './runner.js'
+export type { RetryOptions } from './retry.js'

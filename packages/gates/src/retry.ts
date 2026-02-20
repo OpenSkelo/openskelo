@@ -5,6 +5,7 @@ import type {
   RetryConfig,
   RetryContext,
   AttemptRecord,
+  AttemptEvent,
 } from './types.js'
 import { GateExhaustionError } from './types.js'
 import { createGateRunner } from './runner.js'
@@ -47,10 +48,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+export interface RetryOptions extends Partial<RetryConfig> {
+  extract?: (raw: unknown) => unknown
+  onAttempt?: (event: AttemptEvent) => void
+}
+
 export async function retry<T = unknown>(
-  producer: (context?: RetryContext) => Promise<T>,
+  producer: (context?: RetryContext) => Promise<unknown>,
   gates: GateDefinition[],
-  config?: Partial<RetryConfig>,
+  config?: RetryOptions,
 ): Promise<GatedResult<T>> {
   const opts = { ...DEFAULT_RETRY, ...config }
   const runner = createGateRunner(gates)
@@ -73,7 +79,7 @@ export async function retry<T = unknown>(
 
     // Call producer
     const raw = await producer(context)
-    const data = raw as T
+    const data = (config?.extract ? config.extract(raw) : raw) as T
 
     // Evaluate gates
     const gateResults = await runner.evaluate(data, raw)
@@ -92,6 +98,16 @@ export async function retry<T = unknown>(
     }
 
     history.push(record)
+
+    // Fire onAttempt callback
+    if (config?.onAttempt) {
+      config.onAttempt({
+        attempt,
+        gates: gateResults,
+        passed,
+        duration_ms: attemptDuration,
+      })
+    }
 
     if (passed) {
       return {

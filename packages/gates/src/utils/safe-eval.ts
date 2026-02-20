@@ -1,49 +1,72 @@
-const BLOCKED_PATTERNS = [
-  /\bprocess\b/,
-  /\brequire\b/,
-  /\bimport\b/,
-  /\beval\b/,
-  /\bFunction\b/,
-  /\bfetch\b/,
-  /\bglobalThis\b/,
-  /\bglobal\b/,
-  /\bwindow\b/,
-  /\bdocument\b/,
-  /\b__proto__\b/,
-  /\bconstructor\b/,
-  /\bprototype\b/,
-  /\bProxy\b/,
-  /\bReflect\b/,
-  /\bsetTimeout\b/,
-  /\bsetInterval\b/,
+import vm from 'node:vm'
+
+const BANNED_TOKENS = [
+  'process',
+  'require',
+  'import',
+  'eval',
+  'Function',
+  'fetch',
+  'constructor',
+  '__proto__',
+  'prototype',
+  'global',
+  'globalThis',
+  'window',
+  'document',
+  'Proxy',
+  'Reflect',
+  'setTimeout',
+  'setInterval',
 ]
 
-export function safeEval(expr: string, context: Record<string, unknown>): unknown {
-  for (const pattern of BLOCKED_PATTERNS) {
-    if (pattern.test(expr)) {
-      throw new Error(`Unsafe expression blocked: contains forbidden token matching ${pattern}`)
-    }
+const ALLOWED_METHODS = new Set([
+  'toLowerCase',
+  'toUpperCase',
+  'trim',
+  'includes',
+  'startsWith',
+  'endsWith',
+  'slice',
+  'substring',
+  'split',
+  'replace',
+  'match',
+])
+
+// Only allow safe characters — no braces, backticks, or other dangerous syntax
+const SAFE_CHARS = /^[\w\s.$()[\]'":+\-*/%<>=!&|?,]*$/
+
+function assertSafeExpression(expr: string): void {
+  // 1. Block dangerous tokens
+  const tokenPattern = new RegExp(`\\b(${BANNED_TOKENS.join('|')})\\b`)
+  if (tokenPattern.test(expr)) {
+    throw new Error('Blocked token in expression')
   }
 
-  const keys = Object.keys(context)
-  const values = keys.map((k) => context[k])
+  // 2. Block dangerous syntax patterns
+  if (/=>|;|\bnew\b|\?\?|\?\./.test(expr)) {
+    throw new Error('Unsupported syntax in expression')
+  }
 
-  // The blocklist above is the primary security layer.
-  // We also shadow dangerous globals as function parameters
-  // to provide defense-in-depth (skipping reserved words like 'import').
-  const shadowNames = [
-    'process', 'require', 'Function',
-    'fetch', 'globalThis', 'global', 'window',
-    'document', 'Proxy', 'Reflect',
-    'setTimeout', 'setInterval',
-  ]
+  // 3. Character allowlist
+  if (!SAFE_CHARS.test(expr)) {
+    throw new Error('Unsupported characters in expression')
+  }
 
-  const fn = new Function(
-    ...keys,
-    ...shadowNames,
-    `return (${expr})`,
-  )
+  // 4. Method allowlist — only permit known-safe methods
+  for (const methodMatch of expr.matchAll(/\.([a-zA-Z_][a-zA-Z0-9_]*)\(/g)) {
+    const methodName = methodMatch[1]
+    if (!ALLOWED_METHODS.has(methodName)) {
+      throw new Error(`Method not allowed: ${methodName}`)
+    }
+  }
+}
 
-  const shadowValues = shadowNames.map(() => undefined)
-  return fn(...values, ...shadowValues)
+export function safeEval(expr: string, context: Record<string, unknown>): unknown {
+  assertSafeExpression(expr)
+
+  const sandbox = vm.createContext(Object.assign(Object.create(null), context))
+  const script = new vm.Script(`(${expr})`)
+  return script.runInContext(sandbox, { timeout: 30 })
 }
