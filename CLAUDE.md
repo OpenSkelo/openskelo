@@ -94,11 +94,11 @@ openskelo/
 - [ ] Day 10: Publish @openskelo/gates@0.1.0
 
 **Phase 2: Adapters (Days 11-18)**
-- [ ] Day 11-12: Base adapter + types
-- [ ] Day 13-14: claude-code adapter
-- [ ] Day 15: raw-api adapter
-- [ ] Day 16: shell adapter
-- [ ] Day 17: codex + aider adapters
+- [x] Day 11-12: Base adapter + types
+- [x] Day 13-14: claude-code adapter
+- [x] Day 15: raw-api adapter
+- [x] Day 16: shell adapter
+- [x] Day 17: codex + aider adapters
 - [ ] Day 18: Publish @openskelo/adapters@0.1.0
 
 **Phase 3: Queue (Days 19-35)**
