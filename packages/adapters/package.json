@@ -1,0 +1,26 @@
+{
+  "name": "@openskelo/adapters",
+  "version": "0.0.1",
+  "description": "Thin connectors to AI execution tools",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "@openskelo/gates": "0.0.1"
+  }
+}
