@@ -87,9 +87,9 @@ openskelo/
 **Phase 1: Gates (Days 1-10)**
 - [x] Day 1: Monorepo scaffold + CI
 - [x] Day 2-3: Core gates (json_schema, expression, regex, word_count)
-- [ ] Day 4-5: command gate + llm_review gate
-- [ ] Day 6-7: Gate runner + retry engine
-- [ ] Day 8: gated() public API
+- [x] Day 4-5: command gate + llm_review gate
+- [x] Day 6-7: Gate runner + retry engine
+- [x] Day 8: gated() public API
 - [ ] Day 9: Docs + README + examples
 - [ ] Day 10: Publish @openskelo/gates@0.1.0
 
