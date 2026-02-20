@@ -17,14 +17,60 @@ describe("chat gate evaluation", () => {
     },
   };
 
-  it("passes port_not_empty when content exists", () => {
-    const gates = evaluateAgentGates(baseAgent, "hello");
+  it("passes port_not_empty when content exists", async () => {
+    const gates = await evaluateAgentGates(baseAgent, "hello");
     expect(gates[0].passed).toBe(true);
   });
 
-  it("fails port_not_empty for blank content", () => {
-    const gates = evaluateAgentGates(baseAgent, "");
+  it("fails port_not_empty for blank content", async () => {
+    const gates = await evaluateAgentGates(baseAgent, "");
     expect(gates[0].passed).toBe(false);
+  });
+
+  it("supports expression gates in chat runtime", async () => {
+    const agent: any = {
+      ...baseAgent,
+      gates: {
+        pre: [],
+        post: [{ name: "has-hello", check: { type: "expression", expression: "outputs.default === 'hello world'" }, error: "missing hello" }],
+      },
+    };
+
+    const pass = await evaluateAgentGates(agent, "hello world");
+    const fail = await evaluateAgentGates(agent, "goodbye");
+
+    expect(pass[0].passed).toBe(true);
+    expect(fail[0].passed).toBe(false);
+  });
+
+  it("supports llm_review gates in chat runtime", async () => {
+    const runtime: any = {
+      dispatch: vi.fn().mockResolvedValue({
+        outputs: { default: '[{"criterion":"Must mention hello","passed":true,"reasoning":"ok"}]' },
+        content: '[{"criterion":"Must mention hello","passed":true,"reasoning":"ok"}]',
+        tokens: { input: 11, output: 7 },
+        cost: 0.0001,
+        durationMs: 1,
+        modelUsed: "gpt-4o-mini",
+        toolCalls: [],
+      }),
+    };
+
+    const agent: any = {
+      ...baseAgent,
+      gates: {
+        pre: [],
+        post: [{
+          name: "review",
+          check: { type: "llm_review", port: "default", criteria: ["Must mention hello"] },
+          error: "review failed",
+        }],
+      },
+    };
+
+    const gates = await evaluateAgentGates(agent, "hello world", runtime);
+    expect(gates[0].passed).toBe(true);
+    expect(runtime.dispatch).toHaveBeenCalledTimes(1);
   });
 
   it("retries once when gate fails then succeeds", async () => {
