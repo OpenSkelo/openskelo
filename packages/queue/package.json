@@ -21,9 +21,10 @@
     "dev": "tsup --watch"
   },
   "dependencies": {
-    "@openskelo/gates": "0.0.1",
     "@openskelo/adapters": "0.0.1",
-    "better-sqlite3": "^11.8.0"
+    "@openskelo/gates": "0.0.1",
+    "better-sqlite3": "^11.8.0",
+    "ulid": "^3.0.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0"
