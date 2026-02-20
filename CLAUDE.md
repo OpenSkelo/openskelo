@@ -128,3 +128,4 @@ Each Claude Code session should:
 5. Implement until tests pass
 6. Update the checklist in this file
 7. Commit with a descriptive message: `feat(gates): add json_schema gate with 25 tests`
+8. Push to origin
