@@ -42,6 +42,11 @@ export const GateCheckSchema = z.object({
   pattern: z.string().optional(),
   min: z.number().optional(),
   max: z.number().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  pass_threshold: z.number().min(0).max(1).optional(),
+  timeout_ms: z.number().positive().optional(),
+  system_prompt: z.string().optional(),
 });
 
 export const GateSchema = z.object({

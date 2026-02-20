@@ -7,6 +7,8 @@ import yaml from "yaml";
 import { loadAgent } from "../agents/loader.js";
 import type { AgentConfig } from "../agents/types.js";
 import { loadBlockContext } from "../core/block-context.js";
+import { evaluateBlockGates } from "../core/gate-runtime.js";
+import type { BlockGate, GateResult } from "../core/block-types.js";
 import { DirectRuntime, type DirectDispatchResult } from "../runtimes/direct-runtime.js";
 import { AnthropicProvider } from "../runtimes/providers/anthropic.js";
 import { OpenAIProvider } from "../runtimes/providers/openai.js";
@@ -24,11 +26,7 @@ interface ChatState {
   sessionOutputTokens: number;
 }
 
-interface GateResult {
-  name: string;
-  passed: boolean;
-  reason?: string;
-}
+// GateResult imported from core/block-types for runtime parity with DAG gates.
 
 export async function chatCommand(agentId: string, opts?: { projectDir?: string }): Promise<void> {
   const projectDir = resolve(opts?.projectDir ?? cwd());
@@ -128,7 +126,7 @@ export async function executeChatTurn(
       timeoutMs: agent.timeout_ms,
     });
 
-    const gates = evaluateAgentGates(agent, result.content);
+    const gates = await evaluateAgentGates(agent, result.content, runtime);
     lastResult = result;
     lastGates = gates;
 
@@ -146,22 +144,21 @@ export async function executeChatTurn(
   return { result: lastResult, gates: lastGates };
 }
 
-export function evaluateAgentGates(agent: AgentConfig, content: string): GateResult[] {
+export async function evaluateAgentGates(agent: AgentConfig, content: string, runtime?: DirectRuntime): Promise<GateResult[]> {
   const outputs: Record<string, unknown> = { default: content };
 
-  return agent.gates.post.map((g) => {
+  const sharedGates: BlockGate[] = [];
+  const immediateResults: GateResult[] = [];
+
+  for (const g of agent.gates.post) {
     const check = g.check;
-    if (check.type === "port_not_empty") {
-      const val = outputs[String(check.port ?? "default")];
-      const ok = val !== undefined && val !== null && String(val).trim() !== "";
-      return { name: g.name, passed: ok, reason: ok ? undefined : g.error ?? "empty output" };
-    }
 
     if (check.type === "regex") {
       const val = String(outputs[String(check.port ?? "default")] ?? "");
       const pattern = check.pattern ?? ".*";
       const ok = new RegExp(pattern).test(val);
-      return { name: g.name, passed: ok, reason: ok ? undefined : g.error ?? `regex ${pattern} failed` };
+      immediateResults.push({ name: g.name, passed: ok, reason: ok ? undefined : g.error ?? `regex ${pattern} failed` });
+      continue;
     }
 
     if (check.type === "word_count") {
@@ -170,40 +167,115 @@ export function evaluateAgentGates(agent: AgentConfig, content: string): GateRes
       const min = check.min ?? 0;
       const max = check.max ?? Number.MAX_SAFE_INTEGER;
       const ok = words >= min && words <= max;
-      return { name: g.name, passed: ok, reason: ok ? undefined : g.error ?? `word count ${words} outside ${min}-${max}` };
+      immediateResults.push({ name: g.name, passed: ok, reason: ok ? undefined : g.error ?? `word count ${words} outside ${min}-${max}` });
+      continue;
     }
 
     if (check.type === "json_schema") {
       const port = String(check.port ?? "default");
-      const val = String(outputs[port] ?? "");
-      try {
-        const parsed = JSON.parse(val);
-        const req = Array.isArray((check.schema as any)?.required) ? (check.schema as any).required.map(String) : [];
-        const ok = req.every((k: string) => parsed && typeof parsed === "object" && k in parsed);
-        return { name: g.name, passed: ok, reason: ok ? undefined : g.error ?? "schema required fields missing" };
-      } catch {
-        return { name: g.name, passed: false, reason: g.error ?? "invalid json" };
+      const raw = outputs[port];
+      if (typeof raw === "string") {
+        try {
+          outputs[port] = JSON.parse(raw);
+        } catch {
+          immediateResults.push({ name: g.name, passed: false, reason: g.error ?? "invalid json" });
+          continue;
+        }
       }
+      sharedGates.push({
+        name: g.name,
+        error: g.error ?? "schema validation failed",
+        check: { type: "json_schema", port, schema: check.schema ?? {} },
+      });
+      continue;
     }
 
     if (check.type === "expression") {
-      return {
+      if (!check.expression?.trim()) {
+        immediateResults.push({ name: g.name, passed: false, reason: g.error ?? "missing expression" });
+        continue;
+      }
+      sharedGates.push({
         name: g.name,
-        passed: false,
-        reason: g.error ?? "Gate type 'expression' is not implemented in chat runtime yet",
-      };
+        error: g.error ?? "expression gate failed",
+        check: { type: "expr", expression: check.expression },
+      });
+      continue;
+    }
+
+    if (check.type === "port_not_empty") {
+      sharedGates.push({
+        name: g.name,
+        error: g.error ?? "empty output",
+        check: { type: "port_not_empty", port: String(check.port ?? "default") },
+      });
+      continue;
     }
 
     if (check.type === "llm_review") {
-      return {
+      sharedGates.push({
         name: g.name,
-        passed: false,
-        reason: g.error ?? "Gate type 'llm_review' is not implemented in chat runtime yet",
-      };
+        error: g.error ?? "llm review failed",
+        check: {
+          type: "llm_review",
+          port: String(check.port ?? "default"),
+          criteria: Array.isArray(check.criteria) ? check.criteria : [],
+          model: check.model,
+          provider: check.provider,
+          pass_threshold: check.pass_threshold,
+          timeout_ms: check.timeout_ms,
+          system_prompt: check.system_prompt,
+        },
+      });
+      continue;
     }
 
-    return { name: g.name, passed: true };
+    immediateResults.push({ name: g.name, passed: true });
+  }
+
+  const sharedResults = await evaluateBlockGates(sharedGates, {
+    inputs: {},
+    outputs,
+    llmReview: runtime
+      ? async ({ gate, systemPrompt, reviewPrompt }) => {
+          try {
+            const model = gate.check.model ?? agent.model.primary;
+            const review = await runtime.dispatch({
+              agentId: agent.id,
+              system: systemPrompt,
+              userMessage: reviewPrompt,
+              inputs: {},
+              model,
+              timeoutMs: gate.check.timeout_ms ?? agent.timeout_ms,
+            });
+
+            return {
+              success: true,
+              output: review.content,
+              tokensUsed: review.tokens.input + review.tokens.output,
+              audit: {
+                provider: gate.check.provider ?? "runtime-resolved",
+                model,
+              },
+            };
+          } catch (err) {
+            return {
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+              audit: {
+                provider: gate.check.provider ?? "runtime-resolved",
+                model: gate.check.model ?? agent.model.primary,
+              },
+            };
+          }
+        }
+      : undefined,
   });
+
+  const resultByName = new Map<string, GateResult>();
+  for (const r of [...immediateResults, ...sharedResults]) resultByName.set(r.name, r);
+
+  return agent.gates.post.map((g) => resultByName.get(g.name) ?? { name: g.name, passed: true });
 }
 
 function printGates(gates: GateResult[]): void {

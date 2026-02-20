@@ -14,7 +14,8 @@
  * of independent blocks (blocks with no shared dependencies).
  */
 
-import { createBlockEngine, evaluateBlockGate } from "./block.js";
+import { createBlockEngine } from "./block.js";
+import { evaluateBlockGates } from "./gate-runtime.js";
 import { runDeterministicHandler } from "./deterministic.js";
 import { loadBlockContext } from "./block-context.js";
 import type {
@@ -1202,61 +1203,25 @@ async function evaluateGatesWithLLM(
     providers: Record<string, ProviderAdapter>;
   }
 ): Promise<GateResult[]> {
-  const results: GateResult[] = [];
+  return evaluateBlockGates(gates, {
+    inputs: ctx.inputs,
+    outputs: ctx.outputs,
+    llmReview: async ({ gate, systemPrompt, reviewPrompt }) => {
+      const providerName = gate.check.provider ?? ctx.defaultAgent?.provider;
+      const provider = providerName ? ctx.providers[providerName] : undefined;
+      if (!providerName || !provider) {
+        return {
+          success: false,
+          error: `llm_review provider not found: ${providerName ?? "<none>"}`,
+          audit: {
+            provider: providerName ?? null,
+            model: gate.check.model ?? ctx.defaultAgent?.model ?? "unknown",
+            failure: "provider_not_found",
+          },
+        };
+      }
 
-  for (const gate of gates) {
-    if (gate.check.type !== "llm_review") {
-      results.push(evaluateBlockGate(gate, ctx.inputs, ctx.outputs));
-      continue;
-    }
-
-    const ports = { ...ctx.inputs, ...ctx.outputs };
-    const candidate = ports[gate.check.port];
-    if (candidate === undefined || candidate === null || String(candidate).trim() === "") {
-      results.push({
-        name: gate.name,
-        passed: false,
-        reason: `${gate.error} (target port '${gate.check.port}' is empty)`,
-        audit: { gate_type: "llm_review", status: "failed", failure: "empty_port" },
-      });
-      continue;
-    }
-
-    const providerName = gate.check.provider ?? ctx.defaultAgent?.provider;
-    const provider = providerName ? ctx.providers[providerName] : undefined;
-    if (!providerName || !provider) {
-      results.push({
-        name: gate.name,
-        passed: false,
-        reason: `${gate.error} (llm_review provider not found: ${providerName ?? "<none>"})`,
-        audit: { gate_type: "llm_review", status: "failed", failure: "provider_not_found", provider: providerName ?? null },
-      });
-      continue;
-    }
-
-    const model = gate.check.model ?? ctx.defaultAgent?.model ?? "unknown";
-    const criteria = gate.check.criteria;
-    const passThreshold = Number(gate.check.pass_threshold ?? 1);
-
-    const systemPrompt = gate.check.system_prompt ?? "You are a strict quality reviewer.";
-    const reviewPrompt = [
-      "Evaluate the following output against each criterion.",
-      "Respond with ONLY valid JSON array; each element must have: criterion, passed (boolean), reasoning.",
-      "",
-      "OUTPUT:",
-      "---",
-      String(candidate),
-      "---",
-      "",
-      "CRITERIA:",
-      ...criteria.map((c, i) => `${i + 1}. ${c}`),
-      "",
-      "Example:",
-      '[{"criterion":"Code handles errors","passed":true,"reasoning":"Try/catch present."}]',
-    ].join("\n");
-
-    const reviewStart = Date.now();
-    try {
+      const model = gate.check.model ?? ctx.defaultAgent?.model ?? "unknown";
       const reviewReq: DispatchRequest = {
         taskId: `gate_${ctx.blockDef.id}_${gate.name}`,
         pipeline: "llm_review",
@@ -1268,7 +1233,7 @@ async function evaluateGatesWithLLM(
           block_id: ctx.blockDef.id,
           gate_name: gate.name,
         },
-        acceptanceCriteria: criteria,
+        acceptanceCriteria: gate.check.criteria,
         bounceCount: 0,
         abortSignal: undefined,
         isCancelled: undefined,
@@ -1280,126 +1245,18 @@ async function evaluateGatesWithLLM(
       };
 
       const review = await dispatchWithTimeout(provider, reviewReq, gate.check.timeout_ms ?? 15000);
-      if (!review.success) {
-        results.push({
-          name: gate.name,
-          passed: false,
-          reason: `${gate.error} (review dispatch failed: ${review.error ?? "unknown"})`,
-          audit: {
-            gate_type: "llm_review",
-            status: "failed",
-            failure: "dispatch_failed",
-            provider: providerName,
-            model,
-            criteria_count: criteria.length,
-            pass_threshold: passThreshold,
-            review_prompt: reviewPrompt,
-            raw_response: review.output ?? "",
-            tokens_used: review.tokensUsed ?? 0,
-            duration_ms: Date.now() - reviewStart,
-          },
-        });
-        continue;
-      }
-
-      const parsed = parseReviewJson(review.output ?? "");
-      if (!parsed.ok) {
-        results.push({
-          name: gate.name,
-          passed: false,
-          reason: `${gate.error} (review output invalid JSON schema)` ,
-          audit: {
-            gate_type: "llm_review",
-            status: "failed",
-            failure: "invalid_review_output",
-            provider: providerName,
-            model,
-            raw_preview: String(review.output ?? "").slice(0, 400),
-          },
-        });
-        continue;
-      }
-
-      const passedCount = parsed.criteria.filter((c) => c.passed).length;
-      const score = parsed.criteria.length === 0 ? 0 : passedCount / parsed.criteria.length;
-      const ok = score >= passThreshold;
-
-      results.push({
-        name: gate.name,
-        passed: ok,
-        reason: ok ? undefined : `${gate.error} (${passedCount}/${parsed.criteria.length} criteria passed)` ,
+      return {
+        success: review.success,
+        output: review.output,
+        error: review.error,
+        tokensUsed: review.tokensUsed,
         audit: {
-          gate_type: "llm_review",
-          status: ok ? "passed" : "failed",
-          provider: providerName,
-          model,
-          pass_threshold: passThreshold,
-          score,
-          passed_count: passedCount,
-          criteria_count: parsed.criteria.length,
-          overall_passed: ok,
-          verdicts: parsed.criteria,
-          summary: parsed.summary,
-          review_prompt: reviewPrompt,
-          raw_response: review.output ?? "",
-          tokens_used: review.tokensUsed ?? 0,
-          duration_ms: Date.now() - reviewStart,
-        },
-      });
-    } catch (err) {
-      results.push({
-        name: gate.name,
-        passed: false,
-        reason: `${gate.error} (${err instanceof Error ? err.message : "review exception"})`,
-        audit: {
-          gate_type: "llm_review",
-          status: "failed",
-          failure: "exception",
           provider: providerName,
           model,
         },
-      });
-    }
-  }
-
-  return results;
-}
-
-function parseReviewJson(raw: string): { ok: true; criteria: Array<{ criterion: string; passed: boolean; reasoning: string }>; summary?: string } | { ok: false } {
-  const candidates: string[] = [raw];
-  const code = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (code?.[1]) candidates.push(code[1]);
-
-  for (const candidate of candidates) {
-    try {
-      const parsedAny = JSON.parse(candidate) as unknown;
-      const parsed = parsedAny as Record<string, unknown>;
-
-      const arr = Array.isArray(parsedAny)
-        ? parsedAny
-        : (Array.isArray(parsed?.criteria) ? parsed.criteria : null);
-      if (!arr) continue;
-
-      const criteria = arr
-        .map((c) => c as Record<string, unknown>)
-        .filter((c) => typeof c.criterion === "string" && typeof c.passed === "boolean")
-        .map((c) => ({
-          criterion: String(c.criterion),
-          passed: Boolean(c.passed),
-          reasoning: typeof c.reasoning === "string"
-            ? c.reasoning
-            : (typeof c.reason === "string" ? c.reason : ""),
-        }));
-      if (criteria.length === 0) continue;
-
-      const summary = !Array.isArray(parsedAny) && typeof parsed.summary === "string" ? parsed.summary : undefined;
-      return { ok: true, criteria, summary };
-    } catch {
-      // try next candidate
-    }
-  }
-
-  return { ok: false };
+      };
+    },
+  });
 }
 
 async function dispatchWithTimeout(
