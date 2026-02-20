@@ -1,0 +1,19 @@
+{
+  "name": "@openskelo/queue",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@openskelo/gates": "0.0.1",
+    "@openskelo/adapters": "0.0.1"
+  }
+}
