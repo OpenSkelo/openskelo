@@ -363,8 +363,13 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           })();
         }
       } while (queuePumpRequested);
+    } catch (err) {
+      console.error("[dag-api] queue pump error:", err instanceof Error ? err.message : err);
+      queuePumpRequested = true;
     } finally {
+      const rerun = queuePumpRequested;
       queuePumpActive = false;
+      if (rerun) void pumpQueuedRuns("pump-recover");
     }
   }
 
