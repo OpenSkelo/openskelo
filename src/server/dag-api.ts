@@ -44,7 +44,6 @@ const sseClients = new Map<string, Set<(event: DAGEvent) => void>>();
 const sseClientRegistry = new Map<string, Map<string, (event: DAGEvent) => void>>();
 const approvalWaiters = new Map<string, Set<() => void>>();
 const runStallCounts = new Map<string, number>();
-const runQueueClaimTokens = new Map<string, string>();
 
 export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string }) {
   // Isolate state per API instance (important for tests/restarts)
@@ -62,7 +61,6 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   sseClientRegistry.clear();
   approvalWaiters.clear();
   runStallCounts.clear();
-  runQueueClaimTokens.clear();
 
   const app = new Hono();
   app.use("/api/dag/*", cors());
@@ -78,6 +76,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     orphanTimeoutMs: Number(process.env.OPENSKELO_ORPHAN_TIMEOUT_MS ?? String(2 * 60 * 1000)),
     queueLeaseMs: Number(process.env.OPENSKELO_QUEUE_LEASE_MS ?? "30000"),
   };
+
+  // Instance-scoped queue state (must not be module-level shared state).
+  const runQueueClaimTokens = new Map<string, string>();
 
   // Phase A durability: persist DAG runs/events/approvals
   createDB();
@@ -167,6 +168,15 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
         lease_expires_at = ?,
         updated_at = ?
     WHERE run_id = ? AND status = 'pending'
+  `);
+  const releaseClaimByToken = db.prepare(`
+    UPDATE dag_run_queue
+    SET status = 'pending',
+        claim_owner = NULL,
+        claim_token = NULL,
+        lease_expires_at = NULL,
+        updated_at = ?
+    WHERE run_id = ? AND status = 'claimed' AND claim_token = ?
   `);
   const markQueueRunning = db.prepare(`
     UPDATE dag_run_queue
@@ -260,6 +270,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   };
 
   const claimNextQueuedRun = db.transaction((claimOwner: string, nowIso: string, leaseMs: number): QueueClaim | null => {
+    releaseExpiredClaims.run(nowIso, nowIso);
     const candidate = selectNextPendingForClaim.get() as Record<string, unknown> | undefined;
     if (!candidate) return null;
 
@@ -301,6 +312,15 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           const claim = claimNextQueuedRun(`dag-api:${reason}`, new Date().toISOString(), safety.queueLeaseMs);
           if (!claim) break;
 
+          runQueueClaimTokens.set(claim.run_id, claim.claim_token);
+
+          // Re-check capacity after claim to prevent over-launch on concurrent triggers.
+          if (getActiveRunningCount() >= safety.maxConcurrentRuns) {
+            releaseClaimByToken.run(new Date().toISOString(), claim.run_id, claim.claim_token);
+            runQueueClaimTokens.delete(claim.run_id);
+            break;
+          }
+
           let payload: Record<string, unknown>;
           try {
             payload = JSON.parse(claim.payload_json) as Record<string, unknown>;
@@ -321,9 +341,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           const now = new Date().toISOString();
           const markRunning = markQueueRunning.run(now, now, claim.run_id, claim.claim_token);
           if (Number(markRunning.changes ?? 0) !== 1) {
+            runQueueClaimTokens.delete(claim.run_id);
             continue;
           }
-          runQueueClaimTokens.set(claim.run_id, claim.claim_token);
 
           void (async () => {
             try {
