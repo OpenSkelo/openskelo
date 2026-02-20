@@ -59,6 +59,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.1",
+    "@openskelo/gates": "file:packages/gates",
     "@hono/node-server": "^1.0.0",
     "acorn": "^8.15.0",
     "better-sqlite3": "^11.0.0",
