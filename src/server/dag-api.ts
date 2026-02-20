@@ -8,6 +8,7 @@ import { streamSSE } from "hono/streaming";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { parseYamlWithDiagnostics } from "../core/yaml-utils.js";
 import { createBlockEngine } from "../core/block.js";
 import { createDAGExecutor } from "../core/dag-executor.js";
@@ -170,8 +171,6 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   const markQueueRunning = db.prepare(`
     UPDATE dag_run_queue
     SET status = 'running',
-        claim_owner = ?,
-        claim_token = ?,
         lease_expires_at = NULL,
         started_at = COALESCE(started_at, ?),
         updated_at = ?
@@ -242,12 +241,13 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   }
 
   function getActiveRunningCount(): number {
-    return Array.from(activeRuns.values()).filter((e) => e.run.status === "running" || e.run.status === "paused_approval" || e.run.status === "pending").length;
+    return Array.from(activeRuns.values()).filter((e) => e.run.status === "running" || e.run.status === "paused_approval").length;
   }
 
   function markQueueRunFinal(runId: string, status: "completed" | "failed" | "cancelled", error?: string): void {
     const now = new Date().toISOString();
-    const claimToken = runQueueClaimTokens.get(runId);
+    const row = selectQueueByRun.get(runId) as Record<string, unknown> | undefined;
+    const claimToken = runQueueClaimTokens.get(runId) ?? (row?.claim_token ? String(row.claim_token) : null);
     if (!claimToken) return;
     markQueueFinished.run(status, error ?? null, now, now, runId, claimToken);
     runQueueClaimTokens.delete(runId);
@@ -260,15 +260,13 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   };
 
   const claimNextQueuedRun = db.transaction((claimOwner: string, nowIso: string, leaseMs: number): QueueClaim | null => {
-    releaseExpiredClaims.run(nowIso, nowIso);
-
     const candidate = selectNextPendingForClaim.get() as Record<string, unknown> | undefined;
     if (!candidate) return null;
 
     const runId = String(candidate.run_id ?? "");
     if (!runId) return null;
 
-    const claimToken = `qcl_${runId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const claimToken = `qcl_${runId}_${randomUUID()}`;
     const leaseExpires = new Date(Date.now() + leaseMs).toISOString();
     const result = claimQueueEntry.run(claimOwner, claimToken, leaseExpires, nowIso, runId);
     if (Number(result.changes ?? 0) !== 1) return null;
@@ -321,7 +319,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           }
 
           const now = new Date().toISOString();
-          const markRunning = markQueueRunning.run(`dag-api:${reason}`, claim.claim_token, now, now, claim.run_id, claim.claim_token);
+          const markRunning = markQueueRunning.run(now, now, claim.run_id, claim.claim_token);
           if (Number(markRunning.changes ?? 0) !== 1) {
             continue;
           }
@@ -552,6 +550,29 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
   } catch {
     // best effort
   }
+
+  // Startup queue recovery: clear stale claims/running leases from previous process instance.
+  try {
+    const now = new Date().toISOString();
+    const stuckRows = db.prepare("SELECT run_id FROM dag_run_queue WHERE status IN ('claimed','running')").all() as Array<Record<string, unknown>>;
+    if (stuckRows.length > 0) {
+      db.prepare("UPDATE dag_run_queue SET status = 'pending', claim_owner = NULL, claim_token = NULL, lease_expires_at = NULL, updated_at = ? WHERE status IN ('claimed','running')").run(now);
+      for (const row of stuckRows) {
+        const runId = String(row.run_id ?? "");
+        if (!runId) continue;
+        const runRow = db.prepare("SELECT status, run_json FROM dag_runs WHERE id = ?").get(runId) as Record<string, unknown> | undefined;
+        if (!runRow) continue;
+        const runStatus = String(runRow.status ?? "");
+        if (!["running", "paused_approval", "pending"].includes(runStatus)) continue;
+        const run = JSON.parse(String(runRow.run_json ?? "{}"));
+        run.status = "pending";
+        db.prepare("UPDATE dag_runs SET status = 'pending', run_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(run), now, runId);
+      }
+    }
+  } catch {
+    // best effort
+  }
+
   void pumpQueuedRuns("startup");
 
   // List available example DAGs
