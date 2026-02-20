@@ -170,7 +170,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
     SET status = 'running',
         claim_owner = ?,
         claim_token = ?,
-        lease_expires_at = ?,
+        lease_expires_at = NULL,
         started_at = COALESCE(started_at, ?),
         updated_at = ?
     WHERE run_id = ? AND status IN ('claimed', 'pending')
@@ -291,6 +291,9 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
       do {
         queuePumpRequested = false;
 
+        const now = new Date().toISOString();
+        releaseExpiredClaims.run(now, now);
+
         while (getActiveRunningCount() < safety.maxConcurrentRuns) {
           const claim = claimNextQueuedRun(`dag-api:${reason}`, new Date().toISOString(), safety.queueLeaseMs);
           if (!claim) break;
@@ -313,21 +316,24 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
           }
 
           const now = new Date().toISOString();
-          markQueueRunning.run(`dag-api:${reason}`, claim.claim_token, new Date(Date.now() + safety.queueLeaseMs).toISOString(), now, now, claim.run_id);
+          markQueueRunning.run(`dag-api:${reason}`, claim.claim_token, now, now, claim.run_id);
 
-          void startDagExecution(dag, context, body, {
-            skipConcurrencyGate: true,
-            queuedRunId: claim.run_id,
-          }).then((started) => {
-            if ((started as { error?: string }).error) {
-              const msg = (started as { error: string }).error;
-              markQueueRunFinal(claim.run_id, "failed", msg);
-              void pumpQueuedRuns("queue-start-error");
+          void (async () => {
+            try {
+              const started = await startDagExecution(dag, context, body, {
+                skipConcurrencyGate: true,
+                queuedRunId: claim.run_id,
+              });
+              if ((started as { error?: string }).error) {
+                const msg = (started as { error: string }).error;
+                markQueueRunFinal(claim.run_id, "failed", msg);
+                void pumpQueuedRuns("queue-start-error");
+              }
+            } catch (err) {
+              markQueueRunFinal(claim.run_id, "failed", err instanceof Error ? err.message : String(err));
+              void pumpQueuedRuns("queue-start-crash");
             }
-          }).catch((err) => {
-            markQueueRunFinal(claim.run_id, "failed", err instanceof Error ? err.message : String(err));
-            void pumpQueuedRuns("queue-start-crash");
-          });
+          })();
         }
       } while (queuePumpRequested);
     } finally {
@@ -877,7 +883,7 @@ export function createDAGAPI(config: SkeloConfig, opts?: { examplesDir?: string 
 
     if (opts?.queuedRunId) {
       const now = new Date().toISOString();
-      markQueueRunning.run("dag-api:launcher", null, null, now, now, initialRun.id);
+      markQueueRunning.run("dag-api:launcher", null, now, now, initialRun.id);
     }
 
     broadcast(initialRun.id, {
