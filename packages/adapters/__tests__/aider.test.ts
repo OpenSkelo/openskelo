@@ -35,6 +35,24 @@ describe('AiderAdapter', () => {
     expect(result.exit_code).toBe(0)
   })
 
+  it('execute appends prompt to args via --message pattern', async () => {
+    const task = makeTask({
+      summary: 'Aider args test',
+      prompt: 'args payload from aider adapter',
+      backend_config: {
+        command: 'sh',
+        args: ['-c', 'printf "%s\\n" "$@"', 'sh', '--message'],
+      },
+    })
+
+    const result = await adapter.execute(task)
+
+    expect(result.output).toContain('--message')
+    expect(result.output).toContain('Task: Aider args test')
+    expect(result.output).toContain('args payload from aider adapter')
+    expect(result.exit_code).toBe(0)
+  })
+
   it('canHandle returns true for backend aider', () => {
     expect(adapter.canHandle(makeTask())).toBe(true)
   })

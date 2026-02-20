@@ -1,6 +1,7 @@
 import { BaseCliAdapter } from '../base-cli-adapter.js'
 import { buildTaskPrompt } from '../utils/prompt-builder.js'
 import type { TaskInput, AdapterResult } from '../types.js'
+import type { RetryContext } from '@openskelo/gates'
 
 export class AiderAdapter extends BaseCliAdapter {
   constructor() {
@@ -12,6 +13,26 @@ export class AiderAdapter extends BaseCliAdapter {
 
   buildPrompt(task: TaskInput): string {
     return buildTaskPrompt(task)
+  }
+
+  protected shouldPipePromptToStdin(): boolean {
+    return false
+  }
+
+  async execute(task: TaskInput, retryCtx?: RetryContext): Promise<AdapterResult> {
+    const prompt = this.buildPrompt(task)
+    const baseArgs = task.backend_config?.args ?? this.defaultConfig.args ?? []
+
+    const augmented: TaskInput = {
+      ...task,
+      backend_config: {
+        ...task.backend_config,
+        command: task.backend_config?.command ?? this.defaultConfig.command,
+        args: [...baseArgs, prompt],
+      },
+    }
+
+    return super.execute(augmented, retryCtx)
   }
 
   parseOutput(

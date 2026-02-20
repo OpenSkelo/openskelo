@@ -34,6 +34,7 @@ export abstract class BaseCliAdapter implements ExecutionAdapter {
 
   async execute(task: TaskInput, _retryCtx?: RetryContext): Promise<AdapterResult> {
     const config = this.mergeConfig(task.backend_config)
+    const prompt = this.buildPrompt(task)
 
     if (!config.command) {
       return {
@@ -54,6 +55,7 @@ export abstract class BaseCliAdapter implements ExecutionAdapter {
         config.cwd,
         config.env,
         config.timeout_ms,
+        this.shouldPipePromptToStdin(task) ? prompt : undefined,
       )
 
       const result = this.parseOutput(stdout, stderr, exitCode, task)
@@ -108,6 +110,10 @@ export abstract class BaseCliAdapter implements ExecutionAdapter {
     }
   }
 
+  protected shouldPipePromptToStdin(_task: TaskInput): boolean {
+    return true
+  }
+
   private spawnProcess(
     taskId: string,
     command: string,
@@ -115,6 +121,7 @@ export abstract class BaseCliAdapter implements ExecutionAdapter {
     cwd?: string,
     env?: Record<string, string>,
     timeoutMs?: number,
+    stdinInput?: string,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     return new Promise((resolve, reject) => {
       let proc: ChildProcess
@@ -131,6 +138,11 @@ export abstract class BaseCliAdapter implements ExecutionAdapter {
       }
 
       this.runningProcesses.set(taskId, proc)
+
+      if (stdinInput !== undefined) {
+        proc.stdin?.write(stdinInput)
+        proc.stdin?.end()
+      }
 
       let stdout = ''
       let stderr = ''

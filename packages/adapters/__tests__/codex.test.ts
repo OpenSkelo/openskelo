@@ -38,6 +38,20 @@ describe('CodexAdapter', () => {
     expect(result.exit_code).toBe(0)
   })
 
+  it('execute pipes built prompt to child process stdin', async () => {
+    const task = makeTask({
+      summary: 'Codex stdin test',
+      prompt: 'stdin payload from codex adapter',
+      backend_config: { command: 'cat', args: [] },
+    })
+
+    const result = await adapter.execute(task)
+
+    expect(result.output).toContain('Task: Codex stdin test')
+    expect(result.output).toContain('stdin payload from codex adapter')
+    expect(result.exit_code).toBe(0)
+  })
+
   it('canHandle returns true for backend codex', () => {
     expect(adapter.canHandle(makeTask())).toBe(true)
   })

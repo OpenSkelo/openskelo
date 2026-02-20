@@ -131,6 +131,22 @@ describe('ClaudeCodeAdapter', () => {
     })
   })
 
+  describe('execute', () => {
+    it('pipes built prompt to child process stdin', async () => {
+      const task = makeTask({
+        summary: 'Echo stdin test',
+        prompt: 'stdin payload from claude adapter',
+        backend_config: { command: 'cat', args: [] },
+      })
+
+      const result = await adapter.execute(task)
+
+      expect(result.output).toContain('Task: Echo stdin test')
+      expect(result.output).toContain('stdin payload from claude adapter')
+      expect(result.exit_code).toBe(0)
+    })
+  })
+
   describe('canHandle', () => {
     it('returns true for backend claude-code', () => {
       expect(adapter.canHandle(makeTask())).toBe(true)
