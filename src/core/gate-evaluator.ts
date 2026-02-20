@@ -5,18 +5,21 @@ import {
   type GateResult as PackageGateResult,
 } from "@openskelo/gates";
 
-// Compile-time compatibility guard between core and package gate result shapes.
-type _GateResultCompatA = PackageGateResult extends GateResult ? true : never;
-type _GateResultCompatB = GateResult extends PackageGateResult ? true : never;
-const _gateResultCompatA: _GateResultCompatA = true;
-const _gateResultCompatB: _GateResultCompatB = true;
-void _gateResultCompatA;
-void _gateResultCompatB;
+type Assert<T extends true> = T;
+
+// Compile-time compatibility guard between core and package gate shapes.
+type _BlockGateCompatA = Assert<PackageBlockGate extends BlockGate ? true : false>;
+type _BlockGateCompatB = Assert<BlockGate extends PackageBlockGate ? true : false>;
+type _GateResultCompatA = Assert<PackageGateResult extends GateResult ? true : false>;
+type _GateResultCompatB = Assert<GateResult extends PackageGateResult ? true : false>;
 
 export function evaluateBlockGate(
   gate: BlockGate,
   inputs: Record<string, unknown>,
   outputs: Record<string, unknown>
 ): GateResult {
-  return evaluateBlockGateFromPackage(gate as unknown as PackageBlockGate, inputs, outputs);
+  const packageGate: PackageBlockGate = gate;
+  const packageResult = evaluateBlockGateFromPackage(packageGate, inputs, outputs);
+  const coreResult: GateResult = packageResult;
+  return coreResult;
 }

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { evaluateBlockGate, evaluateBlockGates, evaluateSafeExpression, type BlockGate } from "@openskelo/gates";
 
@@ -15,7 +16,7 @@ describe("@openskelo/gates package", () => {
     expect(result.passed).toBe(true);
   });
 
-  it("evaluates json_schema/diff/http/cost/latency gates", () => {
+  it("evaluates json_schema/diff/http/cost/latency gates", async () => {
     const schemaGate: BlockGate = {
       name: "schema",
       error: "schema failed",
@@ -34,12 +35,43 @@ describe("@openskelo/gates package", () => {
     };
     expect(evaluateBlockGate(diffGate, { a: 1 }, { b: 2 }).passed).toBe(true);
 
-    const httpGate: BlockGate = {
-      name: "http",
-      error: "http failed",
-      check: { type: "http", url: "mock://status/200", expect_status: 200 },
-    };
-    expect(evaluateBlockGate(httpGate, {}, {}).passed).toBe(true);
+    const testPort = 28000 + Math.floor(Math.random() * 1000);
+    const server = spawn(
+      process.execPath,
+      [
+        "-e",
+        "const http=require('node:http'); const port=Number(process.env.PORT); http.createServer((_req,res)=>{res.statusCode=204;res.end('ok');}).listen(port,'127.0.0.1',()=>{process.stdout.write('READY\\n');});",
+      ],
+      {
+        env: { ...process.env, PORT: String(testPort) },
+        stdio: ["ignore", "pipe", "pipe"],
+      }
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("http test server did not start in time")), 3000);
+      server.once("exit", (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`http test server exited early (${code ?? "unknown"})`));
+      });
+      server.stdout?.on("data", (chunk: Buffer) => {
+        if (String(chunk).includes("READY")) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+
+    try {
+      const httpGate: BlockGate = {
+        name: "http",
+        error: "http failed",
+        check: { type: "http", url: `http://127.0.0.1:${testPort}/health`, expect_status: 204, timeout_ms: 3000 },
+      };
+      expect(evaluateBlockGate(httpGate, {}, {}).passed).toBe(true);
+    } finally {
+      server.kill("SIGTERM");
+    }
 
     const costGate: BlockGate = {
       name: "cost",
