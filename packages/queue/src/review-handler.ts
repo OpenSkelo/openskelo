@@ -499,7 +499,7 @@ export class ReviewHandler {
     const issues = decision.feedback ? [decision.feedback] : []
     const fixPrompt = buildFixPrompt(parent, decision.reasoning ?? '', issues)
 
-    // Find all downstream tasks that depend on parent in the same pipeline.
+    // Find direct downstream dependents for dependency rewiring.
     const downstreamTasks = parent.pipeline_id
       ? this.taskStore
         .list({})
@@ -532,11 +532,17 @@ export class ReviewHandler {
       this.taskStore.update(downstream.id, { depends_on: nextDeps })
     }
 
-    // Hold all downstream pipeline tasks so they don't dispatch during the fix
-    const holdIds = downstreamTasks.map(t => t.id)
-    if (holdIds.length > 0) {
-      this.taskStore.hold(holdIds, fixTask.id)
-    }
+    // Hold all pending downstream pipeline tasks with higher step numbers.
+    const holdCandidates = parent.pipeline_id
+      ? this.taskStore
+        .list({ pipeline_id: parent.pipeline_id, status: TaskStatus.PENDING })
+        .filter((task) => (task.pipeline_step ?? 0) > (parent.pipeline_step ?? 0))
+      : []
+
+    const holdIds = holdCandidates.map(task => task.id)
+    const heldCount = holdIds.length > 0
+      ? this.taskStore.hold(holdIds, fixTask.id)
+      : 0
 
     this.auditLog.logAction({
       task_id: parent.id,
@@ -545,7 +551,7 @@ export class ReviewHandler {
         fix_task_id: fixTask.id,
         blocked_downstream: holdIds,
         blocked_downstream_count: holdIds.length,
-        held_count: holdIds.length,
+        held_count: heldCount,
         priority: -10,
       },
     })
@@ -555,7 +561,7 @@ export class ReviewHandler {
       metadata: { ...parent.metadata, fix_task_id: fixTask.id },
     })
 
-    if (holdIds.length > 0 && parent.pipeline_id) {
+    if (heldCount > 0 && parent.pipeline_id) {
       this.webhookDispatcher?.emit({
         event: 'pipeline_held',
         task_id: parent.id,
@@ -567,7 +573,7 @@ export class ReviewHandler {
         metadata: {
           fix_task_id: fixTask.id,
           held_task_ids: holdIds,
-          held_count: holdIds.length,
+          held_count: heldCount,
         },
       })
     }

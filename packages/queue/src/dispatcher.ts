@@ -139,6 +139,11 @@ export class Dispatcher {
 
       // Claim: transition PENDING → IN_PROGRESS atomically with lease fields
       try {
+        const current = this.taskStore.getById(candidate.id)
+        if (!current || current.status !== TaskStatus.PENDING || current.held_by) {
+          continue
+        }
+
         const leaseExpiry = new Date(Date.now() + this.config.lease_ttl_ms).toISOString()
 
         this.taskStore.transition(candidate.id, TaskStatus.IN_PROGRESS, {

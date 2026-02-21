@@ -348,14 +348,36 @@ describe('TaskStore', () => {
     it('hold() sets held_by on specified tasks', () => {
       const t1 = store.create(minimal)
       const t2 = store.create(minimal)
-      store.hold([t1.id, t2.id], 'FIX-001')
+      const count = store.hold([t1.id, t2.id], 'FIX-001')
 
+      expect(count).toBe(2)
       expect(store.getById(t1.id)!.held_by).toBe('FIX-001')
       expect(store.getById(t2.id)!.held_by).toBe('FIX-001')
     })
 
     it('hold() with empty array is a no-op', () => {
       expect(() => store.hold([], 'FIX-001')).not.toThrow()
+    })
+
+    it('hold() only applies to pending tasks', () => {
+      const pendingTask = store.create(minimal)
+      const inProgressTask = store.create(minimal)
+      moveToInProgress(inProgressTask.id)
+
+      const count = store.hold([pendingTask.id, inProgressTask.id], 'FIX-001')
+
+      expect(count).toBe(1)
+      expect(store.getById(pendingTask.id)!.held_by).toBe('FIX-001')
+      expect(store.getById(inProgressTask.id)!.held_by).toBeNull()
+    })
+
+    it('hold() does not overwrite existing holds', () => {
+      const task = store.create(minimal)
+      store.hold([task.id], 'FIX-001')
+
+      const count = store.hold([task.id], 'FIX-002')
+      expect(count).toBe(0)
+      expect(store.getById(task.id)!.held_by).toBe('FIX-001')
     })
 
     it('unhold() clears held_by on matching tasks', () => {

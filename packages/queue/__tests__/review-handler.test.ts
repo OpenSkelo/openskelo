@@ -1074,6 +1074,60 @@ describe('ReviewHandler', () => {
       expect(taskStore.getById(otherTask.id)!.held_by).toBeNull()
     })
 
+    it('holds pending higher-step tasks even when not directly dependent', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = taskStore.create(makeTaskInput({
+        auto_review: config as unknown as Record<string, unknown>,
+        pipeline_id: 'pl-broad-hold',
+        pipeline_step: 1,
+      }))
+
+      const direct = taskStore.create(makeTaskInput({
+        summary: 'Direct downstream',
+        pipeline_id: 'pl-broad-hold',
+        pipeline_step: 2,
+        depends_on: [parent.id],
+      }))
+
+      const indirect = taskStore.create(makeTaskInput({
+        summary: 'Indirect downstream',
+        pipeline_id: 'pl-broad-hold',
+        pipeline_step: 3,
+      }))
+
+      const inProgress = taskStore.create(makeTaskInput({
+        summary: 'Already running',
+        pipeline_id: 'pl-broad-hold',
+        pipeline_step: 4,
+      }))
+      taskStore.transition(inProgress.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+
+      taskStore.transition(parent.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(parent.id, TaskStatus.REVIEW, { result: 'output' })
+      handler.onTaskReview(taskStore.getById(parent.id)!)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      expect(taskStore.getById(direct.id)!.held_by).toBeTruthy()
+      expect(taskStore.getById(indirect.id)!.held_by).toBeTruthy()
+      expect(taskStore.getById(inProgress.id)!.held_by).toBeNull()
+    })
+
     it('emits pipeline_held webhook event when downstream tasks are held', () => {
       const webhookDispatcher = new WebhookDispatcher([])
       const emitSpy = vi.spyOn(webhookDispatcher, 'emit')

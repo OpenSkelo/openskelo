@@ -275,16 +275,24 @@ export class TaskStore {
     return updated
   }
 
-  hold(taskIds: string[], heldBy: string): void {
-    if (taskIds.length === 0) return
-    const stmt = this.db.prepare('UPDATE tasks SET held_by = ?, updated_at = ? WHERE id = ?')
+  hold(taskIds: string[], heldBy: string): number {
+    if (taskIds.length === 0) return 0
+
+    const stmt = this.db.prepare(
+      'UPDATE tasks SET held_by = ?, updated_at = ? WHERE id = ? AND status = ? AND held_by IS NULL',
+    )
     const now = new Date().toISOString()
+
     const tx = this.db.transaction(() => {
+      let changes = 0
       for (const id of taskIds) {
-        stmt.run(heldBy, now, id)
+        const result = stmt.run(heldBy, now, id, TaskStatus.PENDING)
+        changes += result.changes
       }
+      return changes
     })
-    tx()
+
+    return tx()
   }
 
   unhold(heldBy: string): number {

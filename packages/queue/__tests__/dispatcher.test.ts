@@ -632,6 +632,26 @@ describe('Dispatcher', () => {
     expect(dispatched[0].taskId).toBe(t1.id)
   })
 
+  it('tick() rechecks hold status before claim to avoid stale candidate dispatch', async () => {
+    const adapter = createHangingAdapter('claude-code', ['code'])
+    const task = taskStore.create(makeTaskInput({ summary: 'stale candidate' }))
+
+    const staleCandidate = { ...task, held_by: null }
+    const getNextSpy = vi.spyOn(priorityQueue, 'getNext').mockReturnValue(staleCandidate)
+
+    // Hold after candidate snapshot was taken
+    taskStore.hold([task.id], 'FIX-RACE')
+
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
+    const results = await dispatcher.tick()
+
+    expect(results.filter(r => r.action === 'dispatched')).toHaveLength(0)
+    expect(taskStore.getById(task.id)!.status).toBe(TaskStatus.PENDING)
+    expect(taskStore.getById(task.id)!.held_by).toBe('FIX-RACE')
+
+    getNextSpy.mockRestore()
+  })
+
   // 18. tick() converts Task to TaskInput correctly
   it('tick() converts Task to TaskInput correctly with upstream_results', async () => {
     let capturedInput: TaskInput | null = null
