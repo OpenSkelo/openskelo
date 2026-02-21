@@ -1,5 +1,17 @@
 # CLAUDE.md — OpenSkelo Project Context
 
+## What's Built
+OpenSkelo v2 lean-stack is complete.
+
+Three packages:
+- `@openskelo/gates` — Output verification (expression, regex, word count, JSON schema, command, llm_review, custom gates with retry)
+- `@openskelo/adapters` — AI tool connectors (Claude Code, Codex, Aider, Shell, Raw API)
+- `@openskelo/queue` — Task queue with SQLite, state machine, dispatcher, watchdog, REST API, dashboard, CLI
+
+Run: `npx openskelo init && npx openskelo start`
+
+464 tests across the monorepo. All passing.
+
 ## What This Project Is
 OpenSkelo is an orchestration layer for AI tools.
 
@@ -81,8 +93,8 @@ openskelo/
 - Errors carry structured data (gate results, attempt history) not just messages
 - Never swallow errors silently. If a gate can't evaluate, it fails with reason, it doesn't pass.
 
-## Current Phase
-> **Update this section as you complete phases.**
+## Build Status
+> All phases complete.
 
 **Phase 1: Gates (Days 1-10)**
 - [x] Day 1: Monorepo scaffold + CI
@@ -90,8 +102,6 @@ openskelo/
 - [x] Day 4-5: command gate + llm_review gate
 - [x] Day 6-7: Gate runner + retry engine
 - [x] Day 8: gated() public API
-- [ ] Day 9: Docs + README + examples
-- [ ] Day 10: Publish @openskelo/gates@0.1.0
 
 **Phase 2: Adapters (Days 11-18)**
 - [x] Day 11-12: Base adapter + types
@@ -99,7 +109,6 @@ openskelo/
 - [x] Day 15: raw-api adapter
 - [x] Day 16: shell adapter
 - [x] Day 17: codex + aider adapters
-- [ ] Day 18: Publish @openskelo/adapters@0.1.0
 
 **Phase 3: Queue (Days 19-35)**
 - [x] Day 19-20: SQLite schema + task store
@@ -111,11 +120,10 @@ openskelo/
 - [x] Day 32: REST API
 - [x] Day 33: Audit log
 - [x] Day 34: Dashboard
-- [ ] Day 35: Publish @openskelo/queue@0.1.0
 
 **Phase 4: Integration (Days 36-42)**
-- [ ] Day 36-37: Config loader (YAML)
-- [ ] Day 38-39: CLI tool (npx openskelo)
+- [x] Day 36-37: Config loader (YAML)
+- [x] Day 38-39: CLI tool (npx openskelo)
 - [ ] Day 40-41: OpenClaw integration example
 - [ ] Day 42: Blog post + launch
 

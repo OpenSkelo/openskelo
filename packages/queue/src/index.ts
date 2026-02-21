@@ -51,6 +51,10 @@ export { createDashboardRouter } from './dashboard.js'
 export { createQueue } from './factory.js'
 export type { QueueConfig, Queue } from './factory.js'
 
+// Config
+export { loadConfig, resolveAdapters } from './config.js'
+export type { AdapterYamlConfig } from './config.js'
+
 // Errors
 export {
   TransitionError,
