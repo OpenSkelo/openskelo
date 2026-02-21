@@ -279,32 +279,38 @@ export class ReviewHandler {
     seen.clear()
 
     while (current && !seen.has(current.id)) {
-      seen.add(current.id)
+      const currentTask: Task = current
+      seen.add(currentTask.id)
 
       const reviewChildren = this.taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === currentTask.id)
+
+      const fixChildren = this.taskStore.list({})
         .filter(t =>
-          t.parent_task_id === current!.id
-          && !t.metadata?.is_merge,
+          t.parent_task_id === currentTask.id
+          && t.metadata?.fix_for === currentTask.id,
         )
 
-      const fixChild = this.taskStore.list({})
-        .find(t =>
-          t.parent_task_id === current!.id
-          && t.metadata?.fix_for === current!.id,
-        )
+      const activeFixTaskId: string = String(currentTask.metadata?.fix_task_id ?? '')
+      const fixChild: Task | null = activeFixTaskId
+        ? (fixChildren.find(t => t.id === activeFixTaskId) ?? null)
+        : (fixChildren[fixChildren.length - 1] ?? null)
 
       chain.push({
-        task_id: current.id,
-        summary: current.summary,
-        type: current.type,
-        status: current.status,
-        loop_iteration: current.loop_iteration,
-        result: current.result,
+        task_id: currentTask.id,
+        summary: currentTask.summary,
+        type: currentTask.type,
+        status: currentTask.status,
+        loop_iteration: currentTask.loop_iteration,
+        result: currentTask.result,
         review_children: reviewChildren.map(c => {
           const decision = c.result ? parseReviewDecision(c.result) : null
+          const reviewer = c.metadata?.is_merge
+            ? 'merge-decision'
+            : `${c.metadata?.reviewer_backend ?? 'unknown'}${c.metadata?.reviewer_model ? '/' + c.metadata.reviewer_model : ''}`
           return {
             task_id: c.id,
-            reviewer: `${c.metadata?.reviewer_backend ?? 'unknown'}${c.metadata?.reviewer_model ? '/' + c.metadata.reviewer_model : ''}`,
+            reviewer,
             approved: decision?.approved ?? null,
             reasoning: decision?.reasoning ?? null,
           }
@@ -358,6 +364,24 @@ export class ReviewHandler {
         pipeline_id: task.pipeline_id ?? undefined,
         timestamp: new Date().toISOString(),
         metadata: { loop_iteration: task.loop_iteration, reason: 'hard_cap' },
+      })
+      return
+    }
+
+    const existingIterationChildren = this.taskStore.list({ type: 'review' })
+      .filter(t =>
+        t.parent_task_id === task.id
+        && Number(t.metadata?.review_iteration ?? task.loop_iteration) === task.loop_iteration,
+      )
+
+    if (existingIterationChildren.length > 0) {
+      this.auditLog.logAction({
+        task_id: task.id,
+        action: 'auto_review_children_exist',
+        metadata: {
+          loop_iteration: task.loop_iteration,
+          existing_count: existingIterationChildren.length,
+        },
       })
       return
     }
@@ -460,6 +484,20 @@ export class ReviewHandler {
     if (!parentTask) return
     if (parentTask.status !== TaskStatus.REVIEW) return
 
+    const mergeIteration = Number(mergeTask.metadata?.review_iteration ?? 0)
+    if (mergeIteration !== parentTask.loop_iteration) {
+      this.auditLog.logAction({
+        task_id: parentTask.id,
+        action: 'merge_review_skipped_stale',
+        metadata: {
+          merge_task_id: mergeTask.id,
+          merge_iteration: mergeIteration,
+          parent_iteration: parentTask.loop_iteration,
+        },
+      })
+      return
+    }
+
     const decision = parseReviewDecision(mergeTask.result ?? '')
 
     this.auditLog.logAction({
@@ -509,6 +547,25 @@ export class ReviewHandler {
       }
 
       case 'merge_then_decide': {
+        const existingMerge = this.taskStore.list({ type: 'review' })
+          .find(t =>
+            t.parent_task_id === parentTask.id
+            && Boolean(t.metadata?.is_merge)
+            && Number(t.metadata?.review_iteration ?? 0) === parentTask.loop_iteration,
+          )
+
+        if (existingMerge) {
+          this.auditLog.logAction({
+            task_id: parentTask.id,
+            action: 'merge_review_already_exists',
+            metadata: {
+              merge_task_id: existingMerge.id,
+              review_iteration: parentTask.loop_iteration,
+            },
+          })
+          break
+        }
+
         const mergeBackend = config.merge_backend ?? config.reviewers[0].backend
         const mergePrompt = buildMergePrompt(parentTask, decisions)
 

@@ -281,6 +281,25 @@ describe('ReviewHandler', () => {
       expect(children).toHaveLength(0)
     })
 
+    it('does not create duplicate review children for the same iteration', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [
+          { backend: 'openrouter', model: 'anthropic/claude-sonnet-4-5-20250929' },
+          { backend: 'openrouter', model: 'google/gemini-2.0-flash' },
+        ],
+      })
+      const task = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+
+      handler.onTaskReview(task)
+      handler.onTaskReview(task)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === task.id)
+      expect(children).toHaveLength(2)
+    })
+
     it('auto-approves review child tasks at REVIEW', () => {
       const config = makeAutoReviewConfig()
       const parentTask = createAndTransitionToReview({
@@ -481,6 +500,31 @@ describe('ReviewHandler', () => {
       expect(mergeTasks[0].summary).toContain('Merge review')
     })
 
+    it('does not create duplicate merge task for same iteration', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        strategy: 'merge_then_decide',
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const child = taskStore.list({ type: 'review' })
+        .find(t => t.parent_task_id === parent.id && !t.metadata?.is_merge)!
+
+      completeReviewChild(child.id, '{"approved": true}')
+
+      // Call twice to simulate duplicate completion callbacks.
+      handler.onReviewChildComplete(taskStore.getById(child.id)!)
+      handler.onReviewChildComplete(taskStore.getById(child.id)!)
+
+      const mergeTasks = taskStore.list({ type: 'review' })
+        .filter(t => t.metadata?.is_merge && t.parent_task_id === parent.id)
+      expect(mergeTasks).toHaveLength(1)
+    })
+
     it('approves parent when merge task approves', () => {
       const config = makeAutoReviewConfig({
         reviewers: [{ backend: 'openrouter', model: 'model-a' }],
@@ -507,6 +551,39 @@ describe('ReviewHandler', () => {
 
       const updatedParent = taskStore.getById(parent.id)!
       expect(updatedParent.status).toBe(TaskStatus.DONE)
+    })
+
+    it('ignores stale merge decision from old iteration', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        strategy: 'merge_then_decide',
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 1,
+      })
+
+      const staleMerge = taskStore.create(makeTaskInput({
+        type: 'review',
+        summary: 'stale merge',
+        prompt: 'stale',
+        backend: 'openrouter/model-a',
+        parent_task_id: parent.id,
+        metadata: {
+          is_merge: true,
+          review_iteration: 0,
+        },
+      }))
+
+      completeReviewChild(staleMerge.id, '{"approved": false, "reasoning": "stale reject"}')
+      handler.onReviewChildComplete(taskStore.getById(staleMerge.id)!)
+
+      const updatedParent = taskStore.getById(parent.id)!
+      expect(updatedParent.status).toBe(TaskStatus.REVIEW)
+      expect(updatedParent.loop_iteration).toBe(1)
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(0)
     })
 
     it('creates fix task when merge rejects', () => {
