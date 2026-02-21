@@ -613,6 +613,51 @@ describe('ReviewHandler', () => {
       expect(updatedDownstream.depends_on).toContain(fixTasks[0].id)
     })
 
+    it('rewires all downstream dependents in the same pipeline', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = taskStore.create(makeTaskInput({
+        auto_review: config as unknown as Record<string, unknown>,
+        pipeline_id: 'pl-fanout',
+        pipeline_step: 0,
+      }))
+      const downstreamA = taskStore.create(makeTaskInput({
+        summary: 'Downstream A',
+        pipeline_id: 'pl-fanout',
+        pipeline_step: 1,
+        depends_on: [parent.id],
+      }))
+      const downstreamB = taskStore.create(makeTaskInput({
+        summary: 'Downstream B',
+        pipeline_id: 'pl-fanout',
+        pipeline_step: 1,
+        depends_on: [parent.id],
+      }))
+
+      taskStore.transition(parent.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(parent.id, TaskStatus.REVIEW, { result: 'output' })
+      handler.onTaskReview(taskStore.getById(parent.id)!)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTask = taskStore.list({}).find(t => t.metadata?.fix_for === parent.id)!
+
+      expect(taskStore.getById(downstreamA.id)!.depends_on).toContain(fixTask.id)
+      expect(taskStore.getById(downstreamB.id)!.depends_on).toContain(fixTask.id)
+    })
+
     it('includes original prompt, result, and review findings in fix prompt', () => {
       const config = makeAutoReviewConfig({
         reviewers: [{ backend: 'openrouter', model: 'model-a' }],
@@ -819,6 +864,31 @@ describe('ReviewHandler', () => {
       handler.onFixComplete(fixTask)
 
       expect(taskStore.getById(parent.id)!.status).toBe(TaskStatus.DONE)
+    })
+
+    it('ignores stale fix task when parent points to a newer active fix', () => {
+      const parent = createAndTransitionToReview({
+        metadata: { fix_task_id: 'newer-fix-id' },
+      })
+
+      const staleFix = taskStore.create(makeTaskInput({
+        summary: 'stale fix',
+        parent_task_id: parent.id,
+        metadata: { fix_for: parent.id },
+      }))
+
+      taskStore.transition(staleFix.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(staleFix.id, TaskStatus.REVIEW, { result: 'stale fix output' })
+      taskStore.transition(staleFix.id, TaskStatus.DONE)
+
+      handler.onFixComplete(taskStore.getById(staleFix.id)!)
+
+      const updatedParent = taskStore.getById(parent.id)!
+      expect(updatedParent.status).toBe(TaskStatus.REVIEW)
+      expect(updatedParent.result).toBe('Task output here')
     })
   })
 

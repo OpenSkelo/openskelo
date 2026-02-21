@@ -610,6 +610,19 @@ describe('REST API Router', () => {
     expect(updatedTarget.depends_on).toContain(res.body.id)
   })
 
+  it('POST /tasks with missing inject_before target returns 400', async () => {
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        ...makeTaskInput({ summary: 'bad inject task' }),
+        inject_before: 'MISSING-TASK',
+        priority_boost: -10,
+      })
+      .expect(400)
+
+    expect(res.body.error).toContain('inject_before target task not found')
+  })
+
   // Schedule endpoint
   it('GET /schedules returns empty array when no scheduler', async () => {
     const res = await request(app)

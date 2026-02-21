@@ -192,10 +192,12 @@ export class TaskStore {
 
     if (input.inject_before) {
       const target = this.getById(input.inject_before)
-      if (target) {
-        const newDeps = [...target.depends_on, task.id]
-        this.update(target.id, { depends_on: newDeps })
+      if (!target) {
+        throw new Error(`inject_before target task not found: ${input.inject_before}`)
       }
+
+      const newDeps = [...new Set([...target.depends_on, task.id])]
+      this.update(target.id, { depends_on: newDeps })
     }
 
     return task

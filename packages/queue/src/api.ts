@@ -130,6 +130,11 @@ export function createApiRouter(
         : taskStore.create(body)
       res.status(201).json(task)
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Internal server error'
+      if (msg.includes('inject_before target task not found')) {
+        res.status(400).json({ error: msg })
+        return
+      }
       res.status(500).json({ error: 'Internal server error' })
     }
   })

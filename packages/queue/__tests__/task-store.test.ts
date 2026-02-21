@@ -318,6 +318,14 @@ describe('TaskStore', () => {
       expect(task.priority).toBe(0)
     })
 
+    it('throws when inject_before target does not exist', () => {
+      expect(() => store.inject({
+        ...minimal,
+        summary: 'Bad inject',
+        inject_before: 'MISSING-TASK',
+      })).toThrow('inject_before target task not found')
+    })
+
     it('priority_boost overrides priority', () => {
       const task = store.inject({
         ...minimal,

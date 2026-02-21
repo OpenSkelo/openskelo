@@ -427,8 +427,25 @@ export class ReviewHandler {
     if (!parent) return
     if (parent.status !== TaskStatus.REVIEW) return
 
+    const activeFixTaskId = String(parent.metadata?.fix_task_id ?? '')
+    if (activeFixTaskId && activeFixTaskId !== fixTask.id) {
+      this.auditLog.logAction({
+        task_id: parent.id,
+        action: 'fix_resolution_skipped_stale',
+        metadata: {
+          expected_fix_task_id: activeFixTaskId,
+          received_fix_task_id: fixTask.id,
+        },
+      })
+      return
+    }
+
+    const mergedMetadata = { ...parent.metadata }
+    delete mergedMetadata.fix_task_id
+
     this.taskStore.update(parent.id, {
       result: fixTask.result,
+      metadata: mergedMetadata,
     })
 
     this.taskStore.transition(parent.id, TaskStatus.DONE)
@@ -463,14 +480,12 @@ export class ReviewHandler {
     const issues = decision.feedback ? [decision.feedback] : []
     const fixPrompt = buildFixPrompt(parent, decision.reasoning ?? '', issues)
 
-    // Find downstream task that depends on parent in the same pipeline
-    let downstream: Task | undefined
-    if (parent.pipeline_id) {
-      const allTasks = this.taskStore.list({})
-      downstream = allTasks.find(
-        t => t.depends_on?.includes(parent.id) && t.pipeline_id === parent.pipeline_id,
-      )
-    }
+    // Find all downstream tasks that depend on parent in the same pipeline.
+    const downstreamTasks = parent.pipeline_id
+      ? this.taskStore
+        .list({})
+        .filter(t => t.pipeline_id === parent.pipeline_id && t.depends_on?.includes(parent.id))
+      : []
 
     const injectInput: InjectTaskInput = {
       type: parent.type,
@@ -481,7 +496,7 @@ export class ReviewHandler {
       pipeline_id: parent.pipeline_id ?? undefined,
       pipeline_step: parent.pipeline_step ?? undefined,
       priority_boost: -10,
-      inject_before: downstream?.id,
+      inject_before: downstreamTasks[0]?.id,
       auto_review: parent.auto_review ?? undefined,
       loop_iteration: parent.loop_iteration + 1,
       metadata: {
@@ -492,12 +507,19 @@ export class ReviewHandler {
 
     const fixTask = this.taskStore.inject(injectInput)
 
+    // Rewire any additional downstream tasks to depend on the injected fix.
+    for (const downstream of downstreamTasks.slice(1)) {
+      const nextDeps = [...new Set([...downstream.depends_on, fixTask.id])]
+      this.taskStore.update(downstream.id, { depends_on: nextDeps })
+    }
+
     this.auditLog.logAction({
       task_id: parent.id,
       action: 'fix_injected',
       metadata: {
         fix_task_id: fixTask.id,
-        blocked_downstream: downstream?.id,
+        blocked_downstream: downstreamTasks.map(task => task.id),
+        blocked_downstream_count: downstreamTasks.length,
         priority: -10,
       },
     })
