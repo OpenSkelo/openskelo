@@ -113,8 +113,9 @@ export abstract class BaseApiAdapter implements ExecutionAdapter {
       }
 
       const retryAfter = response.headers?.get?.('retry-after')
-      const delayMs = retryAfter
-        ? Math.min(parseInt(retryAfter, 10) * 1000, 30000)
+      const retryAfterSeconds = retryAfter ? Number.parseInt(retryAfter, 10) : Number.NaN
+      const delayMs = Number.isFinite(retryAfterSeconds)
+        ? Math.min(retryAfterSeconds * 1000, 30000)
         : Math.min(2 ** attempt * 1000, 10000)
 
       await this.delay(delayMs)

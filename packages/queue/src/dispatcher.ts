@@ -123,11 +123,11 @@ export class Dispatcher {
           continue
         }
 
-        // Backend routing: slash-style backends route to a specific adapter
-        if (next.backend.includes('/')) {
-          const targetAdapter = next.backend.split('/')[0]
-          if (targetAdapter !== adapter.name) continue
-        }
+        // Backend routing: task backend always targets a specific adapter.
+        const targetAdapter = next.backend.includes('/')
+          ? next.backend.split('/')[0]
+          : next.backend
+        if (targetAdapter !== adapter.name) continue
 
         candidate = next
         break

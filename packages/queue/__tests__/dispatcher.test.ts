@@ -186,7 +186,7 @@ describe('Dispatcher', () => {
     const adapter1 = createMockAdapter('adapter-1', ['code'])
     const adapter2 = createMockAdapter('adapter-2', ['code'])
 
-    taskStore.create(makeTaskInput())
+    taskStore.create(makeTaskInput({ backend: 'adapter-1' }))
 
     const dispatcher = new Dispatcher(
       taskStore, priorityQueue, auditLog,
@@ -517,6 +517,29 @@ describe('Dispatcher', () => {
     const dispatched = r.filter(r => r.action === 'dispatched')
     expect(dispatched).toHaveLength(1)
     expect(dispatched[0].taskId).toBe(tasks[2].id)
+  })
+
+  // Backend routing: plain backend routes to matching adapter by name
+  it('tick() routes plain backend to matching adapter', async () => {
+    const codeAdapter = createHangingAdapter('claude-code', ['code'])
+    const openrouterAdapter = createHangingAdapter('openrouter', ['code'])
+
+    const task = taskStore.create(makeTaskInput({
+      type: 'code',
+      backend: 'openrouter',
+    }))
+
+    const dispatcher = new Dispatcher(
+      taskStore, priorityQueue, auditLog,
+      [codeAdapter, openrouterAdapter],
+      DEFAULT_CONFIG,
+    )
+    const results = await dispatcher.tick()
+
+    const dispatched = results.filter(r => r.action === 'dispatched')
+    expect(dispatched).toHaveLength(1)
+    expect(dispatched[0].adapterId).toBe('openrouter')
+    expect(dispatched[0].taskId).toBe(task.id)
   })
 
   // Backend model routing: slash-style backend routes to correct adapter

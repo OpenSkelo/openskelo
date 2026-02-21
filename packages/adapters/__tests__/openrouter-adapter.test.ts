@@ -65,6 +65,16 @@ describe('OpenRouterAdapter', () => {
     expect(headers['content-type']).toBe('application/json')
   })
 
+  it('returns error when OPENROUTER_API_KEY is missing', async () => {
+    const result = await adapter.execute(makeTask({
+      backend_config: { env: {} },
+    }))
+
+    expect(result.exit_code).toBe(1)
+    expect(result.output).toContain('OPENROUTER_API_KEY is required')
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
+
   it('sends correct request body with model and messages', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
@@ -134,16 +144,26 @@ describe('OpenRouterAdapter', () => {
     expect(result.cost!.total_tokens).toBe(150)
   })
 
-  it('handles empty choices array', async () => {
+  it('returns error when choices array is empty', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ choices: [] }),
     })
 
     const result = await adapter.execute(makeTask())
-    expect(result.output).toBe('')
-    expect(result.exit_code).toBe(0)
-    expect(result.cost).toBeUndefined()
+    expect(result.exit_code).toBe(1)
+    expect(result.output).toContain('No choices in OpenRouter response')
+  })
+
+  it('returns error when choice content is missing', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ choices: [{ message: {} }] }),
+    })
+
+    const result = await adapter.execute(makeTask())
+    expect(result.exit_code).toBe(1)
+    expect(result.output).toContain('Missing content in OpenRouter response')
   })
 
   it('handles missing usage data', async () => {

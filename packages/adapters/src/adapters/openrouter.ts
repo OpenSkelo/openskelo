@@ -26,7 +26,11 @@ export class OpenRouterAdapter extends BaseApiAdapter {
   buildRequestHeaders(_task: TaskInput, config: AdapterConfig): Record<string, string> {
     const apiKey = config.env?.OPENROUTER_API_KEY
       ?? process.env.OPENROUTER_API_KEY
-      ?? ''
+
+    if (!apiKey) {
+      throw new Error('OPENROUTER_API_KEY is required')
+    }
+
     return {
       Authorization: `Bearer ${apiKey}`,
     }
@@ -51,7 +55,14 @@ export class OpenRouterAdapter extends BaseApiAdapter {
       }
     }
 
-    const text = d.choices?.[0]?.message?.content ?? ''
+    if (!Array.isArray(d.choices) || d.choices.length === 0) {
+      throw new Error('No choices in OpenRouter response')
+    }
+
+    const text = d.choices[0]?.message?.content
+    if (!text) {
+      throw new Error('Missing content in OpenRouter response')
+    }
 
     let structured: unknown = null
     try {

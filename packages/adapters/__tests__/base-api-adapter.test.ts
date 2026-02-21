@@ -134,6 +134,26 @@ describe('BaseApiAdapter', () => {
     expect(result.exit_code).toBe(0)
   })
 
+  it('execute falls back to exponential delay when retry-after is invalid', async () => {
+    const delaySpy = vi.spyOn(adapter as never, 'delay').mockResolvedValue(undefined)
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: { get: () => 'not-a-number' },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ text: 'ok' }),
+      })
+
+    const result = await adapter.execute(makeTask())
+
+    expect(result.exit_code).toBe(0)
+    expect(delaySpy).toHaveBeenCalledWith(1000)
+  })
+
   it('execute returns 429 error after max retries', async () => {
     vi.spyOn(adapter as never, 'delay').mockResolvedValue(undefined)
 
