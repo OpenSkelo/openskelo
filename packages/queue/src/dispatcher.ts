@@ -10,6 +10,7 @@ export interface DispatcherConfig {
   lease_ttl_ms: number
   heartbeat_interval_ms: number
   wip_limits: Record<string, number>
+  onError?: (error: Error) => void
 }
 
 export interface DispatchResult {
@@ -119,15 +120,11 @@ export class Dispatcher {
         continue
       }
 
-      // Claim: transition PENDING → IN_PROGRESS
+      // Claim: transition PENDING → IN_PROGRESS atomically with lease fields
       try {
-        this.taskStore.transition(candidate.id, TaskStatus.IN_PROGRESS, {
-          lease_owner: adapter.name,
-        })
-
-        // Set lease_owner and lease_expires_at manually
         const leaseExpiry = new Date(Date.now() + this.config.lease_ttl_ms).toISOString()
-        this.taskStore.update(candidate.id, {
+
+        this.taskStore.transition(candidate.id, TaskStatus.IN_PROGRESS, {
           lease_owner: adapter.name,
           lease_expires_at: leaseExpiry,
         })
@@ -216,7 +213,9 @@ export class Dispatcher {
   start(): void {
     if (this.intervalId) return
     this.intervalId = setInterval(() => {
-      void this.tick()
+      void this.tick().catch((err: unknown) => {
+        this.handleError(err)
+      })
     }, this.config.poll_interval_ms)
   }
 
@@ -225,6 +224,11 @@ export class Dispatcher {
       clearInterval(this.intervalId)
       this.intervalId = null
     }
+  }
+
+  private handleError(err: unknown): void {
+    const error = err instanceof Error ? err : new Error(String(err))
+    this.config.onError?.(error)
   }
 
   heartbeat(taskId: string): void {

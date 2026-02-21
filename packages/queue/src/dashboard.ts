@@ -1,6 +1,15 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 
+export function escapeDashboardHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -28,7 +37,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       font-size: 13px;
       color: #94a3b8;
     }
-    .health .ok { color: #4ade80; }
     .board {
       display: flex;
       gap: 16px;
@@ -82,6 +90,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .card .meta {
       font-size: 11px;
       color: #64748b;
+      margin-top: 2px;
     }
     .col-PENDING .column-header { border-color: #f59e0b; }
     .col-IN_PROGRESS .column-header { border-color: #3b82f6; }
@@ -106,13 +115,27 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <script>
     const STATUSES = ['PENDING', 'IN_PROGRESS', 'REVIEW', 'DONE', 'BLOCKED']
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+    }
+
+    function preview(value, max = 50) {
+      const text = String(value ?? '')
+      return text.length > max ? text.slice(0, max) + '…' : text
+    }
+
     function renderBoard(tasks, health) {
       const board = document.getElementById('board')
       const healthEl = document.getElementById('health')
 
       if (health && health.status === 'ok') {
         const total = Object.values(health.counts).reduce((a, b) => a + b, 0)
-        healthEl.innerHTML = 'Status: <span class="ok">OK</span> | Total: ' + total
+        healthEl.textContent = 'Status: OK | Total: ' + total
       }
 
       const grouped = {}
@@ -122,33 +145,42 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       })
 
       board.innerHTML = STATUSES.map(status => {
+        const safeStatus = escapeHtml(status)
         const items = grouped[status]
         const cards = items.length
-          ? items.map(t =>
-              '<div class="card">' +
-                '<div class="id">' + t.id.slice(0, 10) + '...</div>' +
-                '<div class="summary">' + escapeHtml(t.summary) + '</div>' +
-                '<div class="meta">' + t.type + ' | P' + t.priority +
-                  (t.lease_owner ? ' | ' + escapeHtml(t.lease_owner) : '') +
+          ? items.map(t => {
+              const id = escapeHtml(String(t.id ?? '')).slice(0, 10) + '...'
+              const summary = escapeHtml(t.summary)
+              const type = escapeHtml(t.type)
+              const taskStatus = escapeHtml(t.status)
+              const backend = escapeHtml(t.backend)
+              const leaseOwner = escapeHtml(t.lease_owner)
+              const prompt = escapeHtml(preview(t.prompt))
+              const result = escapeHtml(preview(t.result))
+              const metadata = escapeHtml(preview(JSON.stringify(t.metadata ?? {}), 80))
+
+              return '<div class="card">' +
+                '<div class="id">' + id + '</div>' +
+                '<div class="summary">' + summary + '</div>' +
+                '<div class="meta">' +
+                  type + ' | ' + taskStatus + ' | ' + backend +
+                  (leaseOwner ? ' | ' + leaseOwner : '') +
                 '</div>' +
+                '<div class="meta">Prompt: ' + prompt + '</div>' +
+                '<div class="meta">Result: ' + result + '</div>' +
+                '<div class="meta">Metadata: ' + metadata + '</div>' +
               '</div>'
-            ).join('')
+            }).join('')
           : '<div class="empty">No tasks</div>'
 
-        return '<div class="column col-' + status + '">' +
+        return '<div class="column col-' + safeStatus + '">' +
           '<div class="column-header">' +
-            '<span>' + status.replace('_', ' ') + '</span>' +
+            '<span>' + escapeHtml(status.replace('_', ' ')) + '</span>' +
             '<span class="count">' + items.length + '</span>' +
           '</div>' +
           cards +
         '</div>'
       }).join('')
-    }
-
-    function escapeHtml(str) {
-      const div = document.createElement('div')
-      div.textContent = str
-      return div.innerHTML
     }
 
     async function refresh() {

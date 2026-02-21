@@ -24,10 +24,12 @@ export interface QueueConfig {
   }
   dispatcher?: {
     poll_interval_seconds?: number
+    on_error?: (error: Error) => void
   }
   watchdog?: {
     interval_seconds?: number
     on_lease_expire?: 'requeue' | 'block'
+    on_error?: (error: Error) => void
   }
   server?: {
     port?: number
@@ -64,12 +66,14 @@ export function createQueue(config: QueueConfig): Queue {
     lease_ttl_ms: leaseTtlMs,
     heartbeat_interval_ms: heartbeatIntervalMs,
     wip_limits: config.wip_limits ?? { default: 1 },
+    onError: config.dispatcher?.on_error,
   }
 
   const watchdogConfig: WatchdogConfig = {
     interval_ms: (config.watchdog?.interval_seconds ?? 30) * 1000,
     grace_period_ms: gracePeriodMs,
     on_lease_expire: config.watchdog?.on_lease_expire ?? 'requeue',
+    onError: config.watchdog?.on_error,
   }
 
   const dispatcher = new Dispatcher(

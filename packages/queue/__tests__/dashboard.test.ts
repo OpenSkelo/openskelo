@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import express from 'express'
 import request from 'supertest'
-import { createDashboardRouter } from '../src/dashboard.js'
+import { createDashboardRouter, escapeDashboardHtml } from '../src/dashboard.js'
 
 function createTestApp() {
   const app = express()
@@ -47,5 +47,23 @@ describe('Dashboard', () => {
 
     const html = res.text
     expect(html).toMatch(/setInterval|setTimeout/)
+  })
+
+  it('escapes task type values that contain script tags', () => {
+    const payload = '<script>alert(1)</script>'
+    const escaped = escapeDashboardHtml(payload)
+    expect(escaped).toBe('&lt;script&gt;alert(1)&lt;/script&gt;')
+    expect(escaped).not.toContain('<script>')
+  })
+
+  it('Dashboard script escapes task type before HTML injection', async () => {
+    const app = createTestApp()
+    const res = await request(app)
+      .get('/dashboard')
+      .expect(200)
+
+    const html = res.text
+    expect(html).toContain('const type = escapeHtml(t.type)')
+    expect(html).not.toContain("' + t.type + '")
   })
 })

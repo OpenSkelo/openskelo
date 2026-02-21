@@ -384,6 +384,33 @@ describe('Dispatcher', () => {
     vi.useRealTimers()
   })
 
+  it('start() keeps running after tick() throws', async () => {
+    vi.useFakeTimers()
+
+    const adapter = createMockAdapter('claude-code', ['code'])
+    const onError = vi.fn()
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], {
+      ...DEFAULT_CONFIG,
+      onError,
+    })
+
+    const tickSpy = vi.spyOn(dispatcher, 'tick')
+      .mockRejectedValueOnce(new Error('dispatcher boom'))
+      .mockResolvedValueOnce([] as DispatchResult[])
+
+    dispatcher.start()
+    vi.advanceTimersByTime(DEFAULT_CONFIG.poll_interval_ms)
+    await Promise.resolve()
+    vi.advanceTimersByTime(DEFAULT_CONFIG.poll_interval_ms)
+    await Promise.resolve()
+
+    expect(tickSpy).toHaveBeenCalledTimes(2)
+    expect(onError).toHaveBeenCalledTimes(1)
+
+    dispatcher.stop()
+    vi.useRealTimers()
+  })
+
   // 17. WIP limit uses 'default' fallback
   it('WIP limit uses default fallback for unknown task types', async () => {
     const adapter = createMockAdapter('claude-code', ['code'])

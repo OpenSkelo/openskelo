@@ -111,6 +111,17 @@ gates:
 `
 }
 
+export function buildRequestHeaders(apiKey?: string, includeJson = false): Record<string, string> {
+  const headers: Record<string, string> = {}
+  if (includeJson) {
+    headers['Content-Type'] = 'application/json'
+  }
+  if (apiKey) {
+    headers['x-api-key'] = apiKey
+  }
+  return headers
+}
+
 function printHelp(): void {
   console.log(`
 OpenSkelo — AI Task Orchestrator
@@ -172,7 +183,9 @@ async function cmdStatus(flags: Record<string, string>): Promise<void> {
   const host = config.server?.host ?? '127.0.0.1'
 
   try {
-    const res = await fetch(`http://${host}:${port}/health`)
+    const res = await fetch(`http://${host}:${port}/health`, {
+      headers: buildRequestHeaders(config.server?.api_key),
+    })
     const data = await res.json() as { status: string; counts: Record<string, number> }
 
     console.log(`Status: ${data.status}`)
@@ -207,7 +220,7 @@ async function cmdAdd(flags: Record<string, string>): Promise<void> {
     const body = JSON.parse(input)
     const res = await fetch(`http://${host}:${port}/tasks`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildRequestHeaders(config.server?.api_key, true),
       body: JSON.stringify(body),
     })
     const task = await res.json() as Record<string, unknown>
@@ -231,7 +244,9 @@ async function cmdList(flags: Record<string, string>): Promise<void> {
       url += `?status=${encodeURIComponent(flags.status)}`
     }
 
-    const res = await fetch(url)
+    const res = await fetch(url, {
+      headers: buildRequestHeaders(config.server?.api_key),
+    })
     const tasks = await res.json() as Array<Record<string, unknown>>
 
     if (tasks.length === 0) {

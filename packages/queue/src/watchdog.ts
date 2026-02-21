@@ -6,6 +6,7 @@ export interface WatchdogConfig {
   interval_ms: number
   grace_period_ms: number
   on_lease_expire: 'requeue' | 'block'
+  onError?: (error: Error) => void
 }
 
 export interface WatchdogResult {
@@ -40,15 +41,19 @@ export class Watchdog {
     })
 
     for (const task of inProgressTasks) {
-      // Skip tasks without a lease expiry
-      if (!task.lease_expires_at) continue
+      const hasLease = Boolean(task.lease_expires_at)
+      const leaseExpiresAt = hasLease
+        ? new Date(task.lease_expires_at as string).getTime()
+        : Number.NEGATIVE_INFINITY
 
-      const leaseExpiresAt = new Date(task.lease_expires_at).getTime()
-
-      // Check if lease + grace period has elapsed
-      if (leaseExpiresAt + this.config.grace_period_ms >= now) {
+      // Recover both expired leases and anomalous IN_PROGRESS tasks with no lease.
+      if (hasLease && leaseExpiresAt + this.config.grace_period_ms >= now) {
         continue
       }
+
+      const leaseIssue = hasLease
+        ? `lease expired at ${task.lease_expires_at}`
+        : 'missing lease_expires_at while IN_PROGRESS'
 
       // Determine action: block if config says block, or if attempts exhausted
       const shouldBlock = this.config.on_lease_expire === 'block'
@@ -60,9 +65,9 @@ export class Watchdog {
           reason: `Watchdog: ${
             task.attempt_count >= task.max_attempts
               ? `max attempts exhausted (${task.attempt_count}/${task.max_attempts})`
-              : 'lease expired, configured to block'
+              : leaseIssue
           }`,
-          last_error: `Watchdog: lease expired at ${task.lease_expires_at}`,
+          last_error: `Watchdog: ${leaseIssue}`,
         })
 
         this.auditLog.logAction({
@@ -75,18 +80,19 @@ export class Watchdog {
             lease_expires_at: task.lease_expires_at,
             attempt_count: task.attempt_count,
             max_attempts: task.max_attempts,
+            missing_lease: !hasLease,
           },
         })
 
         results.push({
           taskId: task.id,
           action: 'blocked',
-          reason: `Lease expired at ${task.lease_expires_at}, task blocked`,
+          reason: `Watchdog recovery: ${leaseIssue}; task blocked`,
         })
       } else {
         // Transition to PENDING (requeue)
         this.taskStore.transition(task.id, TaskStatus.PENDING, {
-          last_error: `Watchdog: lease expired at ${task.lease_expires_at}`,
+          last_error: `Watchdog: ${leaseIssue}`,
         })
 
         this.auditLog.logAction({
@@ -99,13 +105,14 @@ export class Watchdog {
             lease_expires_at: task.lease_expires_at,
             attempt_count: task.attempt_count,
             max_attempts: task.max_attempts,
+            missing_lease: !hasLease,
           },
         })
 
         results.push({
           taskId: task.id,
           action: 'requeued',
-          reason: `Lease expired at ${task.lease_expires_at}, task requeued`,
+          reason: `Watchdog recovery: ${leaseIssue}; task requeued`,
         })
       }
     }
@@ -116,7 +123,12 @@ export class Watchdog {
   start(): void {
     if (this.intervalId) return
     this.intervalId = setInterval(() => {
-      this.tick()
+      try {
+        this.tick()
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err))
+        this.config.onError?.(error)
+      }
     }, this.config.interval_ms)
   }
 

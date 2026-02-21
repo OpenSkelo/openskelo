@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { parseArgs, generateTemplate } from '../src/cli.js'
+import { parseArgs, generateTemplate, buildRequestHeaders } from '../src/cli.js'
 
 describe('CLI arg parsing', () => {
   it('parses "init" command', () => {
@@ -45,6 +45,12 @@ describe('CLI arg parsing', () => {
   it('defaults to "help" for unknown command', () => {
     const result = parseArgs(['node', 'openskelo'])
     expect(result.command).toBe('help')
+  })
+
+  it('CLI request headers include x-api-key when config has api_key', () => {
+    const headers = buildRequestHeaders('secret-key', true)
+    expect(headers['x-api-key']).toBe('secret-key')
+    expect(headers['Content-Type']).toBe('application/json')
   })
 })
 

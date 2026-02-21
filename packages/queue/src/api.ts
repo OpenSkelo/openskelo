@@ -87,12 +87,8 @@ export function createApiRouter(
         return
       }
 
-      taskStore.transition(next.id, TaskStatus.IN_PROGRESS, {
-        lease_owner,
-      })
-
       const leaseExpiresAt = new Date(Date.now() + leaseTtlMs).toISOString()
-      const task = taskStore.update(next.id, {
+      const task = taskStore.transition(next.id, TaskStatus.IN_PROGRESS, {
         lease_owner,
         lease_expires_at: leaseExpiresAt,
       })

@@ -10,6 +10,7 @@ export enum TaskStatus {
 
 export interface TransitionContext {
   lease_owner?: string
+  lease_expires_at?: string
   result?: string
   evidence_ref?: string
   feedback?: { what: string; where: string; fix: string }
@@ -106,6 +107,12 @@ export function applyTransition(
   const updates: Record<string, unknown> = {
     status: to,
     updated_at: new Date().toISOString(),
+  }
+
+  // PENDING → IN_PROGRESS: set lease fields atomically
+  if (task.status === TaskStatus.PENDING && to === TaskStatus.IN_PROGRESS) {
+    if (context.lease_owner) updates.lease_owner = context.lease_owner
+    if (context.lease_expires_at) updates.lease_expires_at = context.lease_expires_at
   }
 
   // REVIEW → PENDING: increment bounce_count

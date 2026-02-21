@@ -151,6 +151,21 @@ describe('State Machine', () => {
   })
 
   describe('applyTransition', () => {
+    it('sets lease_owner and lease_expires_at on PENDING → IN_PROGRESS', () => {
+      const leaseExpiry = new Date(Date.now() + 60000).toISOString()
+      const updates = applyTransition(
+        { status: TaskStatus.PENDING },
+        TaskStatus.IN_PROGRESS,
+        {
+          lease_owner: 'adapter-1',
+          lease_expires_at: leaseExpiry,
+        },
+      )
+      expect(updates.lease_owner).toBe('adapter-1')
+      expect(updates.lease_expires_at).toBe(leaseExpiry)
+      expect(updates.status).toBe(TaskStatus.IN_PROGRESS)
+    })
+
     it('increments bounce_count on REVIEW → PENDING', () => {
       const updates = applyTransition(
         { status: TaskStatus.REVIEW, bounce_count: 1, max_bounces: 3 },

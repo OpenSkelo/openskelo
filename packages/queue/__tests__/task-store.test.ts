@@ -183,6 +183,20 @@ describe('TaskStore', () => {
       expect(done.status).toBe(TaskStatus.DONE)
     })
 
+    it('sets lease_owner and lease_expires_at on PENDING → IN_PROGRESS transition', () => {
+      const task = store.create(minimal)
+      const leaseExpiry = new Date(Date.now() + 60000).toISOString()
+
+      const inProgress = store.transition(task.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'adapter-1',
+        lease_expires_at: leaseExpiry,
+      })
+
+      expect(inProgress.status).toBe(TaskStatus.IN_PROGRESS)
+      expect(inProgress.lease_owner).toBe('adapter-1')
+      expect(inProgress.lease_expires_at).toBe(leaseExpiry)
+    })
+
     it('rejects direct status updates via update()', () => {
       const task = store.create(minimal)
       expect(() => store.update(task.id, { status: TaskStatus.DONE } as never)).toThrow(

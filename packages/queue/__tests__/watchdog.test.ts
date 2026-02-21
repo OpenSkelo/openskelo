@@ -113,18 +113,23 @@ describe('Watchdog', () => {
     expect(updated.status).toBe(TaskStatus.IN_PROGRESS)
   })
 
-  // 4. tick() ignores tasks without lease_expires_at
-  it('tick() ignores tasks without lease_expires_at', () => {
+  // 4. tick() recovers IN_PROGRESS tasks without lease_expires_at
+  it('tick() recovers IN_PROGRESS task with null lease_expires_at', () => {
     const task = taskStore.create(makeTaskInput())
     taskStore.transition(task.id, TaskStatus.IN_PROGRESS, { lease_owner: 'test-adapter' })
 
-    // Explicitly clear lease_expires_at
+    // Corrupt/missing lease: should be recovered immediately
     taskStore.update(task.id, { lease_expires_at: null as unknown as string })
 
     const watchdog = new Watchdog(taskStore, auditLog, DEFAULT_CONFIG)
     const results = watchdog.tick()
 
-    expect(results).toHaveLength(0)
+    expect(results).toHaveLength(1)
+    expect(results[0].taskId).toBe(task.id)
+    expect(results[0].action).toBe('requeued')
+
+    const updated = taskStore.getById(task.id)!
+    expect(updated.status).toBe(TaskStatus.PENDING)
   })
 
   // 5. tick() ignores PENDING tasks
@@ -202,6 +207,31 @@ describe('Watchdog', () => {
     vi.advanceTimersByTime(DEFAULT_CONFIG.interval_ms * 5)
     expect(tickSpy).toHaveBeenCalledTimes(1)
 
+    vi.useRealTimers()
+  })
+
+  it('start() keeps running after tick() throws', () => {
+    vi.useFakeTimers()
+
+    const onError = vi.fn()
+    const watchdog = new Watchdog(taskStore, auditLog, {
+      ...DEFAULT_CONFIG,
+      onError,
+    })
+    const tickSpy = vi.spyOn(watchdog, 'tick')
+      .mockImplementationOnce(() => {
+        throw new Error('watchdog boom')
+      })
+      .mockReturnValueOnce([])
+
+    watchdog.start()
+    vi.advanceTimersByTime(DEFAULT_CONFIG.interval_ms)
+    vi.advanceTimersByTime(DEFAULT_CONFIG.interval_ms)
+
+    expect(tickSpy).toHaveBeenCalledTimes(2)
+    expect(onError).toHaveBeenCalledTimes(1)
+
+    watchdog.stop()
     vi.useRealTimers()
   })
 
