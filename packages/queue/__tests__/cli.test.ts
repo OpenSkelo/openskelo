@@ -8,6 +8,7 @@ import {
   buildRequestHeaders,
   buildInlineTaskBody,
   buildBounceBody,
+  buildRunBody,
   getMissingInlineFields,
   isInlineAddAttempt,
 } from '../src/cli.js'
@@ -252,5 +253,101 @@ describe('CLI init', () => {
     const filePath = path.join(tmpDir, 'openskelo.yaml')
     fs.writeFileSync(filePath, 'existing')
     expect(fs.existsSync(filePath)).toBe(true)
+  })
+
+  it('template includes chat_id in webhook example', () => {
+    const template = generateTemplate()
+    expect(template).toContain('chat_id')
+  })
+
+  it('template includes schedules section', () => {
+    const template = generateTemplate()
+    expect(template).toContain('schedules')
+    expect(template).toContain('every: 24h')
+  })
+})
+
+describe('CLI template and run commands', () => {
+  it('parseArgs handles "template list" subcommand', () => {
+    const result = parseArgs(['node', 'openskelo', 'template', 'list'])
+    expect(result.command).toBe('template')
+    expect(result.subcommand).toBe('list')
+  })
+
+  it('parseArgs handles "template save" with flags', () => {
+    const result = parseArgs([
+      'node', 'openskelo', 'template', 'save',
+      '--name', 'my-tpl',
+      '--type', 'task',
+      '--definition', '{"type":"code"}',
+    ])
+    expect(result.command).toBe('template')
+    expect(result.subcommand).toBe('save')
+    expect(result.flags.name).toBe('my-tpl')
+    expect(result.flags.type).toBe('task')
+  })
+
+  it('parseArgs handles "template show" with positional arg', () => {
+    const result = parseArgs(['node', 'openskelo', 'template', 'show', 'my-tpl'])
+    expect(result.command).toBe('template')
+    expect(result.subcommand).toBe('show')
+    expect(result.positionalArgs).toEqual(['my-tpl'])
+  })
+
+  it('parseArgs handles "template delete" with positional arg', () => {
+    const result = parseArgs(['node', 'openskelo', 'template', 'delete', 'my-tpl'])
+    expect(result.command).toBe('template')
+    expect(result.subcommand).toBe('delete')
+    expect(result.positionalArgs).toEqual(['my-tpl'])
+  })
+
+  it('parseArgs handles "run" command with --var flags', () => {
+    const result = parseArgs([
+      'node', 'openskelo', 'run', 'my-review',
+      '--var', 'module=auth',
+      '--var', 'file=src/auth.ts',
+    ])
+    expect(result.command).toBe('run')
+    expect(result.positionalArgs).toEqual(['my-review'])
+    expect(result.varFlags).toEqual({ module: 'auth', file: 'src/auth.ts' })
+  })
+
+  it('parseArgs "run" with --var and regular flags', () => {
+    const result = parseArgs([
+      'node', 'openskelo', 'run', 'tpl-name',
+      '--var', 'key=value',
+      '--config', './custom.yaml',
+    ])
+    expect(result.command).toBe('run')
+    expect(result.positionalArgs).toEqual(['tpl-name'])
+    expect(result.varFlags).toEqual({ key: 'value' })
+    expect(result.flags.config).toBe('./custom.yaml')
+  })
+
+  it('buildRunBody extracts variables from varFlags', () => {
+    const body = buildRunBody(
+      { module: 'auth', file: 'src/auth.ts' },
+      {},
+    )
+    expect(body.variables).toEqual({ module: 'auth', file: 'src/auth.ts' })
+    expect(body.overrides).toBeUndefined()
+  })
+
+  it('buildRunBody extracts overrides from flags', () => {
+    const body = buildRunBody(
+      {},
+      { 'override-summary': 'New summary', 'override-priority': '5' },
+    )
+    expect(body.variables).toBeUndefined()
+    expect(body.overrides).toEqual({ summary: 'New summary', priority: 5 })
+  })
+
+  it('buildRunBody combines variables and overrides', () => {
+    const body = buildRunBody(
+      { key: 'value' },
+      { 'override-summary': 'Custom' },
+    )
+    expect(body.variables).toEqual({ key: 'value' })
+    expect(body.overrides).toEqual({ summary: 'Custom' })
   })
 })

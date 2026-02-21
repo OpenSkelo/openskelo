@@ -14,6 +14,9 @@ import type { ApiConfig } from './api.js'
 import { createDashboardRouter } from './dashboard.js'
 import { WebhookDispatcher } from './webhooks.js'
 import type { WebhookConfig } from './webhooks.js'
+import { TemplateStore } from './templates.js'
+import { Scheduler } from './scheduler.js'
+import type { ScheduleConfig } from './scheduler.js'
 import { TaskStatus } from './state-machine.js'
 import express from 'express'
 
@@ -41,15 +44,18 @@ export interface QueueConfig {
     api_key?: string
   }
   webhooks?: WebhookConfig[]
+  schedules?: ScheduleConfig[]
 }
 
 export interface Queue {
   db: Database.Database
   taskStore: TaskStore
+  templateStore: TemplateStore
   priorityQueue: PriorityQueue
   auditLog: AuditLog
   dispatcher: Dispatcher
   watchdog: Watchdog
+  scheduler: Scheduler
   start(): void
   stop(): void
   listen(): Promise<{ port: number; close: () => void }>
@@ -101,6 +107,7 @@ export function createQueue(config: QueueConfig): Queue {
 
   const taskStore = new TaskStore(db, { onTransition })
   taskStoreRef = taskStore
+  const templateStore = new TemplateStore(db, taskStore)
   const priorityQueue = new PriorityQueue(db)
   const auditLog = new AuditLog(db)
 
@@ -133,23 +140,28 @@ export function createQueue(config: QueueConfig): Queue {
   )
 
   const watchdog = new Watchdog(taskStore, auditLog, watchdogConfig)
+  const scheduler = new Scheduler(templateStore, db, config.schedules ?? [])
 
   return {
     db,
     taskStore,
+    templateStore,
     priorityQueue,
     auditLog,
     dispatcher,
     watchdog,
+    scheduler,
 
     start() {
       dispatcher.start()
       watchdog.start()
+      scheduler.start()
     },
 
     stop() {
       dispatcher.stop()
       watchdog.stop()
+      scheduler.stop()
     },
 
     listen() {
@@ -164,7 +176,7 @@ export function createQueue(config: QueueConfig): Queue {
       }
 
       app.use(createApiRouter(
-        { db, taskStore, priorityQueue, auditLog, dispatcher },
+        { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler },
         apiConfig,
       ))
       app.use(createDashboardRouter(config.server?.api_key))

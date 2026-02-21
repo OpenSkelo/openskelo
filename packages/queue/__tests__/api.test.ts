@@ -13,6 +13,7 @@ import { Dispatcher } from '../src/dispatcher.js'
 import type { DispatcherConfig } from '../src/dispatcher.js'
 import { createApiRouter } from '../src/api.js'
 import type { ApiDependencies, ApiConfig } from '../src/api.js'
+import { TemplateStore } from '../src/templates.js'
 
 function createHangingAdapter(name: string, taskTypes: string[]): ExecutionAdapter {
   return {
@@ -51,6 +52,7 @@ function createTestApp(deps: ApiDependencies, config?: ApiConfig) {
 describe('REST API Router', () => {
   let db: Database.Database
   let taskStore: TaskStore
+  let templateStore: TemplateStore
   let priorityQueue: PriorityQueue
   let auditLog: AuditLog
   let dispatcher: Dispatcher
@@ -60,11 +62,12 @@ describe('REST API Router', () => {
   beforeEach(() => {
     db = createDatabase(':memory:')
     taskStore = new TaskStore(db)
+    templateStore = new TemplateStore(db, taskStore)
     priorityQueue = new PriorityQueue(db)
     auditLog = new AuditLog(db)
     const adapter = createHangingAdapter('claude-code', ['code'])
     dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
-    deps = { db, taskStore, priorityQueue, auditLog, dispatcher }
+    deps = { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher }
     app = createTestApp(deps)
   })
 
@@ -463,5 +466,108 @@ describe('REST API Router', () => {
       .expect(400)
 
     expect(res.body.error).toContain('more than 10 dependencies')
+  })
+
+  // Template endpoints
+  it('POST /templates creates template', async () => {
+    const res = await request(app)
+      .post('/templates')
+      .send({
+        name: 'test-tpl',
+        template_type: 'task',
+        definition: { type: 'code', summary: 'Test', prompt: 'Do it', backend: 'claude-code' },
+      })
+      .expect(201)
+
+    expect(res.body.name).toBe('test-tpl')
+    expect(res.body.template_type).toBe('task')
+    expect(res.body.id).toBeTruthy()
+  })
+
+  it('GET /templates lists templates', async () => {
+    await request(app)
+      .post('/templates')
+      .send({ name: 't1', template_type: 'task', definition: { type: 'code', summary: 'X', prompt: 'X', backend: 'x' } })
+
+    const res = await request(app)
+      .get('/templates')
+      .expect(200)
+
+    expect(Array.isArray(res.body)).toBe(true)
+    expect(res.body.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('GET /templates/:name returns by name', async () => {
+    await request(app)
+      .post('/templates')
+      .send({ name: 'find-me', template_type: 'task', definition: { type: 'code', summary: 'X', prompt: 'X', backend: 'x' } })
+
+    const res = await request(app)
+      .get('/templates/find-me')
+      .expect(200)
+
+    expect(res.body.name).toBe('find-me')
+  })
+
+  it('POST /templates/:id/run instantiates and creates task(s)', async () => {
+    const createRes = await request(app)
+      .post('/templates')
+      .send({
+        name: 'run-me',
+        template_type: 'task',
+        definition: { type: 'code', summary: 'Run task', prompt: 'Do it', backend: 'claude-code' },
+      })
+      .expect(201)
+
+    const res = await request(app)
+      .post(`/templates/${createRes.body.id}/run`)
+      .send({})
+      .expect(201)
+
+    expect(res.body.tasks).toHaveLength(1)
+    expect(res.body.tasks[0].summary).toBe('Run task')
+  })
+
+  it('POST /templates/:id/run with variables substitutes correctly', async () => {
+    await request(app)
+      .post('/templates')
+      .send({
+        name: 'var-tpl',
+        template_type: 'task',
+        definition: { type: 'code', summary: 'Fix {{module}}', prompt: 'Analyze {{file}}', backend: 'claude-code' },
+      })
+      .expect(201)
+
+    const res = await request(app)
+      .post('/templates/var-tpl/run')
+      .send({ variables: { module: 'auth', file: 'src/auth.ts' } })
+      .expect(201)
+
+    expect(res.body.tasks[0].summary).toBe('Fix auth')
+    expect(res.body.tasks[0].prompt).toBe('Analyze src/auth.ts')
+  })
+
+  it('DELETE /templates/:id removes template', async () => {
+    const createRes = await request(app)
+      .post('/templates')
+      .send({ name: 'del-me', template_type: 'task', definition: { type: 'code', summary: 'X', prompt: 'X', backend: 'x' } })
+      .expect(201)
+
+    await request(app)
+      .delete(`/templates/${createRes.body.id}`)
+      .expect(200)
+
+    await request(app)
+      .get(`/templates/${createRes.body.id}`)
+      .expect(404)
+  })
+
+  // Schedule endpoint
+  it('GET /schedules returns empty array when no scheduler', async () => {
+    const res = await request(app)
+      .get('/schedules')
+      .expect(200)
+
+    expect(Array.isArray(res.body)).toBe(true)
   })
 })

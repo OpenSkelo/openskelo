@@ -190,6 +190,35 @@ describe('WebhookDispatcher', () => {
     expect(body.text).toContain('Fix login bug')
   })
 
+  it('telegram body includes chat_id when configured', async () => {
+    const webhooks: WebhookConfig[] = [
+      { url: 'https://api.telegram.org/bot123/sendMessage', events: ['review'], body_template: 'telegram', chat_id: '12345' },
+    ]
+    const dispatcher = new WebhookDispatcher(webhooks)
+    dispatcher.emit(makeEvent())
+
+    await new Promise(r => setTimeout(r, 10))
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.chat_id).toBe('12345')
+    expect(body.parse_mode).toBe('HTML')
+    expect(body.text).toContain('Fix login bug')
+  })
+
+  it('telegram body omits chat_id when not configured', async () => {
+    const webhooks: WebhookConfig[] = [
+      { url: 'https://api.telegram.org/bot123/sendMessage', events: ['review'], body_template: 'telegram' },
+    ]
+    const dispatcher = new WebhookDispatcher(webhooks)
+    dispatcher.emit(makeEvent())
+
+    await new Promise(r => setTimeout(r, 10))
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.chat_id).toBeUndefined()
+    expect(body.parse_mode).toBe('HTML')
+  })
+
   it('telegram template for pipeline_complete event', async () => {
     const webhooks: WebhookConfig[] = [
       { url: 'https://t.me/bot', events: ['pipeline_complete'], body_template: 'telegram' },

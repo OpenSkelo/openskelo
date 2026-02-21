@@ -230,6 +230,50 @@ adapters:
     expect(config.webhooks![0].url).toBe('https://api.telegram.org/botmy-bot-token/sendMessage')
   })
 
+  it('webhook config includes chat_id', () => {
+    const configPath = writeYaml('openskelo.yaml', `
+db_path: ./test.db
+
+webhooks:
+  - url: https://api.telegram.org/bot123/sendMessage
+    events: [review]
+    body_template: telegram
+    chat_id: "987654"
+
+adapters:
+  - name: shell
+    type: cli
+    task_types: [script]
+`)
+
+    const config = loadConfig(configPath)
+    expect(config.webhooks![0].chat_id).toBe('987654')
+  })
+
+  it('schedules config parsed correctly', () => {
+    const configPath = writeYaml('openskelo.yaml', `
+db_path: ./test.db
+
+schedules:
+  - template: nightly-tests
+    every: 24h
+  - template: weekly-audit
+    every: 7d
+    enabled: false
+
+adapters:
+  - name: shell
+    type: cli
+    task_types: [script]
+`)
+
+    const config = loadConfig(configPath)
+    expect(config.schedules).toHaveLength(2)
+    expect(config.schedules![0].template).toBe('nightly-tests')
+    expect(config.schedules![0].every).toBe('24h')
+    expect(config.schedules![1].enabled).toBe(false)
+  })
+
   it('handles minimal config (just db_path and one adapter)', () => {
     const configPath = writeYaml('openskelo.yaml', `
 db_path: ./minimal.db

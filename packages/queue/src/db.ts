@@ -70,4 +70,20 @@ const SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS idx_audit_task
     ON audit_log (task_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS templates (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    description     TEXT DEFAULT '',
+    template_type   TEXT NOT NULL DEFAULT 'task',
+    definition      TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS schedules (
+    template_name TEXT PRIMARY KEY,
+    last_run_at   TEXT,
+    next_run_at   TEXT
+  );
 `

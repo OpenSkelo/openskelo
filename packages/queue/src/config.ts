@@ -13,6 +13,7 @@ import {
 import type { TaskInput, AdapterResult } from '@openskelo/adapters'
 import type { QueueConfig } from './factory.js'
 import type { WebhookConfig } from './webhooks.js'
+import type { ScheduleConfig } from './scheduler.js'
 
 export interface AdapterYamlConfig {
   name: string
@@ -56,6 +57,12 @@ interface RawConfig {
     method?: string
     body_template?: string
     timeout_ms?: number
+    chat_id?: string
+  }>
+  schedules?: Array<{
+    template: string
+    every: string
+    enabled?: boolean
   }>
 }
 
@@ -78,7 +85,7 @@ function substituteEnvVars(text: string): string {
   })
 }
 
-export function loadConfig(configPath?: string): QueueConfig & { gates?: Record<string, unknown[]>; webhooks?: WebhookConfig[] } {
+export function loadConfig(configPath?: string): QueueConfig & { gates?: Record<string, unknown[]>; webhooks?: WebhookConfig[]; schedules?: ScheduleConfig[] } {
   const resolvedPath = configPath ?? path.join(process.cwd(), 'openskelo.yaml')
 
   if (!fs.existsSync(resolvedPath)) {
@@ -93,7 +100,7 @@ export function loadConfig(configPath?: string): QueueConfig & { gates?: Record<
     throw new Error('Config validation failed: db_path is required')
   }
 
-  const config: QueueConfig & { gates?: Record<string, unknown[]>; webhooks?: WebhookConfig[] } = {
+  const config: QueueConfig & { gates?: Record<string, unknown[]>; webhooks?: WebhookConfig[]; schedules?: ScheduleConfig[] } = {
     db_path: raw.db_path,
   }
 
@@ -139,6 +146,15 @@ export function loadConfig(configPath?: string): QueueConfig & { gates?: Record<
       method: (w.method as 'POST' | 'GET') ?? 'POST',
       body_template: (w.body_template as 'default' | 'telegram' | 'slack') ?? 'default',
       timeout_ms: w.timeout_ms ?? 5000,
+      chat_id: w.chat_id,
+    }))
+  }
+
+  if (raw.schedules) {
+    config.schedules = raw.schedules.map((s): ScheduleConfig => ({
+      template: s.template,
+      every: s.every,
+      enabled: s.enabled,
     }))
   }
 

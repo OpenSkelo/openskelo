@@ -2,9 +2,11 @@ import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import type Database from 'better-sqlite3'
 import type { TaskStore } from './task-store.js'
+import type { TemplateStore } from './templates.js'
 import type { PriorityQueue } from './priority-queue.js'
 import type { AuditLog } from './audit.js'
 import type { Dispatcher } from './dispatcher.js'
+import type { Scheduler } from './scheduler.js'
 import { TaskStatus } from './state-machine.js'
 import { TransitionError } from './errors.js'
 import { createDagPipeline } from './pipeline.js'
@@ -21,9 +23,11 @@ export interface ApiConfig {
 export interface ApiDependencies {
   db: Database.Database
   taskStore: TaskStore
+  templateStore?: TemplateStore
   priorityQueue: PriorityQueue
   auditLog: AuditLog
   dispatcher: Dispatcher
+  scheduler?: Scheduler
 }
 
 const PUBLIC_PATHS = ['/health', '/dashboard']
@@ -54,7 +58,7 @@ export function createApiRouter(
   config?: ApiConfig,
 ): Router {
   const router = Router()
-  const { db, taskStore, priorityQueue, auditLog, dispatcher } = deps
+  const { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler } = deps
 
   if (config?.api_key) {
     router.use(authMiddleware(config.api_key))
@@ -357,6 +361,142 @@ export function createApiRouter(
       tasks.sort((a, b) => (a.pipeline_step ?? 0) - (b.pipeline_step ?? 0))
       res.json(tasks)
     } catch (err) {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // --- Template endpoints ---
+
+  // POST /templates
+  router.post('/templates', (req: Request, res: Response) => {
+    if (!templateStore) {
+      res.status(501).json({ error: 'Template store not available' })
+      return
+    }
+    try {
+      const body = req.body ?? {}
+      if (!body.name || !body.definition || !body.template_type) {
+        res.status(400).json({ error: 'Missing required fields: name, template_type, definition' })
+        return
+      }
+      const template = templateStore.create(body)
+      res.status(201).json(template)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Internal server error'
+      if (msg.includes('UNIQUE constraint failed') || msg.includes('already exists')) {
+        res.status(400).json({ error: `Template name "${req.body?.name}" already exists` })
+        return
+      }
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // GET /templates
+  router.get('/templates', (_req: Request, res: Response) => {
+    if (!templateStore) {
+      res.status(501).json({ error: 'Template store not available' })
+      return
+    }
+    try {
+      res.json(templateStore.list())
+    } catch {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // GET /templates/:id
+  router.get('/templates/:id', (req: Request, res: Response) => {
+    if (!templateStore) {
+      res.status(501).json({ error: 'Template store not available' })
+      return
+    }
+    try {
+      const id = paramId(req)
+      const template = templateStore.getById(id) ?? templateStore.getByName(id)
+      if (!template) {
+        res.status(404).json({ error: `Template ${id} not found` })
+        return
+      }
+      res.json(template)
+    } catch {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // PUT /templates/:id
+  router.put('/templates/:id', (req: Request, res: Response) => {
+    if (!templateStore) {
+      res.status(501).json({ error: 'Template store not available' })
+      return
+    }
+    try {
+      const id = paramId(req)
+      const existing = templateStore.getById(id) ?? templateStore.getByName(id)
+      if (!existing) {
+        res.status(404).json({ error: `Template ${id} not found` })
+        return
+      }
+      const updated = templateStore.update(existing.id, req.body ?? {})
+      res.json(updated)
+    } catch {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // DELETE /templates/:id
+  router.delete('/templates/:id', (req: Request, res: Response) => {
+    if (!templateStore) {
+      res.status(501).json({ error: 'Template store not available' })
+      return
+    }
+    try {
+      const id = paramId(req)
+      const existing = templateStore.getById(id) ?? templateStore.getByName(id)
+      if (!existing) {
+        res.status(404).json({ error: `Template ${id} not found` })
+        return
+      }
+      templateStore.delete(existing.id)
+      res.json({ ok: true })
+    } catch {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // POST /templates/:id/run
+  router.post('/templates/:id/run', (req: Request, res: Response) => {
+    if (!templateStore) {
+      res.status(501).json({ error: 'Template store not available' })
+      return
+    }
+    try {
+      const id = paramId(req)
+      const { variables, overrides } = req.body ?? {}
+      const tasks = templateStore.instantiate(id, { variables, overrides })
+      res.status(201).json({ tasks })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Internal server error'
+      if (msg.includes('not found')) {
+        res.status(404).json({ error: msg })
+        return
+      }
+      if (msg.includes('Missing template variable')) {
+        res.status(400).json({ error: msg })
+        return
+      }
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // GET /schedules
+  router.get('/schedules', (_req: Request, res: Response) => {
+    if (!scheduler) {
+      res.json([])
+      return
+    }
+    try {
+      res.json(scheduler.getStatus())
+    } catch {
       res.status(500).json({ error: 'Internal server error' })
     }
   })

@@ -6,20 +6,44 @@ import { runDoctor } from './doctor.js'
 
 export interface ParsedArgs {
   command: string
+  subcommand?: string
   positionalArgs: string[]
   flags: Record<string, string>
+  varFlags: Record<string, string>
 }
 
-const VALID_COMMANDS = ['init', 'start', 'status', 'add', 'list', 'approve', 'bounce', 'doctor', 'help']
+const VALID_COMMANDS = ['init', 'start', 'status', 'add', 'list', 'approve', 'bounce', 'doctor', 'template', 'run', 'help']
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2)
   const command = args[0] ?? 'help'
   const flags: Record<string, string> = {}
+  const varFlags: Record<string, string> = {}
   const positionalArgs: string[] = []
+  let subcommand: string | undefined
 
-  for (let i = 1; i < args.length; i++) {
+  // Detect subcommand for "template" command
+  const hasSubcommand = command === 'template' && args[1] && !args[1].startsWith('--')
+  if (hasSubcommand) {
+    subcommand = args[1]
+  }
+
+  const startIdx = hasSubcommand ? 2 : 1
+
+  for (let i = startIdx; i < args.length; i++) {
     const arg = args[i]
+
+    if (arg === '--var') {
+      const next = args[i + 1]
+      if (next) {
+        const eqIdx = next.indexOf('=')
+        if (eqIdx > 0) {
+          varFlags[next.slice(0, eqIdx)] = next.slice(eqIdx + 1)
+        }
+        i++
+      }
+      continue
+    }
 
     if (arg.startsWith('--')) {
       const key = arg.slice(2)
@@ -38,9 +62,29 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   return {
     command: VALID_COMMANDS.includes(command) ? command : 'help',
+    subcommand,
     positionalArgs,
     flags,
+    varFlags,
   }
+}
+
+export function buildRunBody(varFlags: Record<string, string>, flags: Record<string, string>): {
+  variables?: Record<string, string>
+  overrides?: Record<string, unknown>
+} {
+  const body: { variables?: Record<string, string>; overrides?: Record<string, unknown> } = {}
+
+  if (Object.keys(varFlags).length > 0) {
+    body.variables = varFlags
+  }
+
+  const overrides: Record<string, unknown> = {}
+  if (flags['override-summary']) overrides.summary = flags['override-summary']
+  if (flags['override-priority']) overrides.priority = parseInt(flags['override-priority'], 10)
+  if (Object.keys(overrides).length > 0) body.overrides = overrides
+
+  return body
 }
 
 export function generateTemplate(): string {
@@ -127,6 +171,7 @@ gates:
 #   - url: https://api.telegram.org/bot\${TELEGRAM_BOT_TOKEN}/sendMessage
 #     events: [review, blocked]
 #     body_template: telegram
+#     chat_id: "\${TELEGRAM_CHAT_ID}"
 #   - url: https://hooks.slack.com/services/\${SLACK_WEBHOOK_PATH}
 #     events: [review, blocked, done, pipeline_complete]
 #     body_template: slack
@@ -134,6 +179,18 @@ gates:
 #     events: ["*"]
 #     headers:
 #       Authorization: "Bearer \${WEBHOOK_SECRET}"
+
+# Task Templates
+# Save reusable task definitions, then trigger with: openskelo run <name>
+# Templates are stored in the database via the API or CLI.
+
+# Scheduled runs (optional)
+# schedules:
+#   - template: nightly-tests
+#     every: 24h
+#   - template: weekly-audit
+#     every: 7d
+#     enabled: false
 `
 }
 
@@ -203,6 +260,11 @@ Usage:
   openskelo list [--config path]     List tasks (--status to filter)
   openskelo approve <task-id>        Approve a task in REVIEW → DONE
   openskelo bounce <task-id>         Bounce a task in REVIEW → PENDING
+  openskelo template list            List saved templates
+  openskelo template save            Save a template (--name, --type, --definition or --file)
+  openskelo template show <name>     Show template details
+  openskelo template delete <name>   Delete a template
+  openskelo run <template> [--var key=value ...]  Run a saved template
   openskelo doctor                   Check system readiness
   openskelo help                     Show this help
 
@@ -211,6 +273,9 @@ Add (inline):
 
 Bounce:
   openskelo bounce <id> --reason "Missing tests" --where "src/auth.ts" --fix "Add unit tests"
+
+Run template:
+  openskelo run my-review --var module=auth --var file_path=src/auth.ts
 
 Options:
   --config path     Path to config file (default: ./openskelo.yaml)
@@ -515,8 +580,181 @@ async function cmdDoctor(flags: Record<string, string>): Promise<void> {
   }
 }
 
+async function cmdTemplate(subcommand: string | undefined, positionalArgs: string[], flags: Record<string, string>): Promise<void> {
+  const config = loadConfig(flags.config)
+  const port = config.server?.port ?? 4820
+  const host = config.server?.host ?? '127.0.0.1'
+  const apiKey = config.server?.api_key
+
+  switch (subcommand) {
+    case 'list': {
+      try {
+        const res = await fetch(`http://${host}:${port}/templates`, {
+          headers: buildRequestHeaders(apiKey),
+        })
+        if (!res.ok) {
+          console.error(`Failed: ${await parseErrorMessage(res)}`)
+          process.exitCode = 1
+          return
+        }
+        const templates = await res.json() as Array<Record<string, unknown>>
+        if (templates.length === 0) {
+          console.log('No templates found.')
+          return
+        }
+        console.log(`${'NAME'.padEnd(25)} ${'TYPE'.padEnd(10)} DESCRIPTION`)
+        console.log('-'.repeat(60))
+        for (const t of templates) {
+          console.log(`${String(t.name).padEnd(25)} ${String(t.template_type).padEnd(10)} ${String(t.description).slice(0, 40)}`)
+        }
+      } catch {
+        console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+        process.exitCode = 1
+      }
+      return
+    }
+
+    case 'save': {
+      if (!flags.name || !flags.type) {
+        console.error('Usage: openskelo template save --name <name> --type <task|pipeline> --definition \'...\' or --file <path>')
+        process.exitCode = 1
+        return
+      }
+      let definition: Record<string, unknown>
+      if (flags.file) {
+        definition = JSON.parse(fs.readFileSync(flags.file, 'utf-8'))
+      } else if (flags.definition) {
+        definition = JSON.parse(flags.definition)
+      } else {
+        console.error('Provide --definition JSON or --file path')
+        process.exitCode = 1
+        return
+      }
+      try {
+        const res = await fetch(`http://${host}:${port}/templates`, {
+          method: 'POST',
+          headers: buildRequestHeaders(apiKey, true),
+          body: JSON.stringify({
+            name: flags.name,
+            template_type: flags.type,
+            description: flags.description ?? '',
+            definition,
+          }),
+        })
+        if (!res.ok) {
+          console.error(`Failed: ${await parseErrorMessage(res)}`)
+          process.exitCode = 1
+          return
+        }
+        const template = await res.json() as Record<string, unknown>
+        console.log(`Saved template "${template.name}" (${template.template_type})`)
+      } catch {
+        console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+        process.exitCode = 1
+      }
+      return
+    }
+
+    case 'show': {
+      const nameOrId = positionalArgs[0]
+      if (!nameOrId) {
+        console.error('Usage: openskelo template show <name-or-id>')
+        process.exitCode = 1
+        return
+      }
+      try {
+        const res = await fetch(`http://${host}:${port}/templates/${encodeURIComponent(nameOrId)}`, {
+          headers: buildRequestHeaders(apiKey),
+        })
+        if (!res.ok) {
+          console.error(`Template not found: ${nameOrId}`)
+          process.exitCode = 1
+          return
+        }
+        const template = await res.json() as Record<string, unknown>
+        console.log(`Name: ${template.name}`)
+        console.log(`Type: ${template.template_type}`)
+        console.log(`Description: ${template.description || '(none)'}`)
+        console.log(`Definition:\n${JSON.stringify(template.definition, null, 2)}`)
+      } catch {
+        console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+        process.exitCode = 1
+      }
+      return
+    }
+
+    case 'delete': {
+      const nameOrId = positionalArgs[0]
+      if (!nameOrId) {
+        console.error('Usage: openskelo template delete <name-or-id>')
+        process.exitCode = 1
+        return
+      }
+      try {
+        const res = await fetch(`http://${host}:${port}/templates/${encodeURIComponent(nameOrId)}`, {
+          method: 'DELETE',
+          headers: buildRequestHeaders(apiKey),
+        })
+        if (!res.ok) {
+          console.error(`Failed: ${await parseErrorMessage(res)}`)
+          process.exitCode = 1
+          return
+        }
+        console.log(`Deleted template "${nameOrId}"`)
+      } catch {
+        console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+        process.exitCode = 1
+      }
+      return
+    }
+
+    default:
+      console.error('Usage: openskelo template <list|save|show|delete>')
+      process.exitCode = 1
+  }
+}
+
+async function cmdRun(positionalArgs: string[], flags: Record<string, string>, varFlags: Record<string, string>): Promise<void> {
+  const templateName = positionalArgs[0]
+  if (!templateName) {
+    console.error('Usage: openskelo run <template-name> [--var key=value ...]')
+    process.exitCode = 1
+    return
+  }
+
+  const config = loadConfig(flags.config)
+  const port = config.server?.port ?? 4820
+  const host = config.server?.host ?? '127.0.0.1'
+  const apiKey = config.server?.api_key
+
+  const body = buildRunBody(varFlags, flags)
+
+  try {
+    const res = await fetch(`http://${host}:${port}/templates/${encodeURIComponent(templateName)}/run`, {
+      method: 'POST',
+      headers: buildRequestHeaders(apiKey, true),
+      body: JSON.stringify(body),
+    })
+
+    if (!res.ok) {
+      console.error(`Failed: ${await parseErrorMessage(res)}`)
+      process.exitCode = 1
+      return
+    }
+
+    const data = await res.json() as { tasks: Array<Record<string, unknown>> }
+    console.log(`Created ${data.tasks.length} task(s) from template "${templateName}":`)
+    for (const task of data.tasks) {
+      console.log(`  ${task.id} (${task.status}) — ${task.summary}`)
+    }
+  } catch {
+    console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+    process.exitCode = 1
+  }
+}
+
 async function main(): Promise<void> {
-  const { command, positionalArgs, flags } = parseArgs(process.argv)
+  const { command, subcommand, positionalArgs, flags, varFlags } = parseArgs(process.argv)
 
   switch (command) {
     case 'init': return cmdInit()
@@ -526,6 +764,8 @@ async function main(): Promise<void> {
     case 'list': return cmdList(flags)
     case 'approve': return cmdApprove(positionalArgs, flags)
     case 'bounce': return cmdBounce(positionalArgs, flags)
+    case 'template': return cmdTemplate(subcommand, positionalArgs, flags)
+    case 'run': return cmdRun(positionalArgs, flags, varFlags)
     case 'doctor': return cmdDoctor(flags)
     default: printHelp()
   }

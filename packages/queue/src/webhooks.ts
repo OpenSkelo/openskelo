@@ -5,6 +5,7 @@ export interface WebhookConfig {
   method?: 'POST' | 'GET'
   body_template?: 'default' | 'telegram' | 'slack'
   timeout_ms?: number
+  chat_id?: string
 }
 
 export interface WebhookEvent {
@@ -82,9 +83,14 @@ function buildBody(webhook: WebhookConfig, event: WebhookEvent): string {
   const template = webhook.body_template ?? 'default'
 
   if (template === 'telegram') {
-    return JSON.stringify({
+    const body: Record<string, unknown> = {
       text: formatTelegram(event),
-    })
+      parse_mode: 'HTML',
+    }
+    if (webhook.chat_id) {
+      body.chat_id = webhook.chat_id
+    }
+    return JSON.stringify(body)
   }
 
   if (template === 'slack') {

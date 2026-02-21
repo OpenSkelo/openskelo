@@ -63,6 +63,14 @@ export type { WebhookConfig, WebhookEvent } from './webhooks.js'
 // Task Store Config
 export type { TaskStoreConfig } from './task-store.js'
 
+// Templates
+export { TemplateStore } from './templates.js'
+export type { Template, CreateTemplateInput } from './templates.js'
+
+// Scheduler
+export { Scheduler, parseDuration } from './scheduler.js'
+export type { ScheduleConfig, ScheduleEntry } from './scheduler.js'
+
 // Errors
 export {
   TransitionError,
