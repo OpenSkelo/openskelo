@@ -262,6 +262,46 @@ describe('WebhookDispatcher', () => {
     expect(body.parse_mode).toBe('HTML')
   })
 
+  it('telegram template for pipeline_held event', async () => {
+    const webhooks: WebhookConfig[] = [
+      { url: 'https://t.me/bot', events: ['pipeline_held'], body_template: 'telegram' },
+    ]
+    const dispatcher = new WebhookDispatcher(webhooks)
+    dispatcher.emit(makeEvent({
+      event: 'pipeline_held',
+      pipeline_id: 'PIPE-001',
+      metadata: { held_count: 3, fix_task_id: 'FIX-001', held_task_ids: ['A', 'B', 'C'] },
+    }))
+
+    await new Promise(r => setTimeout(r, 10))
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.text).toContain('Pipeline held')
+    expect(body.text).toContain('PIPE-001')
+    expect(body.text).toContain('3 downstream task(s) held')
+    expect(body.text).toContain('paused for fix')
+  })
+
+  it('telegram template for pipeline_resumed event', async () => {
+    const webhooks: WebhookConfig[] = [
+      { url: 'https://t.me/bot', events: ['pipeline_resumed'], body_template: 'telegram' },
+    ]
+    const dispatcher = new WebhookDispatcher(webhooks)
+    dispatcher.emit(makeEvent({
+      event: 'pipeline_resumed',
+      pipeline_id: 'PIPE-001',
+      metadata: { unhold_count: 3, fix_task_id: 'FIX-001' },
+    }))
+
+    await new Promise(r => setTimeout(r, 10))
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.text).toContain('Pipeline resumed')
+    expect(body.text).toContain('PIPE-001')
+    expect(body.text).toContain('3 downstream task(s) resumed')
+    expect(body.text).toContain('unblocked')
+  })
+
   it('telegram template for pipeline_complete event', async () => {
     const webhooks: WebhookConfig[] = [
       { url: 'https://t.me/bot', events: ['pipeline_complete'], body_template: 'telegram' },

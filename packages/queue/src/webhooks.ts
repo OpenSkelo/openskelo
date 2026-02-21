@@ -65,6 +65,26 @@ function formatTelegram(event: WebhookEvent): string {
         `\u{1F517} Task ID: ${safeTaskId}`,
       ].join('\n')
 
+    case 'pipeline_held':
+      return [
+        '\u23F8\uFE0F OpenSkelo: Pipeline held',
+        '',
+        `\u{1F4CB} ${safeSummary}`,
+        `\u26D3 Pipeline ${safePipelineId} paused for fix`,
+        `\u{1F527} ${event.metadata?.held_count ?? '?'} downstream task(s) held`,
+        `\u{1F517} Task ID: ${safeTaskId}`,
+      ].join('\n')
+
+    case 'pipeline_resumed':
+      return [
+        '\u25B6\uFE0F OpenSkelo: Pipeline resumed',
+        '',
+        `\u{1F4CB} ${safeSummary}`,
+        `\u26D3 Pipeline ${safePipelineId} unblocked`,
+        `\u2705 ${event.metadata?.unhold_count ?? '?'} downstream task(s) resumed`,
+        `\u{1F517} Task ID: ${safeTaskId}`,
+      ].join('\n')
+
     case 'pipeline_complete':
       return [
         '\u{1F3C1} OpenSkelo: Pipeline complete',
@@ -86,6 +106,10 @@ function formatSlack(event: WebhookEvent): string {
       return `\u{1F6AB} *OpenSkelo*: Task _${event.task_summary}_ blocked`
     case 'done':
       return `\u2705 *OpenSkelo*: Task _${event.task_summary}_ complete (${event.task_type})`
+    case 'pipeline_held':
+      return `\u23F8\uFE0F *OpenSkelo*: Pipeline ${event.pipeline_id ?? 'unknown'} held — _${event.task_summary}_ paused for fix (${event.metadata?.held_count ?? '?'} tasks)`
+    case 'pipeline_resumed':
+      return `\u25B6\uFE0F *OpenSkelo*: Pipeline ${event.pipeline_id ?? 'unknown'} resumed — _${event.task_summary}_ (${event.metadata?.unhold_count ?? '?'} tasks unblocked)`
     case 'pipeline_complete':
       return `\u{1F3C1} *OpenSkelo*: Pipeline ${event.pipeline_id ?? 'unknown'} complete (${event.pipeline_progress ?? '?'})`
     default:

@@ -43,6 +43,7 @@ export interface Task {
   auto_review: Record<string, unknown> | null
   parent_task_id: string | null
   loop_iteration: number
+  held_by: string | null
   created_at: string
   updated_at: string
 }
@@ -115,6 +116,7 @@ const ALLOWED_UPDATE_COLUMNS = new Set<string>([
   'auto_review',
   'parent_task_id',
   'loop_iteration',
+  'held_by',
 ] as const)
 
 export interface TaskStoreConfig {
@@ -271,6 +273,26 @@ export class TaskStore {
     const { updated, from } = tx.immediate(id, to, context)
     this.config.onTransition?.(updated, from, to)
     return updated
+  }
+
+  hold(taskIds: string[], heldBy: string): void {
+    if (taskIds.length === 0) return
+    const stmt = this.db.prepare('UPDATE tasks SET held_by = ?, updated_at = ? WHERE id = ?')
+    const now = new Date().toISOString()
+    const tx = this.db.transaction(() => {
+      for (const id of taskIds) {
+        stmt.run(heldBy, now, id)
+      }
+    })
+    tx()
+  }
+
+  unhold(heldBy: string): number {
+    const now = new Date().toISOString()
+    const result = this.db.prepare(
+      'UPDATE tasks SET held_by = NULL, updated_at = ? WHERE held_by = ?',
+    ).run(now, heldBy)
+    return result.changes
   }
 
   delete(id: string): boolean {

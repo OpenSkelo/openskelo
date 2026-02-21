@@ -344,6 +344,44 @@ describe('TaskStore', () => {
     expect(updated.result).toBe('new result')
   })
 
+  describe('hold() / unhold()', () => {
+    it('hold() sets held_by on specified tasks', () => {
+      const t1 = store.create(minimal)
+      const t2 = store.create(minimal)
+      store.hold([t1.id, t2.id], 'FIX-001')
+
+      expect(store.getById(t1.id)!.held_by).toBe('FIX-001')
+      expect(store.getById(t2.id)!.held_by).toBe('FIX-001')
+    })
+
+    it('hold() with empty array is a no-op', () => {
+      expect(() => store.hold([], 'FIX-001')).not.toThrow()
+    })
+
+    it('unhold() clears held_by on matching tasks', () => {
+      const t1 = store.create(minimal)
+      const t2 = store.create(minimal)
+      const t3 = store.create(minimal)
+      store.hold([t1.id, t2.id], 'FIX-001')
+      store.hold([t3.id], 'FIX-002')
+
+      const count = store.unhold('FIX-001')
+      expect(count).toBe(2)
+      expect(store.getById(t1.id)!.held_by).toBeNull()
+      expect(store.getById(t2.id)!.held_by).toBeNull()
+      expect(store.getById(t3.id)!.held_by).toBe('FIX-002')
+    })
+
+    it('unhold() returns 0 when no matching tasks', () => {
+      expect(store.unhold('NONEXISTENT')).toBe(0)
+    })
+
+    it('held_by defaults to null on create', () => {
+      const task = store.create(minimal)
+      expect(task.held_by).toBeNull()
+    })
+  })
+
   it('large text fields handled correctly', () => {
     const longPrompt = 'x'.repeat(100_000)
     const task = store.create({ ...minimal, prompt: longPrompt })

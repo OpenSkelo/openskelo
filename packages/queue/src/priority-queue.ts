@@ -20,7 +20,7 @@ export class PriorityQueue {
   }
 
   getNext(opts?: GetNextOptions): Task | null {
-    const conditions = ["status = 'PENDING'"]
+    const conditions = ["status = 'PENDING'", 'held_by IS NULL']
     const params: unknown[] = []
 
     if (opts?.type) {

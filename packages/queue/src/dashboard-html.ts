@@ -338,6 +338,15 @@ export function buildDashboardHtml(apiKey?: string): string {
         pipeline = '<span class="badge pipeline-badge">\\u26D3 Step ' + escapeHtml(t.pipeline_step || '?') + '</span>'
       }
 
+      var holdBadge = ''
+      if (t.held_by) {
+        holdBadge = '<span class="badge" style="color:#f59e0b">\\u23F8\\uFE0F held</span>'
+      }
+      var loopBadge = ''
+      if (t.loop_iteration && t.loop_iteration > 0) {
+        loopBadge = '<span class="badge" style="color:#3b82f6">\\u{1F504} iter ' + t.loop_iteration + '</span>'
+      }
+
       return '<div class="card' + pClass + '" onclick="openDetail(\\'' + escapeHtml(t.id) + '\\')">' +
         '<div class="id">' + id + '</div>' +
         '<div class="summary">' + summary + '</div>' +
@@ -348,6 +357,8 @@ export function buildDashboardHtml(apiKey?: string): string {
           '<span class="badge">' + bBadge + '</span>' +
           (elapsed ? '<span class="time-badge">' + elapsed + '</span>' : '') +
           pipeline +
+          holdBadge +
+          loopBadge +
         '</div>' +
       '</div>'
     }
@@ -449,6 +460,12 @@ export function buildDashboardHtml(apiKey?: string): string {
       html += detailField('Updated', escapeHtml(task.updated_at))
       if (task.pipeline_id) {
         html += detailField('Pipeline', escapeHtml(task.pipeline_id) + ' — Step ' + escapeHtml(task.pipeline_step || '?'))
+      }
+      if (task.held_by) {
+        html += detailField('Held By', '<span style="color:#f59e0b">\\u23F8\\uFE0F ' + escapeHtml(task.held_by) + '</span>')
+      }
+      if (task.loop_iteration && task.loop_iteration > 0) {
+        html += detailField('Loop Iteration', '\\u{1F504} ' + task.loop_iteration)
       }
 
       html += renderActions(task)

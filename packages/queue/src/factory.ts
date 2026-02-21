@@ -126,7 +126,7 @@ export function createQueue(config: QueueConfig): Queue {
 
   const taskStore = new TaskStore(db, { onTransition })
   taskStoreRef = taskStore
-  reviewHandler = new ReviewHandler(taskStore, auditLog)
+  reviewHandler = new ReviewHandler(taskStore, auditLog, webhookDispatcher)
   const templateStore = new TemplateStore(db, taskStore)
   const priorityQueue = new PriorityQueue(db)
 

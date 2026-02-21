@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createDatabase } from '../src/db.js'
 import { TaskStore } from '../src/task-store.js'
 import type { Task, CreateTaskInput } from '../src/task-store.js'
 import { AuditLog } from '../src/audit.js'
 import { TaskStatus } from '../src/state-machine.js'
+import { WebhookDispatcher } from '../src/webhooks.js'
 import {
   ReviewHandler,
   buildReviewPrompt,
@@ -933,6 +934,270 @@ describe('ReviewHandler', () => {
 
       const updatedParent = taskStore.getById(parent.id)!
       expect(updatedParent.status).toBe(TaskStatus.DONE)
+    })
+  })
+
+  describe('pipeline hold mechanics', () => {
+    it('holds downstream pipeline tasks when fix is created', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = taskStore.create(makeTaskInput({
+        auto_review: config as unknown as Record<string, unknown>,
+        pipeline_id: 'pl-hold',
+        pipeline_step: 0,
+      }))
+      const downstream1 = taskStore.create(makeTaskInput({
+        summary: 'Step 2',
+        pipeline_id: 'pl-hold',
+        pipeline_step: 1,
+        depends_on: [parent.id],
+      }))
+      const downstream2 = taskStore.create(makeTaskInput({
+        summary: 'Step 3',
+        pipeline_id: 'pl-hold',
+        pipeline_step: 2,
+        depends_on: [parent.id],
+      }))
+
+      // Move parent to REVIEW
+      taskStore.transition(parent.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(parent.id, TaskStatus.REVIEW, { result: 'output' })
+      handler.onTaskReview(taskStore.getById(parent.id)!)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTask = taskStore.list({}).find(t => t.metadata?.fix_for === parent.id)!
+
+      // Both downstream tasks should be held by the fix task
+      expect(taskStore.getById(downstream1.id)!.held_by).toBe(fixTask.id)
+      expect(taskStore.getById(downstream2.id)!.held_by).toBe(fixTask.id)
+    })
+
+    it('unholds downstream tasks when fix completes', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = taskStore.create(makeTaskInput({
+        auto_review: config as unknown as Record<string, unknown>,
+        pipeline_id: 'pl-unhold',
+        pipeline_step: 0,
+      }))
+      const downstream = taskStore.create(makeTaskInput({
+        summary: 'Step 2',
+        pipeline_id: 'pl-unhold',
+        pipeline_step: 1,
+        depends_on: [parent.id],
+      }))
+
+      taskStore.transition(parent.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(parent.id, TaskStatus.REVIEW, { result: 'output' })
+      handler.onTaskReview(taskStore.getById(parent.id)!)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTask = taskStore.list({}).find(t => t.metadata?.fix_for === parent.id)!
+
+      // Downstream should be held
+      expect(taskStore.getById(downstream.id)!.held_by).toBe(fixTask.id)
+
+      // Complete the fix task
+      taskStore.transition(fixTask.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.update(fixTask.id, { auto_review: null })
+      taskStore.transition(fixTask.id, TaskStatus.REVIEW, { result: 'Fixed!' })
+      taskStore.transition(fixTask.id, TaskStatus.DONE)
+
+      handler.onFixComplete(taskStore.getById(fixTask.id)!)
+
+      // Downstream should be unblocked
+      expect(taskStore.getById(downstream.id)!.held_by).toBeNull()
+    })
+
+    it('does not hold tasks outside the pipeline', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = taskStore.create(makeTaskInput({
+        auto_review: config as unknown as Record<string, unknown>,
+        pipeline_id: 'pl-1',
+        pipeline_step: 0,
+      }))
+      const otherTask = taskStore.create(makeTaskInput({
+        summary: 'Other pipeline task',
+        pipeline_id: 'pl-other',
+        pipeline_step: 1,
+      }))
+
+      taskStore.transition(parent.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(parent.id, TaskStatus.REVIEW, { result: 'output' })
+      handler.onTaskReview(taskStore.getById(parent.id)!)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      // Other pipeline task should NOT be held
+      expect(taskStore.getById(otherTask.id)!.held_by).toBeNull()
+    })
+
+    it('emits pipeline_held webhook event when downstream tasks are held', () => {
+      const webhookDispatcher = new WebhookDispatcher([])
+      const emitSpy = vi.spyOn(webhookDispatcher, 'emit')
+      const handlerWithWebhook = new ReviewHandler(taskStore, auditLog, webhookDispatcher)
+
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = taskStore.create(makeTaskInput({
+        auto_review: config as unknown as Record<string, unknown>,
+        pipeline_id: 'pl-webhook',
+        pipeline_step: 0,
+      }))
+      taskStore.create(makeTaskInput({
+        summary: 'Downstream',
+        pipeline_id: 'pl-webhook',
+        pipeline_step: 1,
+        depends_on: [parent.id],
+      }))
+
+      taskStore.transition(parent.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(parent.id, TaskStatus.REVIEW, { result: 'output' })
+      handlerWithWebhook.onTaskReview(taskStore.getById(parent.id)!)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handlerWithWebhook.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const heldEvent = emitSpy.mock.calls.find(c => c[0].event === 'pipeline_held')
+      expect(heldEvent).toBeDefined()
+      expect(heldEvent![0].pipeline_id).toBe('pl-webhook')
+      expect(heldEvent![0].metadata?.held_count).toBe(1)
+    })
+
+    it('emits pipeline_resumed webhook event when fix completes', () => {
+      const webhookDispatcher = new WebhookDispatcher([])
+      const emitSpy = vi.spyOn(webhookDispatcher, 'emit')
+      const handlerWithWebhook = new ReviewHandler(taskStore, auditLog, webhookDispatcher)
+
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = taskStore.create(makeTaskInput({
+        auto_review: config as unknown as Record<string, unknown>,
+        pipeline_id: 'pl-resume',
+        pipeline_step: 0,
+      }))
+      taskStore.create(makeTaskInput({
+        summary: 'Downstream',
+        pipeline_id: 'pl-resume',
+        pipeline_step: 1,
+        depends_on: [parent.id],
+      }))
+
+      taskStore.transition(parent.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(parent.id, TaskStatus.REVIEW, { result: 'output' })
+      handlerWithWebhook.onTaskReview(taskStore.getById(parent.id)!)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handlerWithWebhook.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTask = taskStore.list({}).find(t => t.metadata?.fix_for === parent.id)!
+
+      taskStore.transition(fixTask.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.update(fixTask.id, { auto_review: null })
+      taskStore.transition(fixTask.id, TaskStatus.REVIEW, { result: 'Fixed!' })
+      taskStore.transition(fixTask.id, TaskStatus.DONE)
+
+      handlerWithWebhook.onFixComplete(taskStore.getById(fixTask.id)!)
+
+      const resumeEvent = emitSpy.mock.calls.find(c => c[0].event === 'pipeline_resumed')
+      expect(resumeEvent).toBeDefined()
+      expect(resumeEvent![0].pipeline_id).toBe('pl-resume')
+      expect(resumeEvent![0].metadata?.unhold_count).toBe(1)
+    })
+
+    it('does not emit pipeline_held when no downstream tasks', () => {
+      const webhookDispatcher = new WebhookDispatcher([])
+      const emitSpy = vi.spyOn(webhookDispatcher, 'emit')
+      const handlerWithWebhook = new ReviewHandler(taskStore, auditLog, webhookDispatcher)
+
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      // Single task, no pipeline
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handlerWithWebhook.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handlerWithWebhook.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const heldEvent = emitSpy.mock.calls.find(c => c[0].event === 'pipeline_held')
+      expect(heldEvent).toBeUndefined()
     })
   })
 

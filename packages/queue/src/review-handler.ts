@@ -1,5 +1,6 @@
 import type { TaskStore, Task, CreateTaskInput, InjectTaskInput } from './task-store.js'
 import type { AuditLog } from './audit.js'
+import type { WebhookDispatcher } from './webhooks.js'
 import { TaskStatus } from './state-machine.js'
 
 export interface ReviewerConfig {
@@ -227,10 +228,12 @@ export function buildFixPrompt(
 export class ReviewHandler {
   private taskStore: TaskStore
   private auditLog: AuditLog
+  private webhookDispatcher?: WebhookDispatcher
 
-  constructor(taskStore: TaskStore, auditLog: AuditLog) {
+  constructor(taskStore: TaskStore, auditLog: AuditLog, webhookDispatcher?: WebhookDispatcher) {
     this.taskStore = taskStore
     this.auditLog = auditLog
+    this.webhookDispatcher = webhookDispatcher
   }
 
   onTaskReview(task: Task): void {
@@ -448,13 +451,29 @@ export class ReviewHandler {
       metadata: mergedMetadata,
     })
 
+    // Unhold downstream tasks that were held by this fix
+    const unheldCount = this.taskStore.unhold(fixTask.id)
+
     this.taskStore.transition(parent.id, TaskStatus.DONE)
 
     this.auditLog.logAction({
       task_id: parent.id,
       action: 'fix_resolved',
-      metadata: { fix_task_id: fixTask.id },
+      metadata: { fix_task_id: fixTask.id, unhold_count: unheldCount },
     })
+
+    if (unheldCount > 0 && parent.pipeline_id) {
+      this.webhookDispatcher?.emit({
+        event: 'pipeline_resumed',
+        task_id: parent.id,
+        task_summary: parent.summary,
+        task_type: parent.type,
+        task_status: 'DONE',
+        pipeline_id: parent.pipeline_id,
+        timestamp: new Date().toISOString(),
+        metadata: { fix_task_id: fixTask.id, unhold_count: unheldCount },
+      })
+    }
   }
 
   private applyDecision(parentTask: Task, decision: ReviewDecision): void {
@@ -513,13 +532,20 @@ export class ReviewHandler {
       this.taskStore.update(downstream.id, { depends_on: nextDeps })
     }
 
+    // Hold all downstream pipeline tasks so they don't dispatch during the fix
+    const holdIds = downstreamTasks.map(t => t.id)
+    if (holdIds.length > 0) {
+      this.taskStore.hold(holdIds, fixTask.id)
+    }
+
     this.auditLog.logAction({
       task_id: parent.id,
       action: 'fix_injected',
       metadata: {
         fix_task_id: fixTask.id,
-        blocked_downstream: downstreamTasks.map(task => task.id),
-        blocked_downstream_count: downstreamTasks.length,
+        blocked_downstream: holdIds,
+        blocked_downstream_count: holdIds.length,
+        held_count: holdIds.length,
         priority: -10,
       },
     })
@@ -528,6 +554,23 @@ export class ReviewHandler {
       loop_iteration: parent.loop_iteration + 1,
       metadata: { ...parent.metadata, fix_task_id: fixTask.id },
     })
+
+    if (holdIds.length > 0 && parent.pipeline_id) {
+      this.webhookDispatcher?.emit({
+        event: 'pipeline_held',
+        task_id: parent.id,
+        task_summary: parent.summary,
+        task_type: parent.type,
+        task_status: 'REVIEW',
+        pipeline_id: parent.pipeline_id,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          fix_task_id: fixTask.id,
+          held_task_ids: holdIds,
+          held_count: holdIds.length,
+        },
+      })
+    }
 
     return fixTask
   }

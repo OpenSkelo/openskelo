@@ -589,6 +589,49 @@ describe('Dispatcher', () => {
     expect(capturedInput!.backend_config?.model).toBe('anthropic/claude-opus-4-5')
   })
 
+  // tick() skips held tasks
+  it('tick() skips tasks with held_by set', async () => {
+    const adapter = createHangingAdapter('claude-code', ['code'])
+    const t1 = taskStore.create(makeTaskInput({ summary: 'held task' }))
+    taskStore.create(makeTaskInput({ summary: 'free task' }))
+
+    // Hold t1
+    taskStore.hold([t1.id], 'FIX-001')
+
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
+    const results = await dispatcher.tick()
+
+    const dispatched = results.filter(r => r.action === 'dispatched')
+    expect(dispatched).toHaveLength(1)
+    expect(dispatched[0].taskId).not.toBe(t1.id)
+
+    // t1 should still be PENDING and held
+    const held = taskStore.getById(t1.id)!
+    expect(held.status).toBe(TaskStatus.PENDING)
+    expect(held.held_by).toBe('FIX-001')
+  })
+
+  it('tick() dispatches task after unhold', async () => {
+    const adapter = createHangingAdapter('claude-code', ['code'])
+    const t1 = taskStore.create(makeTaskInput({ summary: 'was held' }))
+    taskStore.hold([t1.id], 'FIX-001')
+
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
+
+    // First tick: held, should not dispatch
+    const r1 = await dispatcher.tick()
+    expect(r1.filter(r => r.action === 'dispatched')).toHaveLength(0)
+
+    // Unhold
+    taskStore.unhold('FIX-001')
+
+    // Second tick: should dispatch
+    const r2 = await dispatcher.tick()
+    const dispatched = r2.filter(r => r.action === 'dispatched')
+    expect(dispatched).toHaveLength(1)
+    expect(dispatched[0].taskId).toBe(t1.id)
+  })
+
   // 18. tick() converts Task to TaskInput correctly
   it('tick() converts Task to TaskInput correctly with upstream_results', async () => {
     let capturedInput: TaskInput | null = null

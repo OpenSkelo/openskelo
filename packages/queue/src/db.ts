@@ -18,6 +18,7 @@ function runMigrations(db: Database.Database): void {
     'ALTER TABLE tasks ADD COLUMN auto_review TEXT',
     'ALTER TABLE tasks ADD COLUMN parent_task_id TEXT',
     'ALTER TABLE tasks ADD COLUMN loop_iteration INTEGER DEFAULT 0',
+    'ALTER TABLE tasks ADD COLUMN held_by TEXT',
   ]
   for (const sql of migrations) {
     try { db.exec(sql) } catch { /* column already exists */ }
