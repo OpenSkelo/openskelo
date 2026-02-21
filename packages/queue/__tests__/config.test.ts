@@ -328,4 +328,32 @@ describe('resolveAdapters', () => {
     expect(adapters).toHaveLength(1)
     expect(adapters[0].name).toBe('codex')
   })
+
+  it('creates OpenRouterAdapter for provider "openrouter"', () => {
+    const configs: AdapterYamlConfig[] = [
+      { name: 'openrouter', type: 'api', task_types: ['code', 'chat'], provider: 'openrouter', model: 'anthropic/claude-sonnet-4-5-20250929' },
+    ]
+    const adapters = resolveAdapters(configs)
+    expect(adapters).toHaveLength(1)
+    expect(adapters[0].name).toBe('openrouter')
+    expect(adapters[0].taskTypes).toEqual(['code', 'chat'])
+  })
+
+  it('creates OpenRouterAdapter with api_key in env', () => {
+    const configs: AdapterYamlConfig[] = [
+      { name: 'openrouter', type: 'api', task_types: ['chat'], provider: 'openrouter', api_key: 'sk-or-test' },
+    ]
+    const adapters = resolveAdapters(configs)
+    expect(adapters).toHaveLength(1)
+    expect(adapters[0].name).toBe('openrouter')
+  })
+
+  it('falls back to RawApiAdapter for unknown api provider', () => {
+    const configs: AdapterYamlConfig[] = [
+      { name: 'custom-api', type: 'api', task_types: ['chat'], provider: 'custom' },
+    ]
+    const adapters = resolveAdapters(configs)
+    expect(adapters).toHaveLength(1)
+    expect(adapters[0].name).toBe('raw-api')
+  })
 })

@@ -519,6 +519,53 @@ describe('Dispatcher', () => {
     expect(dispatched[0].taskId).toBe(tasks[2].id)
   })
 
+  // Backend model routing: slash-style backend routes to correct adapter
+  it('tick() routes slash-style backend to matching adapter', async () => {
+    const codeAdapter = createHangingAdapter('claude-code', ['code'])
+    const openrouterAdapter = createHangingAdapter('openrouter', ['code'])
+
+    // Task with backend "openrouter/anthropic/claude-opus-4-5" should route to openrouter
+    const task = taskStore.create(makeTaskInput({
+      type: 'code',
+      backend: 'openrouter/anthropic/claude-opus-4-5',
+    }))
+
+    const dispatcher = new Dispatcher(
+      taskStore, priorityQueue, auditLog,
+      [codeAdapter, openrouterAdapter],
+      DEFAULT_CONFIG,
+    )
+    const results = await dispatcher.tick()
+
+    const dispatched = results.filter(r => r.action === 'dispatched')
+    expect(dispatched).toHaveLength(1)
+    expect(dispatched[0].adapterId).toBe('openrouter')
+    expect(dispatched[0].taskId).toBe(task.id)
+  })
+
+  // Backend model routing: taskToInput extracts model from slash backend
+  it('tick() extracts model from slash-style backend into backend_config', async () => {
+    let capturedInput: TaskInput | null = null
+    const adapter = createMockAdapter('openrouter', ['code'], async (task) => {
+      capturedInput = task
+      return { output: 'done', exit_code: 0, duration_ms: 100 }
+    })
+
+    taskStore.create(makeTaskInput({
+      type: 'code',
+      backend: 'openrouter/anthropic/claude-opus-4-5',
+    }))
+
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
+    await dispatcher.tick()
+
+    await new Promise(r => setTimeout(r, 50))
+
+    expect(capturedInput).not.toBeNull()
+    expect(capturedInput!.backend).toBe('openrouter')
+    expect(capturedInput!.backend_config?.model).toBe('anthropic/claude-opus-4-5')
+  })
+
   // 18. tick() converts Task to TaskInput correctly
   it('tick() converts Task to TaskInput correctly with upstream_results', async () => {
     let capturedInput: TaskInput | null = null

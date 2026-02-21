@@ -41,6 +41,17 @@ function taskToInput(task: Task, upstreamResults: Record<string, unknown>): Task
     input.upstream_results = upstreamResults
   }
 
+  // Backend model routing: "openrouter/anthropic/claude-opus-4-5" → backend="openrouter", model override
+  if (task.backend.includes('/')) {
+    const slashIndex = task.backend.indexOf('/')
+    input.backend = task.backend.slice(0, slashIndex)
+    const modelOverride = task.backend.slice(slashIndex + 1)
+    input.backend_config = {
+      ...input.backend_config,
+      model: modelOverride,
+    }
+  }
+
   return input
 }
 
@@ -110,6 +121,12 @@ export class Dispatcher {
         // Check dependencies
         if (!areDependenciesMet(next, this.taskStore)) {
           continue
+        }
+
+        // Backend routing: slash-style backends route to a specific adapter
+        if (next.backend.includes('/')) {
+          const targetAdapter = next.backend.split('/')[0]
+          if (targetAdapter !== adapter.name) continue
         }
 
         candidate = next

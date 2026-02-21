@@ -123,6 +123,13 @@ adapters:
   #   provider: anthropic
   #   model: claude-sonnet-4-5-20250929
 
+  # - name: openrouter
+  #   type: api
+  #   provider: openrouter
+  #   task_types: [code, chat, completion]
+  #   model: anthropic/claude-sonnet-4-5-20250929
+  #   api_key: \${OPENROUTER_API_KEY}
+
 # WIP limits per task type
 wip_limits:
   code: 1

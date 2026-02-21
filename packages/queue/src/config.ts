@@ -8,6 +8,7 @@ import {
   AiderAdapter,
   ShellAdapter,
   RawApiAdapter,
+  OpenRouterAdapter,
   BaseCliAdapter,
 } from '@openskelo/adapters'
 import type { TaskInput, AdapterResult } from '@openskelo/adapters'
@@ -26,6 +27,7 @@ export interface AdapterYamlConfig {
   model?: string
   provider?: string
   timeout_ms?: number
+  api_key?: string
 }
 
 interface RawConfig {
@@ -190,6 +192,15 @@ const KNOWN_CLI_ADAPTERS: Record<string, () => ExecutionAdapter> = {
 export function resolveAdapters(configs: AdapterYamlConfig[]): ExecutionAdapter[] {
   return configs.map((cfg) => {
     if (cfg.type === 'api') {
+      if (cfg.provider === 'openrouter') {
+        const env: Record<string, string> = { ...cfg.env }
+        if (cfg.api_key) env.OPENROUTER_API_KEY = cfg.api_key
+        return new OpenRouterAdapter(cfg.task_types, {
+          model: cfg.model,
+          timeout_ms: cfg.timeout_ms,
+          env,
+        })
+      }
       return new RawApiAdapter()
     }
 
