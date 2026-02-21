@@ -119,7 +119,7 @@ export function createQueue(config: QueueConfig): Queue {
         { taskStore, priorityQueue, auditLog, dispatcher },
         apiConfig,
       ))
-      app.use(createDashboardRouter())
+      app.use(createDashboardRouter(config.server?.api_key))
 
       const port = config.server?.port ?? 4820
       const host = config.server?.host ?? '127.0.0.1'

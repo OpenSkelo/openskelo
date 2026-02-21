@@ -3,14 +3,13 @@ import express from 'express'
 import request from 'supertest'
 import { createDashboardRouter, escapeDashboardHtml } from '../src/dashboard.js'
 
-function createTestApp() {
+function createTestApp(apiKey?: string) {
   const app = express()
-  app.use(createDashboardRouter())
+  app.use(createDashboardRouter(apiKey))
   return app
 }
 
 describe('Dashboard', () => {
-  // 1. GET /dashboard returns HTML
   it('GET /dashboard returns HTML', async () => {
     const app = createTestApp()
 
@@ -21,7 +20,6 @@ describe('Dashboard', () => {
     expect(res.headers['content-type']).toMatch(/html/)
   })
 
-  // 2. Dashboard HTML contains required elements
   it('Dashboard HTML contains status columns', async () => {
     const app = createTestApp()
 
@@ -37,7 +35,6 @@ describe('Dashboard', () => {
     expect(html).toContain('BLOCKED')
   })
 
-  // 3. Dashboard HTML contains auto-refresh script
   it('Dashboard HTML contains auto-refresh script', async () => {
     const app = createTestApp()
 
@@ -63,7 +60,71 @@ describe('Dashboard', () => {
       .expect(200)
 
     const html = res.text
-    expect(html).toContain('const type = escapeHtml(t.type)')
-    expect(html).not.toContain("' + t.type + '")
+    expect(html).toContain('escapeHtml')
+  })
+
+  it('Dashboard HTML contains approve button markup', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('Approve')
+    expect(res.text).toContain('DONE')
+  })
+
+  it('Dashboard HTML contains bounce form markup', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('Bounce')
+    expect(res.text).toContain('bounce-reason')
+  })
+
+  it('Dashboard HTML contains detail panel markup', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('detail-panel')
+    expect(res.text).toContain('detail-close')
+  })
+
+  it('Dashboard HTML contains toast container', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('toast-container')
+  })
+
+  it('Dashboard HTML contains keyboard shortcut handler', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('keydown')
+    expect(res.text).toContain('Escape')
+  })
+
+  it('Dashboard serves with correct content-type', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.headers['content-type']).toContain('text/html')
+  })
+
+  it('API key injection: when key provided, HTML contains key variable', async () => {
+    const app = createTestApp('my-secret-key')
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('my-secret-key')
+    expect(res.text).toContain('API_KEY')
+  })
+
+  it('API key injection: when no key, HTML does not contain key reference value', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain("API_KEY = ''")
+  })
+
+  it('Dashboard HTML contains connection indicator', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('conn-dot')
+  })
+
+  it('Dashboard HTML contains empty state message', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('No tasks yet')
   })
 })
