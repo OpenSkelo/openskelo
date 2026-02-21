@@ -484,6 +484,19 @@ describe('REST API Router', () => {
     expect(res.body.id).toBeTruthy()
   })
 
+  it('POST /templates rejects invalid template_type', async () => {
+    const res = await request(app)
+      .post('/templates')
+      .send({
+        name: 'invalid-type',
+        template_type: 'weird',
+        definition: { type: 'code', summary: 'X', prompt: 'X', backend: 'x' },
+      })
+      .expect(400)
+
+    expect(res.body.error).toBe('template_type must be "task" or "pipeline"')
+  })
+
   it('GET /templates lists templates', async () => {
     await request(app)
       .post('/templates')
@@ -545,6 +558,20 @@ describe('REST API Router', () => {
 
     expect(res.body.tasks[0].summary).toBe('Fix auth')
     expect(res.body.tasks[0].prompt).toBe('Analyze src/auth.ts')
+  })
+
+  it('PUT /templates/:id rejects invalid template_type', async () => {
+    const createRes = await request(app)
+      .post('/templates')
+      .send({ name: 'put-invalid', template_type: 'task', definition: { type: 'code', summary: 'X', prompt: 'X', backend: 'x' } })
+      .expect(201)
+
+    const res = await request(app)
+      .put(`/templates/${createRes.body.id}`)
+      .send({ template_type: 'weird' })
+      .expect(400)
+
+    expect(res.body.error).toBe('template_type must be "task" or "pipeline"')
   })
 
   it('DELETE /templates/:id removes template', async () => {

@@ -20,47 +20,61 @@ export interface WebhookEvent {
   metadata?: Record<string, unknown>
 }
 
+function telegramEscape(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 function formatTelegram(event: WebhookEvent): string {
+  const safeSummary = telegramEscape(event.task_summary)
+  const safeType = telegramEscape(event.task_type)
+  const safeStatus = telegramEscape(event.task_status)
+  const safeTaskId = telegramEscape(event.task_id)
+  const safeReason = telegramEscape(String(event.metadata?.reason ?? 'Task blocked'))
+  const safePipelineId = telegramEscape(event.pipeline_id ?? 'unknown')
+
   switch (event.event) {
     case 'review':
       return [
         '\u{1F514} OpenSkelo: Task needs review',
         '',
-        `\u{1F4CB} ${event.task_summary}`,
-        `\u{1F3F7} Type: ${event.task_type} | Status: ${event.task_status}`,
-        `\u{1F517} Task ID: ${event.task_id}`,
+        `\u{1F4CB} ${safeSummary}`,
+        `\u{1F3F7} Type: ${safeType} | Status: ${safeStatus}`,
+        `\u{1F517} Task ID: ${safeTaskId}`,
         '',
-        `\u2192 openskelo approve ${event.task_id}`,
+        `\u2192 openskelo approve ${safeTaskId}`,
       ].join('\n')
 
     case 'blocked':
       return [
         '\u{1F6AB} OpenSkelo: Task blocked',
         '',
-        `\u{1F4CB} ${event.task_summary}`,
-        `\u26A0\uFE0F ${event.metadata?.reason ?? 'Task blocked'}`,
-        `\u{1F517} Task ID: ${event.task_id}`,
+        `\u{1F4CB} ${safeSummary}`,
+        `\u26A0\uFE0F ${safeReason}`,
+        `\u{1F517} Task ID: ${safeTaskId}`,
       ].join('\n')
 
     case 'done':
       return [
         '\u2705 OpenSkelo: Task complete',
         '',
-        `\u{1F4CB} ${event.task_summary}`,
-        `\u{1F3F7} Type: ${event.task_type}`,
-        `\u{1F517} Task ID: ${event.task_id}`,
+        `\u{1F4CB} ${safeSummary}`,
+        `\u{1F3F7} Type: ${safeType}`,
+        `\u{1F517} Task ID: ${safeTaskId}`,
       ].join('\n')
 
     case 'pipeline_complete':
       return [
         '\u{1F3C1} OpenSkelo: Pipeline complete',
         '',
-        `\u{1F4CB} Pipeline ${event.pipeline_id ?? 'unknown'}`,
+        `\u{1F4CB} Pipeline ${safePipelineId}`,
         event.pipeline_progress ? `${event.pipeline_progress} tasks done` : '',
       ].filter(Boolean).join('\n')
 
     default:
-      return `OpenSkelo: ${event.event} — ${event.task_summary} (${event.task_id})`
+      return `OpenSkelo: ${event.event} — ${safeSummary} (${safeTaskId})`
   }
 }
 
@@ -135,12 +149,15 @@ export class WebhookDispatcher {
     const timer = setTimeout(() => controller.abort(), timeout)
 
     try {
-      await fetch(webhook.url, {
+      const res = await fetch(webhook.url, {
         method,
         headers,
         body: method === 'POST' ? body : undefined,
         signal: controller.signal,
       })
+      if (!res.ok) {
+        console.error(`Webhook ${webhook.url} returned ${res.status}`)
+      }
     } catch {
       // Fire-and-forget — log but don't throw
     } finally {

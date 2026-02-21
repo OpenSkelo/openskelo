@@ -13,6 +13,8 @@ export interface ScheduleEntry {
   enabled: boolean
   last_run_at?: string
   next_run_at?: string
+  last_error?: string
+  last_error_at?: string
 }
 
 const SCHEDULE_SCHEMA = `
@@ -34,12 +36,26 @@ export function parseDuration(input: string): number {
   const value = parseInt(match[1], 10)
   const unit = match[2]
 
+  let durationMs: number
   switch (unit) {
-    case 'm': return value * 60 * 1000
-    case 'h': return value * 60 * 60 * 1000
-    case 'd': return value * 24 * 60 * 60 * 1000
-    default: throw new Error(`Unknown duration unit: ${unit}`)
+    case 'm':
+      durationMs = value * 60 * 1000
+      break
+    case 'h':
+      durationMs = value * 60 * 60 * 1000
+      break
+    case 'd':
+      durationMs = value * 24 * 60 * 60 * 1000
+      break
+    default:
+      throw new Error(`Unknown duration unit: ${unit}`)
   }
+
+  if (durationMs < 60000) {
+    throw new Error(`Duration must be at least 1m, got "${input}"`)
+  }
+
+  return durationMs
 }
 
 function ensureScheduleTable(db: Database.Database): void {
@@ -119,18 +135,25 @@ export class Scheduler {
 
     try {
       this.templateStore.instantiate(entry.template)
+
+      entry.last_run_at = now.toISOString()
+      entry.next_run_at = new Date(now.getTime() + entry.interval_ms).toISOString()
+      entry.last_error = undefined
+      entry.last_error_at = undefined
+
+      this.db.prepare(`
+        INSERT INTO schedules (template_name, last_run_at, next_run_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(template_name) DO UPDATE SET last_run_at = excluded.last_run_at, next_run_at = excluded.next_run_at
+      `).run(entry.template, entry.last_run_at, entry.next_run_at)
+
       console.log(`Scheduler: triggered template '${entry.template}'`)
     } catch (err) {
-      console.error(`Scheduler: failed to trigger template '${entry.template}':`, (err as Error).message)
+      const message = (err as Error).message
+      console.error(`Scheduler: failed to trigger template '${entry.template}':`, message)
+      entry.last_error = message
+      entry.last_error_at = now.toISOString()
+      // Intentionally do not advance last_run_at/next_run_at on failure
     }
-
-    entry.last_run_at = now.toISOString()
-    entry.next_run_at = new Date(now.getTime() + entry.interval_ms).toISOString()
-
-    this.db.prepare(`
-      INSERT INTO schedules (template_name, last_run_at, next_run_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(template_name) DO UPDATE SET last_run_at = excluded.last_run_at, next_run_at = excluded.next_run_at
-    `).run(entry.template, entry.last_run_at, entry.next_run_at)
   }
 }

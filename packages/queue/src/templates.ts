@@ -33,6 +33,14 @@ const TEMPLATE_SCHEMA = `
   )
 `
 
+const VALID_TEMPLATE_TYPES = new Set(['task', 'pipeline'])
+
+function assertTemplateType(value: string): void {
+  if (!VALID_TEMPLATE_TYPES.has(value)) {
+    throw new Error('template_type must be "task" or "pipeline"')
+  }
+}
+
 export function ensureTemplateTable(db: Database.Database): void {
   db.exec(TEMPLATE_SCHEMA)
 }
@@ -89,6 +97,8 @@ export class TemplateStore {
   }
 
   create(input: CreateTemplateInput): Template {
+    assertTemplateType(input.template_type)
+
     const id = ulid()
     const now = new Date().toISOString()
 
@@ -142,6 +152,7 @@ export class TemplateStore {
       params.push(updates.description)
     }
     if (updates.template_type !== undefined) {
+      assertTemplateType(updates.template_type)
       sets.push('template_type = ?')
       params.push(updates.template_type)
     }

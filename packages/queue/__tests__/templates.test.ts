@@ -62,6 +62,16 @@ describe('TemplateStore', () => {
       .toThrow()
   })
 
+  it('TemplateStore.create rejects invalid template_type', () => {
+    expect(() => {
+      templateStore.create({
+        name: 'bad-type',
+        template_type: 'weird' as unknown as 'task',
+        definition: taskDef,
+      })
+    }).toThrow('template_type must be "task" or "pipeline"')
+  })
+
   it('getByName returns correct template', () => {
     templateStore.create({ name: 'my-tpl', template_type: 'task', definition: taskDef })
     const found = templateStore.getByName('my-tpl')

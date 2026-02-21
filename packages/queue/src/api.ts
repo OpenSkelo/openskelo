@@ -379,6 +379,10 @@ export function createApiRouter(
         res.status(400).json({ error: 'Missing required fields: name, template_type, definition' })
         return
       }
+      if (!['task', 'pipeline'].includes(body.template_type)) {
+        res.status(400).json({ error: 'template_type must be "task" or "pipeline"' })
+        return
+      }
       const template = templateStore.create(body)
       res.status(201).json(template)
     } catch (err) {
@@ -431,12 +435,17 @@ export function createApiRouter(
     }
     try {
       const id = paramId(req)
+      const body = req.body ?? {}
+      if (body.template_type !== undefined && !['task', 'pipeline'].includes(body.template_type)) {
+        res.status(400).json({ error: 'template_type must be "task" or "pipeline"' })
+        return
+      }
       const existing = templateStore.getById(id) ?? templateStore.getByName(id)
       if (!existing) {
         res.status(404).json({ error: `Template ${id} not found` })
         return
       }
-      const updated = templateStore.update(existing.id, req.body ?? {})
+      const updated = templateStore.update(existing.id, body)
       res.json(updated)
     } catch {
       res.status(500).json({ error: 'Internal server error' })

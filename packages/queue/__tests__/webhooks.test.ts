@@ -81,6 +81,34 @@ describe('WebhookDispatcher', () => {
     expect(body.text).toContain('TASK-001')
   })
 
+  it('telegram template escapes HTML characters in task summary', async () => {
+    const webhooks: WebhookConfig[] = [
+      { url: 'https://api.telegram.org/bot123/sendMessage', events: ['review'], body_template: 'telegram' },
+    ]
+    const dispatcher = new WebhookDispatcher(webhooks)
+    dispatcher.emit(makeEvent({ task_summary: 'Fix <auth> & login' }))
+
+    await new Promise(r => setTimeout(r, 10))
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.text).toContain('Fix &lt;auth&gt; &amp; login')
+    expect(body.text).not.toContain('Fix <auth> & login')
+  })
+
+  it('telegram template escapes script tags in summary', async () => {
+    const webhooks: WebhookConfig[] = [
+      { url: 'https://api.telegram.org/bot123/sendMessage', events: ['review'], body_template: 'telegram' },
+    ]
+    const dispatcher = new WebhookDispatcher(webhooks)
+    dispatcher.emit(makeEvent({ task_summary: '<script>alert(1)</script>' }))
+
+    await new Promise(r => setTimeout(r, 10))
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.text).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
+    expect(body.text).not.toContain('<script>alert(1)</script>')
+  })
+
   it('slack template formats message correctly', async () => {
     const webhooks: WebhookConfig[] = [
       { url: 'https://hooks.slack.com/services/xxx', events: ['review'], body_template: 'slack' },
@@ -145,6 +173,21 @@ describe('WebhookDispatcher', () => {
     await new Promise(r => setTimeout(r, 50))
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('logs error when webhook returns non-2xx response', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500 })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const webhooks: WebhookConfig[] = [
+      { url: 'https://error.example.com/hook', events: ['review'] },
+    ]
+    const dispatcher = new WebhookDispatcher(webhooks)
+    dispatcher.emit(makeEvent())
+
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(errSpy).toHaveBeenCalledWith('Webhook https://error.example.com/hook returned 500')
   })
 
   it('emit does not throw even when all webhooks fail', () => {

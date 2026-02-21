@@ -32,6 +32,14 @@ describe('parseDuration', () => {
     expect(() => parseDuration('')).toThrow('Invalid duration')
     expect(() => parseDuration('1s')).toThrow('Invalid duration')
   })
+
+  it('rejects zero-minute duration', () => {
+    expect(() => parseDuration('0m')).toThrow('Duration must be at least 1m, got "0m"')
+  })
+
+  it('rejects zero-hour duration', () => {
+    expect(() => parseDuration('0h')).toThrow('Duration must be at least 1m, got "0h"')
+  })
 })
 
 describe('Scheduler', () => {
@@ -187,6 +195,34 @@ describe('Scheduler', () => {
       scheduler.start()
       vi.advanceTimersByTime(3600000)
     }).not.toThrow()
+
+    scheduler.stop()
+  })
+
+  it('failed trigger does not advance last_run_at', () => {
+    const scheduler = new Scheduler(templateStore, db, [
+      { template: 'nonexistent-template', every: '1h' },
+    ])
+
+    scheduler.start()
+
+    const status = scheduler.getStatus()[0]
+    expect(status.last_run_at).toBeUndefined()
+    expect(status.next_run_at).toBeUndefined()
+
+    scheduler.stop()
+  })
+
+  it('failed trigger sets last_error and last_error_at', () => {
+    const scheduler = new Scheduler(templateStore, db, [
+      { template: 'nonexistent-template', every: '1h' },
+    ])
+
+    scheduler.start()
+
+    const status = scheduler.getStatus()[0]
+    expect(status.last_error).toContain('Template not found')
+    expect(status.last_error_at).toBeTruthy()
 
     scheduler.stop()
   })
