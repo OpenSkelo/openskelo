@@ -40,6 +40,9 @@ export interface Task {
   pipeline_step: number | null
   gates: unknown[]
   metadata: Record<string, unknown>
+  auto_review: Record<string, unknown> | null
+  parent_task_id: string | null
+  loop_iteration: number
   created_at: string
   updated_at: string
 }
@@ -61,6 +64,9 @@ export interface CreateTaskInput {
   pipeline_step?: number
   gates?: unknown[]
   metadata?: Record<string, unknown>
+  auto_review?: Record<string, unknown>
+  parent_task_id?: string
+  loop_iteration?: number
 }
 
 interface ListFilters {
@@ -101,6 +107,9 @@ const ALLOWED_UPDATE_COLUMNS = new Set<string>([
   'pipeline_step',
   'gates',
   'metadata',
+  'auto_review',
+  'parent_task_id',
+  'loop_iteration',
 ] as const)
 
 export interface TaskStoreConfig {
@@ -129,6 +138,7 @@ export class TaskStore {
         max_attempts, max_bounces,
         depends_on, pipeline_id, pipeline_step,
         gates, metadata,
+        auto_review, parent_task_id, loop_iteration,
         created_at, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?,
@@ -137,6 +147,7 @@ export class TaskStore {
         ?, ?,
         ?, ?, ?,
         ?, ?,
+        ?, ?, ?,
         ?, ?
       )
     `).run(
@@ -158,6 +169,9 @@ export class TaskStore {
       input.pipeline_step ?? null,
       serializeJson(input.gates ?? []),
       serializeJson(input.metadata ?? {}),
+      serializeJson(input.auto_review ?? null),
+      input.parent_task_id ?? null,
+      input.loop_iteration ?? 0,
       now,
       now,
     )

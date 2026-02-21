@@ -17,6 +17,7 @@ import type { WebhookConfig } from './webhooks.js'
 import { TemplateStore } from './templates.js'
 import { Scheduler } from './scheduler.js'
 import type { ScheduleConfig } from './scheduler.js'
+import { ReviewHandler } from './review-handler.js'
 import { TaskStatus } from './state-machine.js'
 import express from 'express'
 
@@ -87,6 +88,16 @@ export function createQueue(config: QueueConfig): Queue {
       timestamp: new Date().toISOString(),
     })
 
+    // Auto-review: when task reaches REVIEW, create review children
+    if (to === TaskStatus.REVIEW) {
+      reviewHandler.onTaskReview(task)
+    }
+
+    // Auto-review: when review child completes, apply strategy
+    if (to === TaskStatus.DONE && task.type === 'review' && task.parent_task_id) {
+      reviewHandler.onReviewChildComplete(task)
+    }
+
     if (to === TaskStatus.DONE && task.pipeline_id) {
       const pipelineTasks = taskStoreRef.list({ pipeline_id: task.pipeline_id })
       const allDone = pipelineTasks.every(t => t.status === TaskStatus.DONE)
@@ -105,11 +116,14 @@ export function createQueue(config: QueueConfig): Queue {
     }
   }
 
+  const auditLog = new AuditLog(db)
+  let reviewHandler: ReviewHandler
+
   const taskStore = new TaskStore(db, { onTransition })
   taskStoreRef = taskStore
+  reviewHandler = new ReviewHandler(taskStore, auditLog)
   const templateStore = new TemplateStore(db, taskStore)
   const priorityQueue = new PriorityQueue(db)
-  const auditLog = new AuditLog(db)
 
   const adapters = config.adapters ?? []
   const leaseTtlMs = (config.leases?.ttl_seconds ?? 1200) * 1000

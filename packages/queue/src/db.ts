@@ -8,8 +8,20 @@ export function createDatabase(path: string): Database.Database {
   db.pragma('foreign_keys = ON')
 
   db.exec(SCHEMA)
+  runMigrations(db)
 
   return db
+}
+
+function runMigrations(db: Database.Database): void {
+  const migrations = [
+    'ALTER TABLE tasks ADD COLUMN auto_review TEXT',
+    'ALTER TABLE tasks ADD COLUMN parent_task_id TEXT',
+    'ALTER TABLE tasks ADD COLUMN loop_iteration INTEGER DEFAULT 0',
+  ]
+  for (const sql of migrations) {
+    try { db.exec(sql) } catch { /* column already exists */ }
+  }
 }
 
 const SCHEMA = `

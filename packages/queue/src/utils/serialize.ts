@@ -8,6 +8,7 @@ export const TASK_JSON_COLUMNS = [
   'depends_on',
   'gates',
   'metadata',
+  'auto_review',
 ] as const
 
 export function serializeJson(value: unknown): string | null {
@@ -35,5 +36,6 @@ export function deserializeTaskRow(row: Record<string, unknown>): Record<string,
     depends_on: parseJsonOr(row.depends_on as string | null, []),
     gates: parseJsonOr(row.gates as string | null, []),
     metadata: parseJsonOr(row.metadata as string | null, {}),
+    auto_review: parseJsonOr(row.auto_review as string | null, null),
   }
 }

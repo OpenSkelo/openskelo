@@ -71,6 +71,10 @@ export type { Template, CreateTemplateInput } from './templates.js'
 export { Scheduler, parseDuration } from './scheduler.js'
 export type { ScheduleConfig, ScheduleEntry } from './scheduler.js'
 
+// Review Handler
+export { ReviewHandler, buildReviewPrompt, buildMergePrompt, parseReviewDecision } from './review-handler.js'
+export type { ReviewerConfig, AutoReviewConfig, ReviewDecision } from './review-handler.js'
+
 // Errors
 export {
   TransitionError,
