@@ -12,6 +12,7 @@ import {
 } from '@openskelo/adapters'
 import type { TaskInput, AdapterResult } from '@openskelo/adapters'
 import type { QueueConfig } from './factory.js'
+import type { WebhookConfig } from './webhooks.js'
 
 export interface AdapterYamlConfig {
   name: string
@@ -48,6 +49,14 @@ interface RawConfig {
     api_key?: string
   }
   gates?: Record<string, unknown[]>
+  webhooks?: Array<{
+    url: string
+    events: string[]
+    headers?: Record<string, string>
+    method?: string
+    body_template?: string
+    timeout_ms?: number
+  }>
 }
 
 function substituteEnvVars(text: string): string {
@@ -69,7 +78,7 @@ function substituteEnvVars(text: string): string {
   })
 }
 
-export function loadConfig(configPath?: string): QueueConfig & { gates?: Record<string, unknown[]> } {
+export function loadConfig(configPath?: string): QueueConfig & { gates?: Record<string, unknown[]>; webhooks?: WebhookConfig[] } {
   const resolvedPath = configPath ?? path.join(process.cwd(), 'openskelo.yaml')
 
   if (!fs.existsSync(resolvedPath)) {
@@ -84,7 +93,7 @@ export function loadConfig(configPath?: string): QueueConfig & { gates?: Record<
     throw new Error('Config validation failed: db_path is required')
   }
 
-  const config: QueueConfig & { gates?: Record<string, unknown[]> } = {
+  const config: QueueConfig & { gates?: Record<string, unknown[]>; webhooks?: WebhookConfig[] } = {
     db_path: raw.db_path,
   }
 
@@ -120,6 +129,17 @@ export function loadConfig(configPath?: string): QueueConfig & { gates?: Record<
 
   if (raw.gates) {
     config.gates = raw.gates
+  }
+
+  if (raw.webhooks) {
+    config.webhooks = raw.webhooks.map((w): WebhookConfig => ({
+      url: w.url,
+      events: w.events,
+      headers: w.headers,
+      method: (w.method as 'POST' | 'GET') ?? 'POST',
+      body_template: (w.body_template as 'default' | 'telegram' | 'slack') ?? 'default',
+      timeout_ms: w.timeout_ms ?? 5000,
+    }))
   }
 
   return config

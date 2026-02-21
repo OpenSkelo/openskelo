@@ -185,6 +185,51 @@ adapters:
     expect(config.wip_limits).toEqual({ code: 3, script: 1, default: 2 })
   })
 
+  it('config with webhooks section parses correctly', () => {
+    const configPath = writeYaml('openskelo.yaml', `
+db_path: ./test.db
+
+webhooks:
+  - url: https://example.com/hook
+    events: [review, blocked]
+  - url: https://hooks.slack.com/services/xxx
+    events: [review, done]
+    body_template: slack
+
+adapters:
+  - name: shell
+    type: cli
+    task_types: [script]
+`)
+
+    const config = loadConfig(configPath)
+    expect(config.webhooks).toHaveLength(2)
+    expect(config.webhooks![0].url).toBe('https://example.com/hook')
+    expect(config.webhooks![0].events).toEqual(['review', 'blocked'])
+    expect(config.webhooks![1].body_template).toBe('slack')
+  })
+
+  it('webhook URLs get env var substitution', () => {
+    vi.stubEnv('TEST_BOT_TOKEN', 'my-bot-token')
+
+    const configPath = writeYaml('openskelo.yaml', `
+db_path: ./test.db
+
+webhooks:
+  - url: https://api.telegram.org/bot\${TEST_BOT_TOKEN}/sendMessage
+    events: [review]
+    body_template: telegram
+
+adapters:
+  - name: shell
+    type: cli
+    task_types: [script]
+`)
+
+    const config = loadConfig(configPath)
+    expect(config.webhooks![0].url).toBe('https://api.telegram.org/botmy-bot-token/sendMessage')
+  })
+
   it('handles minimal config (just db_path and one adapter)', () => {
     const configPath = writeYaml('openskelo.yaml', `
 db_path: ./minimal.db

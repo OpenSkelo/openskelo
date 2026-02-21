@@ -121,6 +121,19 @@ gates:
   #         approved:
   #           type: boolean
   #       required: [approved]
+
+# Webhooks (optional)
+# webhooks:
+#   - url: https://api.telegram.org/bot\${TELEGRAM_BOT_TOKEN}/sendMessage
+#     events: [review, blocked]
+#     body_template: telegram
+#   - url: https://hooks.slack.com/services/\${SLACK_WEBHOOK_PATH}
+#     events: [review, blocked, done, pipeline_complete]
+#     body_template: slack
+#   - url: https://example.com/hooks/openskelo
+#     events: ["*"]
+#     headers:
+#       Authorization: "Bearer \${WEBHOOK_SECRET}"
 `
 }
 

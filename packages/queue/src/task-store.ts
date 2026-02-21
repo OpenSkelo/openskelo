@@ -103,11 +103,17 @@ const ALLOWED_UPDATE_COLUMNS = new Set<string>([
   'metadata',
 ] as const)
 
+export interface TaskStoreConfig {
+  onTransition?: (task: Task, from: TaskStatus, to: TaskStatus) => void
+}
+
 export class TaskStore {
   private db: Database.Database
+  private config: TaskStoreConfig
 
-  constructor(db: Database.Database) {
+  constructor(db: Database.Database, config?: TaskStoreConfig) {
     this.db = db
+    this.config = config ?? {}
   }
 
   create(input: CreateTaskInput): Task {
@@ -221,10 +227,12 @@ export class TaskStore {
       })
 
       const updates = applyTransition(current, target, ctx)
-      return this.updateInternal(taskId, updates, { allowStatus: true })
+      return { updated: this.updateInternal(taskId, updates, { allowStatus: true }), from: current.status }
     })
 
-    return tx.immediate(id, to, context)
+    const { updated, from } = tx.immediate(id, to, context)
+    this.config.onTransition?.(updated, from, to)
+    return updated
   }
 
   delete(id: string): boolean {

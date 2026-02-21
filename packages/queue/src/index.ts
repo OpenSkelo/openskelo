@@ -56,6 +56,13 @@ export type { QueueConfig, Queue } from './factory.js'
 export { loadConfig, resolveAdapters } from './config.js'
 export type { AdapterYamlConfig } from './config.js'
 
+// Webhooks
+export { WebhookDispatcher } from './webhooks.js'
+export type { WebhookConfig, WebhookEvent } from './webhooks.js'
+
+// Task Store Config
+export type { TaskStoreConfig } from './task-store.js'
+
 // Errors
 export {
   TransitionError,

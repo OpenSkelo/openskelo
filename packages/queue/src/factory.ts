@@ -2,6 +2,7 @@ import type { ExecutionAdapter } from '@openskelo/adapters'
 import type Database from 'better-sqlite3'
 import { createDatabase } from './db.js'
 import { TaskStore } from './task-store.js'
+import type { Task } from './task-store.js'
 import { PriorityQueue } from './priority-queue.js'
 import { AuditLog } from './audit.js'
 import { Dispatcher } from './dispatcher.js'
@@ -11,6 +12,9 @@ import type { WatchdogConfig } from './watchdog.js'
 import { createApiRouter } from './api.js'
 import type { ApiConfig } from './api.js'
 import { createDashboardRouter } from './dashboard.js'
+import { WebhookDispatcher } from './webhooks.js'
+import type { WebhookConfig } from './webhooks.js'
+import { TaskStatus } from './state-machine.js'
 import express from 'express'
 
 export interface QueueConfig {
@@ -36,6 +40,7 @@ export interface QueueConfig {
     host?: string
     api_key?: string
   }
+  webhooks?: WebhookConfig[]
 }
 
 export interface Queue {
@@ -52,7 +57,50 @@ export interface Queue {
 
 export function createQueue(config: QueueConfig): Queue {
   const db = createDatabase(config.db_path)
-  const taskStore = new TaskStore(db)
+  const webhookDispatcher = new WebhookDispatcher(config.webhooks ?? [])
+
+  const eventMap: Partial<Record<TaskStatus, string>> = {
+    [TaskStatus.REVIEW]: 'review',
+    [TaskStatus.BLOCKED]: 'blocked',
+    [TaskStatus.DONE]: 'done',
+  }
+
+  let taskStoreRef: TaskStore
+
+  const onTransition = (task: Task, _from: TaskStatus, to: TaskStatus) => {
+    const eventName = eventMap[to]
+    if (!eventName) return
+
+    webhookDispatcher.emit({
+      event: eventName,
+      task_id: task.id,
+      task_summary: task.summary,
+      task_type: task.type,
+      task_status: to,
+      pipeline_id: task.pipeline_id ?? undefined,
+      timestamp: new Date().toISOString(),
+    })
+
+    if (to === TaskStatus.DONE && task.pipeline_id) {
+      const pipelineTasks = taskStoreRef.list({ pipeline_id: task.pipeline_id })
+      const allDone = pipelineTasks.every(t => t.status === TaskStatus.DONE)
+      if (allDone) {
+        webhookDispatcher.emit({
+          event: 'pipeline_complete',
+          task_id: task.id,
+          task_summary: `Pipeline ${task.pipeline_id}`,
+          task_type: task.type,
+          task_status: 'completed',
+          pipeline_id: task.pipeline_id,
+          pipeline_progress: `${pipelineTasks.length}/${pipelineTasks.length}`,
+          timestamp: new Date().toISOString(),
+        })
+      }
+    }
+  }
+
+  const taskStore = new TaskStore(db, { onTransition })
+  taskStoreRef = taskStore
   const priorityQueue = new PriorityQueue(db)
   const auditLog = new AuditLog(db)
 
@@ -116,7 +164,7 @@ export function createQueue(config: QueueConfig): Queue {
       }
 
       app.use(createApiRouter(
-        { taskStore, priorityQueue, auditLog, dispatcher },
+        { db, taskStore, priorityQueue, auditLog, dispatcher },
         apiConfig,
       ))
       app.use(createDashboardRouter(config.server?.api_key))

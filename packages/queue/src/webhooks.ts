@@ -1,0 +1,144 @@
+export interface WebhookConfig {
+  url: string
+  events: string[]
+  headers?: Record<string, string>
+  method?: 'POST' | 'GET'
+  body_template?: 'default' | 'telegram' | 'slack'
+  timeout_ms?: number
+}
+
+export interface WebhookEvent {
+  event: string
+  task_id: string
+  task_summary: string
+  task_type: string
+  task_status: string
+  pipeline_id?: string
+  pipeline_progress?: string
+  timestamp: string
+  metadata?: Record<string, unknown>
+}
+
+function formatTelegram(event: WebhookEvent): string {
+  switch (event.event) {
+    case 'review':
+      return [
+        '\u{1F514} OpenSkelo: Task needs review',
+        '',
+        `\u{1F4CB} ${event.task_summary}`,
+        `\u{1F3F7} Type: ${event.task_type} | Status: ${event.task_status}`,
+        `\u{1F517} Task ID: ${event.task_id}`,
+        '',
+        `\u2192 openskelo approve ${event.task_id}`,
+      ].join('\n')
+
+    case 'blocked':
+      return [
+        '\u{1F6AB} OpenSkelo: Task blocked',
+        '',
+        `\u{1F4CB} ${event.task_summary}`,
+        `\u26A0\uFE0F ${event.metadata?.reason ?? 'Task blocked'}`,
+        `\u{1F517} Task ID: ${event.task_id}`,
+      ].join('\n')
+
+    case 'done':
+      return [
+        '\u2705 OpenSkelo: Task complete',
+        '',
+        `\u{1F4CB} ${event.task_summary}`,
+        `\u{1F3F7} Type: ${event.task_type}`,
+        `\u{1F517} Task ID: ${event.task_id}`,
+      ].join('\n')
+
+    case 'pipeline_complete':
+      return [
+        '\u{1F3C1} OpenSkelo: Pipeline complete',
+        '',
+        `\u{1F4CB} Pipeline ${event.pipeline_id ?? 'unknown'}`,
+        event.pipeline_progress ? `${event.pipeline_progress} tasks done` : '',
+      ].filter(Boolean).join('\n')
+
+    default:
+      return `OpenSkelo: ${event.event} — ${event.task_summary} (${event.task_id})`
+  }
+}
+
+function formatSlack(event: WebhookEvent): string {
+  switch (event.event) {
+    case 'review':
+      return `\u{1F514} *OpenSkelo*: Task _${event.task_summary}_ needs review (${event.task_type}/${event.task_status})`
+    case 'blocked':
+      return `\u{1F6AB} *OpenSkelo*: Task _${event.task_summary}_ blocked`
+    case 'done':
+      return `\u2705 *OpenSkelo*: Task _${event.task_summary}_ complete (${event.task_type})`
+    case 'pipeline_complete':
+      return `\u{1F3C1} *OpenSkelo*: Pipeline ${event.pipeline_id ?? 'unknown'} complete (${event.pipeline_progress ?? '?'})`
+    default:
+      return `*OpenSkelo*: ${event.event} — _${event.task_summary}_ (${event.task_id})`
+  }
+}
+
+function buildBody(webhook: WebhookConfig, event: WebhookEvent): string {
+  const template = webhook.body_template ?? 'default'
+
+  if (template === 'telegram') {
+    return JSON.stringify({
+      text: formatTelegram(event),
+    })
+  }
+
+  if (template === 'slack') {
+    return JSON.stringify({
+      text: formatSlack(event),
+    })
+  }
+
+  return JSON.stringify(event)
+}
+
+function matchesEvent(webhook: WebhookConfig, event: WebhookEvent): boolean {
+  return webhook.events.includes('*') || webhook.events.includes(event.event)
+}
+
+export class WebhookDispatcher {
+  private webhooks: WebhookConfig[]
+
+  constructor(webhooks: WebhookConfig[]) {
+    this.webhooks = webhooks
+  }
+
+  emit(event: WebhookEvent): void {
+    const matching = this.webhooks.filter(w => matchesEvent(w, event))
+    if (matching.length === 0) return
+
+    void Promise.allSettled(
+      matching.map(webhook => this.send(webhook, event)),
+    )
+  }
+
+  private async send(webhook: WebhookConfig, event: WebhookEvent): Promise<void> {
+    const method = webhook.method ?? 'POST'
+    const timeout = webhook.timeout_ms ?? 5000
+    const body = buildBody(webhook, event)
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...webhook.headers,
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+
+    try {
+      await fetch(webhook.url, {
+        method,
+        headers,
+        body: method === 'POST' ? body : undefined,
+        signal: controller.signal,
+      })
+    } catch {
+      // Fire-and-forget — log but don't throw
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+}

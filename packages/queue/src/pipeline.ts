@@ -1,3 +1,4 @@
+import type Database from 'better-sqlite3'
 import { ulid } from './id.js'
 import type { TaskStore, Task, CreateTaskInput } from './task-store.js'
 import { TaskStatus } from './state-machine.js'
@@ -46,6 +47,7 @@ export function createPipeline(
 export function createDagPipeline(
   store: TaskStore,
   input: CreateDagPipelineInput,
+  db?: Database.Database,
 ): Task[] {
   const { tasks: nodes } = input
 
@@ -108,34 +110,41 @@ export function createDagPipeline(
   // Sort nodes by step for creation order (parents before children)
   const sorted = [...nodes].sort((a, b) => stepMap.get(a.key)! - stepMap.get(b.key)!)
 
-  // Create tasks
-  const pipelineId = ulid()
-  const keyToId = new Map<string, string>()
-  const created: Task[] = []
+  // Create tasks — wrap in transaction if db provided
+  const createAll = () => {
+    const pipelineId = ulid()
+    const keyToId = new Map<string, string>()
+    const created: Task[] = []
 
-  for (const node of sorted) {
-    const dependsOnIds = (node.depends_on ?? []).map(k => keyToId.get(k)!)
-    const input: CreateTaskInput = {
-      type: node.type,
-      summary: node.summary,
-      prompt: node.prompt,
-      backend: node.backend,
-      pipeline_id: pipelineId,
-      pipeline_step: stepMap.get(node.key)!,
-      depends_on: dependsOnIds,
+    for (const node of sorted) {
+      const dependsOnIds = (node.depends_on ?? []).map(k => keyToId.get(k)!)
+      const taskInput: CreateTaskInput = {
+        type: node.type,
+        summary: node.summary,
+        prompt: node.prompt,
+        backend: node.backend,
+        pipeline_id: pipelineId,
+        pipeline_step: stepMap.get(node.key)!,
+        depends_on: dependsOnIds,
+      }
+      if (node.priority !== undefined) taskInput.priority = node.priority
+      if (node.acceptance_criteria) taskInput.acceptance_criteria = node.acceptance_criteria
+      if (node.definition_of_done) taskInput.definition_of_done = node.definition_of_done
+      if (node.max_attempts !== undefined) taskInput.max_attempts = node.max_attempts
+      if (node.max_bounces !== undefined) taskInput.max_bounces = node.max_bounces
+
+      const task = store.create(taskInput)
+      keyToId.set(node.key, task.id)
+      created.push(task)
     }
-    if (node.priority !== undefined) input.priority = node.priority
-    if (node.acceptance_criteria) input.acceptance_criteria = node.acceptance_criteria
-    if (node.definition_of_done) input.definition_of_done = node.definition_of_done
-    if (node.max_attempts !== undefined) input.max_attempts = node.max_attempts
-    if (node.max_bounces !== undefined) input.max_bounces = node.max_bounces
 
-    const task = store.create(input)
-    keyToId.set(node.key, task.id)
-    created.push(task)
+    return created
   }
 
-  return created
+  if (db) {
+    return db.transaction(createAll)()
+  }
+  return createAll()
 }
 
 function assertDagNoCycle(adjMap: Map<string, string[]>): void {

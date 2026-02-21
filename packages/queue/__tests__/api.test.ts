@@ -64,7 +64,7 @@ describe('REST API Router', () => {
     auditLog = new AuditLog(db)
     const adapter = createHangingAdapter('claude-code', ['code'])
     dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
-    deps = { taskStore, priorityQueue, auditLog, dispatcher }
+    deps = { db, taskStore, priorityQueue, auditLog, dispatcher }
     app = createTestApp(deps)
   })
 
@@ -420,5 +420,48 @@ describe('REST API Router', () => {
     expect(res.body[0]).toHaveProperty('task_count')
     expect(res.body[0]).toHaveProperty('completed')
     expect(res.body[0]).toHaveProperty('status')
+  })
+
+  it('POST /pipelines rejects > 50 nodes', async () => {
+    const tasks = Array.from({ length: 51 }, (_, i) => ({
+      key: `task-${i}`,
+      type: 'code',
+      summary: `Task ${i}`,
+      prompt: `Do ${i}`,
+      backend: 'claude-code',
+    }))
+
+    const res = await request(app)
+      .post('/pipelines')
+      .send({ tasks })
+      .expect(400)
+
+    expect(res.body.error).toContain('maximum of 50')
+  })
+
+  it('POST /pipelines rejects node with > 10 dependencies', async () => {
+    const roots = Array.from({ length: 11 }, (_, i) => ({
+      key: `root-${i}`,
+      type: 'code',
+      summary: `Root ${i}`,
+      prompt: `Do ${i}`,
+      backend: 'claude-code',
+    }))
+
+    const merge = {
+      key: 'merge',
+      type: 'code',
+      summary: 'Merge',
+      prompt: 'Merge all',
+      backend: 'claude-code',
+      depends_on: roots.map(r => r.key),
+    }
+
+    const res = await request(app)
+      .post('/pipelines')
+      .send({ tasks: [...roots, merge] })
+      .expect(400)
+
+    expect(res.body.error).toContain('more than 10 dependencies')
   })
 })

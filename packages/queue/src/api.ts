@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
+import type Database from 'better-sqlite3'
 import type { TaskStore } from './task-store.js'
 import type { PriorityQueue } from './priority-queue.js'
 import type { AuditLog } from './audit.js'
@@ -9,12 +10,16 @@ import { TransitionError } from './errors.js'
 import { createDagPipeline } from './pipeline.js'
 import type { CreateDagPipelineInput } from './pipeline.js'
 
+const MAX_PIPELINE_NODES = 50
+const MAX_DEPS_PER_NODE = 10
+
 export interface ApiConfig {
   api_key?: string
   lease_ttl_ms?: number
 }
 
 export interface ApiDependencies {
+  db: Database.Database
   taskStore: TaskStore
   priorityQueue: PriorityQueue
   auditLog: AuditLog
@@ -49,7 +54,7 @@ export function createApiRouter(
   config?: ApiConfig,
 ): Router {
   const router = Router()
-  const { taskStore, priorityQueue, auditLog, dispatcher } = deps
+  const { db, taskStore, priorityQueue, auditLog, dispatcher } = deps
 
   if (config?.api_key) {
     router.use(authMiddleware(config.api_key))
@@ -269,6 +274,11 @@ export function createApiRouter(
         return
       }
 
+      if (body.tasks.length > MAX_PIPELINE_NODES) {
+        res.status(400).json({ error: `Pipeline exceeds maximum of ${MAX_PIPELINE_NODES} tasks` })
+        return
+      }
+
       for (const node of body.tasks) {
         if (!node.key || !node.type || !node.summary || !node.prompt || !node.backend) {
           res.status(400).json({
@@ -276,9 +286,15 @@ export function createApiRouter(
           })
           return
         }
+        if (node.depends_on && node.depends_on.length > MAX_DEPS_PER_NODE) {
+          res.status(400).json({
+            error: `Task "${node.key}" has more than ${MAX_DEPS_PER_NODE} dependencies`,
+          })
+          return
+        }
       }
 
-      const tasks = createDagPipeline(taskStore, body)
+      const tasks = createDagPipeline(taskStore, body, db)
       res.status(201).json({
         pipeline_id: tasks[0].pipeline_id,
         tasks,

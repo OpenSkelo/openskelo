@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createDatabase } from '../src/db.js'
 import { TaskStore } from '../src/task-store.js'
 import { TaskStatus } from '../src/state-machine.js'
@@ -202,6 +202,30 @@ describe('Pipeline', () => {
 
     it('rejects empty pipeline', () => {
       expect(() => createDagPipeline(store, { tasks: [] })).toThrow('at least one task')
+    })
+
+    it('rolls back on partial failure when db is provided', () => {
+      const originalCreate = store.create.bind(store)
+      let callCount = 0
+      vi.spyOn(store, 'create').mockImplementation((input) => {
+        callCount++
+        if (callCount === 3) throw new Error('Simulated DB failure')
+        return originalCreate(input)
+      })
+
+      const beforeCount = store.list({}).length
+
+      expect(() => createDagPipeline(store, {
+        tasks: [
+          node('a'),
+          node('b'),
+          node('c', ['a', 'b']),
+        ],
+      }, db)).toThrow('Simulated DB failure')
+
+      // Transaction rolled back — no new tasks in DB
+      const afterCount = store.list({}).length
+      expect(afterCount).toBe(beforeCount)
     })
   })
 
