@@ -41,7 +41,7 @@ describe('PriorityQueue', () => {
     expect(queue.getNext()).toBeNull()
   })
 
-  it('respects priority DESC ordering', () => {
+  it('respects priority ordering (lower number runs first)', () => {
     store.create({ ...base, summary: 'P2', priority: 2 })
     store.create({ ...base, summary: 'P0', priority: 0 })
     store.create({ ...base, summary: 'P1', priority: 1 })
@@ -117,7 +117,9 @@ describe('PriorityQueue', () => {
     // Order should be: t1, t3, t2
     const next1 = queue.getNext()!
     expect(next1.id).toBe(t1.id)
-    store.update(t1.id, { status: TaskStatus.DONE })
+    store.transition(t1.id, TaskStatus.IN_PROGRESS, { lease_owner: 'adapter-1' })
+    store.transition(t1.id, TaskStatus.REVIEW, { result: 'done' })
+    store.transition(t1.id, TaskStatus.DONE)
     const next2 = queue.getNext()!
     expect(next2.id).toBe(t3.id)
   })
@@ -125,8 +127,10 @@ describe('PriorityQueue', () => {
   it('only returns PENDING status tasks', () => {
     const t1 = store.create(base)
     const t2 = store.create(base)
-    store.update(t1.id, { status: TaskStatus.IN_PROGRESS })
-    store.update(t2.id, { status: TaskStatus.DONE })
+    store.transition(t1.id, TaskStatus.IN_PROGRESS, { lease_owner: 'adapter-1' })
+    store.transition(t2.id, TaskStatus.IN_PROGRESS, { lease_owner: 'adapter-2' })
+    store.transition(t2.id, TaskStatus.REVIEW, { result: 'done' })
+    store.transition(t2.id, TaskStatus.DONE)
     store.create(base) // This one stays PENDING
 
     const all = store.list()

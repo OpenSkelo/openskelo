@@ -1,6 +1,17 @@
 import type Database from 'better-sqlite3'
 import { ulid } from './id.js'
-import { TaskStatus } from './state-machine.js'
+import {
+  TaskStatus,
+  applyTransition,
+  type TransitionContext,
+  validateTransition,
+} from './state-machine.js'
+import {
+  deserializeTaskRow,
+  parseJsonOr,
+  serializeJson,
+  TASK_JSON_COLUMNS,
+} from './utils/serialize.js'
 
 export interface Task {
   id: string
@@ -65,44 +76,32 @@ interface CountFilters {
   type?: string
 }
 
-// JSON columns that need serialize/deserialize
-const JSON_COLUMNS = [
+const ALLOWED_UPDATE_COLUMNS = new Set<string>([
+  'type',
+  'priority',
+  'manual_rank',
+  'summary',
+  'prompt',
   'acceptance_criteria',
   'definition_of_done',
+  'backend',
   'backend_config',
+  'result',
+  'evidence_ref',
+  'lease_owner',
+  'lease_expires_at',
+  'attempt_count',
+  'bounce_count',
+  'max_attempts',
+  'max_bounces',
+  'last_error',
   'feedback_history',
   'depends_on',
+  'pipeline_id',
+  'pipeline_step',
   'gates',
   'metadata',
-] as const
-
-function serializeJson(value: unknown): string | null {
-  if (value === null || value === undefined) return null
-  return JSON.stringify(value)
-}
-
-function deserializeTask(row: Record<string, unknown>): Task {
-  return {
-    ...row,
-    status: row.status as TaskStatus,
-    acceptance_criteria: parseJsonOr(row.acceptance_criteria as string | null, []),
-    definition_of_done: parseJsonOr(row.definition_of_done as string | null, []),
-    backend_config: parseJsonOr(row.backend_config as string | null, null),
-    feedback_history: parseJsonOr(row.feedback_history as string | null, []),
-    depends_on: parseJsonOr(row.depends_on as string | null, []),
-    gates: parseJsonOr(row.gates as string | null, []),
-    metadata: parseJsonOr(row.metadata as string | null, {}),
-  } as unknown as Task
-}
-
-function parseJsonOr<T>(value: string | null, fallback: T): T {
-  if (value === null || value === undefined) return fallback
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return fallback
-  }
-}
+] as const)
 
 export class TaskStore {
   private db: Database.Database
@@ -114,6 +113,7 @@ export class TaskStore {
   create(input: CreateTaskInput): Task {
     const id = ulid()
     const now = new Date().toISOString()
+    const dependsOn = this.validateDependencies(id, input.depends_on ?? [])
 
     this.db.prepare(`
       INSERT INTO tasks (
@@ -147,7 +147,7 @@ export class TaskStore {
       serializeJson(input.backend_config ?? null),
       input.max_attempts ?? 5,
       input.max_bounces ?? 3,
-      serializeJson(input.depends_on ?? []),
+      serializeJson(dependsOn),
       input.pipeline_id ?? null,
       input.pipeline_step ?? null,
       serializeJson(input.gates ?? []),
@@ -162,7 +162,7 @@ export class TaskStore {
   getById(id: string): Task | null {
     const row = this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined
     if (!row) return null
-    return deserializeTask(row)
+    return deserializeTaskRow(row) as Task
   }
 
   list(filters?: ListFilters): Task[] {
@@ -198,29 +198,33 @@ export class TaskStore {
     }
 
     const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[]
-    return rows.map(deserializeTask)
+    return rows.map(row => deserializeTaskRow(row) as Task)
   }
 
   update(id: string, fields: Partial<Task>): Task {
-    const now = new Date().toISOString()
-    const sets: string[] = ['updated_at = ?']
-    const params: unknown[] = [now]
+    return this.updateInternal(id, fields as Record<string, unknown>, { allowStatus: false })
+  }
 
-    for (const [key, value] of Object.entries(fields)) {
-      if (key === 'id' || key === 'created_at' || key === 'updated_at') continue
-
-      if ((JSON_COLUMNS as readonly string[]).includes(key)) {
-        sets.push(`${key} = ?`)
-        params.push(serializeJson(value))
-      } else {
-        sets.push(`${key} = ?`)
-        params.push(value ?? null)
+  transition(id: string, to: TaskStatus, context: TransitionContext = {}): Task {
+    const tx = this.db.transaction((taskId: string, target: TaskStatus, ctx: TransitionContext) => {
+      const current = this.getById(taskId)
+      if (!current) {
+        throw new Error(`Task ${taskId} not found`)
       }
-    }
 
-    params.push(id)
-    this.db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...params)
-    return this.getById(id)!
+      validateTransition(current.status, target, {
+        ...ctx,
+        attempt_count: current.attempt_count,
+        max_attempts: current.max_attempts,
+        bounce_count: current.bounce_count,
+        max_bounces: current.max_bounces,
+      })
+
+      const updates = applyTransition(current, target, ctx)
+      return this.updateInternal(taskId, updates, { allowStatus: true })
+    })
+
+    return tx.immediate(id, to, context)
   }
 
   delete(id: string): boolean {
@@ -248,5 +252,106 @@ export class TaskStore {
 
     const row = this.db.prepare(sql).get(...params) as { count: number }
     return row.count
+  }
+
+  private updateInternal(
+    id: string,
+    fields: Record<string, unknown>,
+    opts: { allowStatus: boolean },
+  ): Task {
+    const now = new Date().toISOString()
+    const sets: string[] = ['updated_at = ?']
+    const params: unknown[] = [now]
+
+    for (const [key, rawValue] of Object.entries(fields)) {
+      if (key === 'id' || key === 'created_at' || key === 'updated_at') continue
+
+      if (key === 'status' && !opts.allowStatus) {
+        throw new Error('Direct status updates are not allowed. Use transition()')
+      }
+
+      if (key !== 'status' && !ALLOWED_UPDATE_COLUMNS.has(key)) {
+        throw new Error(`Invalid update column: ${key}`)
+      }
+
+      let value = rawValue
+      if (key === 'depends_on') {
+        if (rawValue !== null && rawValue !== undefined && !Array.isArray(rawValue)) {
+          throw new Error('depends_on must be an array of task ids')
+        }
+        value = this.validateDependencies(id, Array.isArray(rawValue) ? rawValue as string[] : [])
+      }
+
+      sets.push(`${key} = ?`)
+      if ((TASK_JSON_COLUMNS as readonly string[]).includes(key)) {
+        params.push(serializeJson(value))
+      } else {
+        params.push(value ?? null)
+      }
+    }
+
+    params.push(id)
+    this.db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+
+    const updated = this.getById(id)
+    if (!updated) throw new Error(`Task ${id} not found after update`)
+    return updated
+  }
+
+  private validateDependencies(taskId: string, dependsOnInput: string[]): string[] {
+    const dependsOn = [...new Set(dependsOnInput.filter(dep => typeof dep === 'string').map(dep => dep.trim()).filter(Boolean))]
+
+    if (dependsOn.includes(taskId)) {
+      throw new Error(`Task ${taskId} cannot depend on itself`)
+    }
+
+    if (dependsOn.length === 0) {
+      return []
+    }
+
+    const placeholders = dependsOn.map(() => '?').join(', ')
+    const rows = this.db.prepare(`SELECT id FROM tasks WHERE id IN (${placeholders})`).all(...dependsOn) as Array<{ id: string }>
+    const found = new Set(rows.map(row => row.id))
+    const missing = dependsOn.filter(dep => !found.has(dep))
+    if (missing.length > 0) {
+      throw new Error(`depends_on contains unknown task ids: ${missing.join(', ')}`)
+    }
+
+    this.assertNoDependencyCycle(taskId, dependsOn)
+    return dependsOn
+  }
+
+  private assertNoDependencyCycle(taskId: string, dependsOn: string[]): void {
+    const rows = this.db.prepare('SELECT id, depends_on FROM tasks').all() as Array<{
+      id: string
+      depends_on: string | null
+    }>
+
+    const graph = new Map<string, string[]>()
+    for (const row of rows) {
+      graph.set(row.id, parseJsonOr<string[]>(row.depends_on, []))
+    }
+    graph.set(taskId, dependsOn)
+
+    const visiting = new Set<string>()
+    const visited = new Set<string>()
+
+    const hasCycleFrom = (node: string): boolean => {
+      if (visiting.has(node)) return true
+      if (visited.has(node)) return false
+
+      visiting.add(node)
+      for (const dep of graph.get(node) ?? []) {
+        if (!graph.has(dep)) continue
+        if (hasCycleFrom(dep)) return true
+      }
+      visiting.delete(node)
+      visited.add(node)
+      return false
+    }
+
+    if (hasCycleFrom(taskId)) {
+      throw new Error(`depends_on cycle detected for task ${taskId}`)
+    }
   }
 }

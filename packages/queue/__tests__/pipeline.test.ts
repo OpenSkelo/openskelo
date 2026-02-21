@@ -70,7 +70,9 @@ describe('Pipeline', () => {
   describe('areDependenciesMet', () => {
     it('returns true when all deps DONE', () => {
       const tasks = createPipeline(store, [step('A'), step('B')])
-      store.update(tasks[0].id, { status: TaskStatus.DONE })
+      store.transition(tasks[0].id, TaskStatus.IN_PROGRESS, { lease_owner: 'adapter-1' })
+      store.transition(tasks[0].id, TaskStatus.REVIEW, { result: 'step complete' })
+      store.transition(tasks[0].id, TaskStatus.DONE)
       const taskB = store.getById(tasks[1].id)!
       expect(areDependenciesMet(taskB, store)).toBe(true)
     })
@@ -97,7 +99,9 @@ describe('Pipeline', () => {
     it('returns parsed results from deps', () => {
       const tasks = createPipeline(store, [step('Research'), step('Write')])
       const result = JSON.stringify({ summary: 'Found 3 sources', sources: ['a', 'b', 'c'] })
-      store.update(tasks[0].id, { status: TaskStatus.DONE, result })
+      store.transition(tasks[0].id, TaskStatus.IN_PROGRESS, { lease_owner: 'adapter-1' })
+      store.transition(tasks[0].id, TaskStatus.REVIEW, { result })
+      store.transition(tasks[0].id, TaskStatus.DONE)
       const taskB = store.getById(tasks[1].id)!
       const upstream = getUpstreamResults(taskB, store)
       expect(upstream[tasks[0].id]).toEqual({ summary: 'Found 3 sources', sources: ['a', 'b', 'c'] })

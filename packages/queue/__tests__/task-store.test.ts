@@ -3,7 +3,6 @@ import { createDatabase } from '../src/db.js'
 import { TaskStore } from '../src/task-store.js'
 import { TaskStatus } from '../src/state-machine.js'
 import type Database from 'better-sqlite3'
-import type { Task } from '../src/task-store.js'
 
 describe('TaskStore', () => {
   let db: Database.Database
@@ -23,6 +22,16 @@ describe('TaskStore', () => {
     summary: 'Fix the bug',
     prompt: 'Fix the authentication bug in auth.ts',
     backend: 'claude-code',
+  }
+
+  function moveToInProgress(taskId: string) {
+    return store.transition(taskId, TaskStatus.IN_PROGRESS, { lease_owner: 'adapter-1' })
+  }
+
+  function moveToDone(taskId: string) {
+    moveToInProgress(taskId)
+    store.transition(taskId, TaskStatus.REVIEW, { result: 'ok' })
+    return store.transition(taskId, TaskStatus.DONE)
   }
 
   describe('create()', () => {
@@ -92,7 +101,7 @@ describe('TaskStore', () => {
     it('filters by status', () => {
       const t1 = store.create(minimal)
       store.create(minimal)
-      store.update(t1.id, { status: TaskStatus.IN_PROGRESS })
+      moveToInProgress(t1.id)
       expect(store.list({ status: TaskStatus.PENDING })).toHaveLength(1)
       expect(store.list({ status: TaskStatus.IN_PROGRESS })).toHaveLength(1)
     })
@@ -150,6 +159,52 @@ describe('TaskStore', () => {
       expect(updated.acceptance_criteria).toEqual(['Keep this'])
       expect(updated.prompt).toBe(minimal.prompt)
     })
+
+    it('rejects unknown update columns', () => {
+      const task = store.create(minimal)
+      expect(() => store.update(task.id, {
+        ['status; DROP TABLE tasks; --']: 'x',
+      } as never)).toThrow('Invalid update column')
+    })
+  })
+
+
+
+  describe('transition()', () => {
+    it('moves through guarded lifecycle', () => {
+      const task = store.create(minimal)
+      const inProgress = store.transition(task.id, TaskStatus.IN_PROGRESS, { lease_owner: 'adapter-1' })
+      expect(inProgress.status).toBe(TaskStatus.IN_PROGRESS)
+
+      const review = store.transition(task.id, TaskStatus.REVIEW, { result: 'implemented' })
+      expect(review.status).toBe(TaskStatus.REVIEW)
+
+      const done = store.transition(task.id, TaskStatus.DONE)
+      expect(done.status).toBe(TaskStatus.DONE)
+    })
+
+    it('rejects direct status updates via update()', () => {
+      const task = store.create(minimal)
+      expect(() => store.update(task.id, { status: TaskStatus.DONE } as never)).toThrow(
+        'Use transition()',
+      )
+    })
+  })
+
+  describe('dependency validation', () => {
+    it('rejects unknown depends_on task ids on create', () => {
+      expect(() => store.create({
+        ...minimal,
+        depends_on: ['MISSING-TASK'],
+      })).toThrow('unknown task ids')
+    })
+
+    it('rejects cyclic depends_on updates', () => {
+      const a = store.create({ ...minimal, summary: 'A' })
+      const b = store.create({ ...minimal, summary: 'B', depends_on: [a.id] })
+
+      expect(() => store.update(a.id, { depends_on: [b.id] })).toThrow('cycle detected')
+    })
   })
 
   describe('delete()', () => {
@@ -174,7 +229,7 @@ describe('TaskStore', () => {
     it('filters by status', () => {
       const t1 = store.create(minimal)
       store.create(minimal)
-      store.update(t1.id, { status: TaskStatus.DONE })
+      moveToDone(t1.id)
       expect(store.count({ status: TaskStatus.PENDING })).toBe(1)
       expect(store.count({ status: TaskStatus.DONE })).toBe(1)
     })

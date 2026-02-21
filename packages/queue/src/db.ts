@@ -44,8 +44,9 @@ const SCHEMA = `
     updated_at          TEXT NOT NULL
   );
 
+  DROP INDEX IF EXISTS idx_queue_order;
   CREATE INDEX IF NOT EXISTS idx_queue_order
-    ON tasks (status, priority DESC, manual_rank ASC, created_at ASC)
+    ON tasks (status, priority ASC, manual_rank ASC, created_at ASC, id ASC)
     WHERE status = 'PENDING';
 
   CREATE INDEX IF NOT EXISTS idx_lease_expiry
