@@ -8,6 +8,8 @@ import {
   buildRequestHeaders,
   buildInlineTaskBody,
   buildBounceBody,
+  getMissingInlineFields,
+  isInlineAddAttempt,
 } from '../src/cli.js'
 
 describe('CLI arg parsing', () => {
@@ -87,6 +89,11 @@ describe('CLI arg parsing', () => {
     expect(result.flags.where).toBe('src/auth.ts')
     expect(result.flags.fix).toBe('Add tests')
   })
+
+  it('captures dangling flags as empty string', () => {
+    const result = parseArgs(['node', 'openskelo', 'add', '--type'])
+    expect(result.flags.type).toBe('')
+  })
 })
 
 describe('buildRequestHeaders', () => {
@@ -151,6 +158,17 @@ describe('buildInlineTaskBody', () => {
     expect(body!.prompt).toBe('Refactor src/auth.ts to use async/await')
     expect(body!.backend).toBe('claude-code')
     expect(body!.priority).toBe(1)
+  })
+
+  it('reports missing inline flags', () => {
+    const missing = getMissingInlineFields({ type: 'code', summary: 'Fix bug' })
+    expect(missing).toEqual(['prompt', 'backend'])
+  })
+
+  it('detects inline add attempts', () => {
+    expect(isInlineAddAttempt({ type: 'code' })).toBe(true)
+    expect(isInlineAddAttempt({ priority: '1' })).toBe(true)
+    expect(isInlineAddAttempt({ file: './task.json' })).toBe(false)
   })
 })
 

@@ -1,6 +1,8 @@
 import * as fs from 'node:fs'
-import { execSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import * as net from 'node:net'
+import { parse as parseYaml } from 'yaml'
+import { loadConfig } from './config.js'
 
 export interface DoctorCheck {
   label: string
@@ -19,9 +21,9 @@ export function checkNodeVersion(): DoctorCheck {
   }
 }
 
-export function checkSqliteModule(): DoctorCheck {
+export async function checkSqliteModule(): Promise<DoctorCheck> {
   try {
-    require('better-sqlite3')
+    await import('better-sqlite3')
     return { label: 'SQLite', ok: true, detail: 'better-sqlite3 native module OK' }
   } catch {
     return { label: 'SQLite', ok: false, detail: 'better-sqlite3 failed to load — run npm rebuild' }
@@ -34,26 +36,34 @@ export function checkConfigFile(configPath: string): DoctorCheck {
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { parse } = require('yaml') as { parse: (s: string) => unknown }
-    const raw = fs.readFileSync(configPath, 'utf-8')
-    const parsed = parse(raw) as Record<string, unknown>
-    if (!parsed.db_path) {
-      return { label: 'Config', ok: false, detail: `${configPath} missing db_path` }
-    }
+    loadConfig(configPath)
     return { label: 'Config', ok: true, detail: `${configPath} valid` }
   } catch (err) {
-    return { label: 'Config', ok: false, detail: `${configPath} parse error: ${(err as Error).message}` }
+    return { label: 'Config', ok: false, detail: `${configPath} invalid: ${(err as Error).message}` }
   }
 }
 
 export function checkCommand(name: string, command: string): DoctorCheck {
-  try {
-    const result = execSync(`which ${command}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
-    return { label: `Adapter ${name}`, ok: true, detail: `${command} found at ${result}` }
-  } catch {
-    return { label: `Adapter ${name}`, ok: false, detail: `${command} not found on PATH` }
+  const trimmed = command.trim()
+  if (!trimmed) {
+    return { label: `Adapter ${name}`, ok: false, detail: `${name} command is empty` }
   }
+
+  const result = spawnSync('which', [trimmed], {
+    encoding: 'utf-8',
+    stdio: 'pipe',
+    shell: false,
+  })
+
+  if (result.status === 0) {
+    return {
+      label: `Adapter ${name}`,
+      ok: true,
+      detail: `${trimmed} found at ${result.stdout.trim()}`,
+    }
+  }
+
+  return { label: `Adapter ${name}`, ok: false, detail: `${trimmed} not found on PATH` }
 }
 
 export function checkPort(port: number): Promise<DoctorCheck> {
@@ -84,16 +94,15 @@ const KNOWN_ADAPTER_COMMANDS: Record<string, string> = {
 
 export function extractAdapterCommands(configPath: string): AdapterInfo[] {
   try {
-    const { parse } = require('yaml') as { parse: (s: string) => unknown }
     const raw = fs.readFileSync(configPath, 'utf-8')
-    const parsed = parse(raw) as { adapters?: Array<{ name: string; command?: string; type?: string }> }
+    const parsed = parseYaml(raw) as { adapters?: Array<{ name: string; command?: string; type?: string }> }
     if (!parsed.adapters) return []
 
     return parsed.adapters
-      .filter(a => a.type === 'cli')
-      .map(a => ({
-        name: a.name,
-        command: a.command ?? KNOWN_ADAPTER_COMMANDS[a.name] ?? a.name,
+      .filter((adapter) => adapter.type === 'cli')
+      .map((adapter) => ({
+        name: adapter.name,
+        command: adapter.command ?? KNOWN_ADAPTER_COMMANDS[adapter.name] ?? adapter.name,
       }))
   } catch {
     return []
@@ -104,7 +113,7 @@ export async function runDoctor(configPath: string, port: number): Promise<Docto
   const checks: DoctorCheck[] = []
 
   checks.push(checkNodeVersion())
-  checks.push(checkSqliteModule())
+  checks.push(await checkSqliteModule())
   checks.push(checkConfigFile(configPath))
 
   const adapters = extractAdapterCommands(configPath)

@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { loadConfig } from './config.js'
@@ -21,12 +19,21 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const positionalArgs: string[] = []
 
   for (let i = 1; i < args.length; i++) {
-    if (args[i].startsWith('--') && i + 1 < args.length) {
-      flags[args[i].slice(2)] = args[i + 1]
-      i++
-    } else if (!args[i].startsWith('--')) {
-      positionalArgs.push(args[i])
+    const arg = args[i]
+
+    if (arg.startsWith('--')) {
+      const key = arg.slice(2)
+      const next = args[i + 1]
+      if (next && !next.startsWith('--')) {
+        flags[key] = next
+        i++
+      } else {
+        flags[key] = ''
+      }
+      continue
     }
+
+    positionalArgs.push(arg)
   }
 
   return {
@@ -124,14 +131,25 @@ export function buildRequestHeaders(apiKey?: string, includeJson = false): Recor
   return headers
 }
 
+const INLINE_ADD_FIELDS = ['type', 'summary', 'prompt', 'backend'] as const
+
+export function getMissingInlineFields(flags: Record<string, string>): string[] {
+  return INLINE_ADD_FIELDS.filter((field) => !flags[field])
+}
+
+export function isInlineAddAttempt(flags: Record<string, string>): boolean {
+  return [...INLINE_ADD_FIELDS, 'priority'].some((field) => field in flags)
+}
+
 export function buildInlineTaskBody(flags: Record<string, string>): Record<string, unknown> | null {
-  const { type, summary, prompt, backend } = flags
-  if (!type || !summary || !prompt || !backend) return null
+  const missing = getMissingInlineFields(flags)
+  if (missing.length > 0) return null
+
   return {
-    type,
-    summary,
-    prompt,
-    backend,
+    type: flags.type,
+    summary: flags.summary,
+    prompt: flags.prompt,
+    backend: flags.backend,
     priority: flags.priority ? parseInt(flags.priority, 10) : 0,
   }
 }
@@ -148,6 +166,15 @@ export function buildBounceBody(flags: Record<string, string>): {
       where: flags.where ?? '',
       fix: flags.fix ?? '',
     },
+  }
+}
+
+async function parseErrorMessage(res: Response): Promise<string> {
+  try {
+    const body = await res.json() as { error?: string; message?: string }
+    return body.error ?? body.message ?? `${res.status} ${res.statusText}`
+  } catch {
+    return `${res.status} ${res.statusText}`
   }
 }
 
@@ -224,6 +251,14 @@ async function cmdStatus(flags: Record<string, string>): Promise<void> {
     const res = await fetch(`http://${host}:${port}/health`, {
       headers: buildRequestHeaders(config.server?.api_key),
     })
+
+    if (!res.ok) {
+      const error = await parseErrorMessage(res)
+      console.error(`Status check failed: ${error}`)
+      process.exitCode = 1
+      return
+    }
+
     const data = await res.json() as { status: string; counts: Record<string, number> }
     console.log(`Status: ${data.status}`)
     console.log('Task counts:')
@@ -244,6 +279,14 @@ async function cmdAdd(flags: Record<string, string>): Promise<void> {
 
   let body: Record<string, unknown>
 
+  const inlineAttempt = isInlineAddAttempt(flags)
+  const missingInlineFields = getMissingInlineFields(flags)
+  if (inlineAttempt && missingInlineFields.length > 0 && !flags.file) {
+    console.error(`Missing required inline flags: ${missingInlineFields.map(field => `--${field}`).join(', ')}`)
+    process.exitCode = 1
+    return
+  }
+
   const inline = buildInlineTaskBody(flags)
   if (inline) {
     body = inline
@@ -263,6 +306,14 @@ async function cmdAdd(flags: Record<string, string>): Promise<void> {
       headers: buildRequestHeaders(config.server?.api_key, true),
       body: JSON.stringify(body),
     })
+
+    if (!res.ok) {
+      const error = await parseErrorMessage(res)
+      console.error(`Failed to add task: ${error}`)
+      process.exitCode = 1
+      return
+    }
+
     const task = await res.json() as Record<string, unknown>
     console.log(`Created task ${task.id} (${task.status})`)
     console.log(`  Type: ${task.type}`)
@@ -285,6 +336,14 @@ async function cmdList(flags: Record<string, string>): Promise<void> {
     const res = await fetch(url, {
       headers: buildRequestHeaders(config.server?.api_key),
     })
+
+    if (!res.ok) {
+      const error = await parseErrorMessage(res)
+      console.error(`List failed: ${error}`)
+      process.exitCode = 1
+      return
+    }
+
     const tasks = await res.json() as Array<Record<string, unknown>>
 
     if (tasks.length === 0) {

@@ -34,8 +34,8 @@ const ALLOWED_METHODS = new Set([
   'match',
 ])
 
-// Only allow safe characters — no braces, backticks, or other dangerous syntax
-const SAFE_CHARS = /^[\w\s.$()[\]'":+\-*/%<>=!&|?,]*$/
+// Only allow safe characters — no braces, backticks, or bracket notation
+const SAFE_CHARS = /^[\w\s.$()'":+\-*/%<>=!&|?,]*$/
 
 function assertSafeExpression(expr: string): void {
   // 1. Block dangerous tokens

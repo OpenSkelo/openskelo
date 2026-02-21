@@ -4,6 +4,7 @@ import * as path from 'node:path'
 import * as os from 'node:os'
 import {
   checkNodeVersion,
+  checkSqliteModule,
   checkCommand,
   checkConfigFile,
   checkPort,
@@ -28,10 +29,22 @@ describe('doctor checks', () => {
     expect(result.detail).toContain('Node')
   })
 
+  it('checks sqlite module import', async () => {
+    const result = await checkSqliteModule()
+    expect(result.label).toBe('SQLite')
+  })
+
   it('reports missing command', () => {
     const result = checkCommand('nonexistent', 'totally_fake_command_xyz')
     expect(result.ok).toBe(false)
     expect(result.detail).toContain('not found on PATH')
+  })
+
+  it('does not execute shell metacharacters in command checks', () => {
+    const markerPath = path.join(tmpDir, 'should-not-exist')
+    const result = checkCommand('unsafe', `node; touch ${markerPath}`)
+    expect(result.ok).toBe(false)
+    expect(fs.existsSync(markerPath)).toBe(false)
   })
 
   it('reports found command', () => {
@@ -66,6 +79,22 @@ adapters:
     const result = checkConfigFile(configPath)
     expect(result.ok).toBe(false)
     expect(result.detail).toContain('db_path')
+  })
+
+  it('fails config check when env variable substitution is missing', () => {
+    const configPath = path.join(tmpDir, 'openskelo.yaml')
+    fs.writeFileSync(configPath, `
+db_path: ./test.db
+adapters:
+  - name: shell
+    type: cli
+    task_types: [script]
+server:
+  api_key: \${MISSING_ENV_FOR_DOCTOR}
+`)
+    const result = checkConfigFile(configPath)
+    expect(result.ok).toBe(false)
+    expect(result.detail).toContain('MISSING_ENV_FOR_DOCTOR')
   })
 
   it('checks port availability', async () => {

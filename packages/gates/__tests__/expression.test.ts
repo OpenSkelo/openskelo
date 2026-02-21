@@ -295,4 +295,8 @@ describe('safeEval', () => {
     expect(() => safeEval("require('fs')", {})).toThrow()
     expect(() => safeEval("eval('bad')", {})).toThrow()
   })
+
+  it('throws on bracket notation', () => {
+    expect(() => safeEval('sources[0] === 1', { sources: [1] })).toThrow()
+  })
 })
