@@ -27,10 +27,11 @@ export type { AuditEntry } from './audit.js'
 // Pipeline
 export {
   createPipeline,
+  createDagPipeline,
   areDependenciesMet,
   getUpstreamResults,
 } from './pipeline.js'
-export type { CreatePipelineTask } from './pipeline.js'
+export type { CreatePipelineTask, DagNode, CreateDagPipelineInput } from './pipeline.js'
 
 // Dispatcher
 export { Dispatcher } from './dispatcher.js'

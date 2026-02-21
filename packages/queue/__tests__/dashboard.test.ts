@@ -127,4 +127,10 @@ describe('Dashboard', () => {
     const res = await request(app).get('/dashboard').expect(200)
     expect(res.text).toContain('No tasks yet')
   })
+
+  it('Dashboard HTML contains pipeline filter markup', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('pipeline-filter')
+  })
 })

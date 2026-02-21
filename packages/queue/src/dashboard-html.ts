@@ -27,6 +27,11 @@ export function buildDashboardHtml(apiKey?: string): string {
     .conn-dot.err { background: #ef4444; }
     .health { color: #94a3b8; font-size: 12px; }
     .shortcuts-hint { color: #475569; font-size: 11px; cursor: pointer; }
+    #pipeline-filter {
+      background: #0f172a; color: #e2e8f0; border: 1px solid #334155;
+      border-radius: 4px; padding: 3px 8px; font-size: 11px; font-family: inherit;
+    }
+    .pipeline-progress { font-size: 11px; color: #94a3b8; margin-left: 6px; }
     .board {
       display: flex; gap: 12px; padding: 16px;
       overflow-x: auto; min-height: calc(100vh - 50px);
@@ -191,6 +196,10 @@ export function buildDashboardHtml(apiKey?: string): string {
   <header>
     <h1>OpenSkelo</h1>
     <div class="header-right">
+      <select id="pipeline-filter" onchange="onPipelineFilter()">
+        <option value="">All Tasks</option>
+      </select>
+      <span id="pipeline-progress" class="pipeline-progress"></span>
       <span class="conn-dot" id="conn-dot"></span>
       <span class="health" id="health">Loading...</span>
       <span class="shortcuts-hint" onclick="toggleShortcuts()" title="Keyboard shortcuts">?</span>
@@ -224,6 +233,7 @@ export function buildDashboardHtml(apiKey?: string): string {
     var connected = false
     var firstLoad = true
     var currentTaskId = null
+    var selectedPipeline = ''
 
     function escapeHtml(value) {
       return String(value != null ? value : '')
@@ -272,7 +282,7 @@ export function buildDashboardHtml(apiKey?: string): string {
 
     /* --- Board rendering --- */
     function renderBoard(tasks, health) {
-      allTasks = tasks
+      if (tasks) allTasks = tasks
       var board = document.getElementById('board')
       var healthEl = document.getElementById('health')
       var dot = document.getElementById('conn-dot')
@@ -287,14 +297,18 @@ export function buildDashboardHtml(apiKey?: string): string {
         healthEl.textContent = 'OK | ' + total + ' tasks'
       }
 
-      if (tasks.length === 0) {
+      updatePipelineFilter(allTasks)
+      updatePipelineProgress()
+      var displayTasks = getFilteredTasks()
+
+      if (displayTasks.length === 0 && allTasks.length === 0) {
         board.innerHTML = '<div class="empty-state">No tasks yet.<code>openskelo add --type code --summary &quot;...&quot; --prompt &quot;...&quot; --backend claude-code</code></div>'
         return
       }
 
       var grouped = {}
       STATUSES.forEach(function(s) { grouped[s] = [] })
-      tasks.forEach(function(t) { if (grouped[t.status]) grouped[t.status].push(t) })
+      displayTasks.forEach(function(t) { if (grouped[t.status]) grouped[t.status].push(t) })
 
       board.innerHTML = STATUSES.map(function(status) {
         var items = grouped[status]
@@ -368,6 +382,43 @@ export function buildDashboardHtml(apiKey?: string): string {
 
     refresh()
     setInterval(refresh, 5000)
+
+    /* --- Pipeline filter --- */
+    function updatePipelineFilter(tasks) {
+      var select = document.getElementById('pipeline-filter')
+      var pipelineIds = []
+      tasks.forEach(function(t) {
+        if (t.pipeline_id && pipelineIds.indexOf(t.pipeline_id) === -1) {
+          pipelineIds.push(t.pipeline_id)
+        }
+      })
+      var current = select.value
+      var opts = '<option value="">All Tasks</option>'
+      pipelineIds.forEach(function(pid) {
+        var short = pid.slice(0, 8) + '..'
+        opts += '<option value="' + escapeHtml(pid) + '"' + (pid === current ? ' selected' : '') + '>Pipeline: ' + short + '</option>'
+      })
+      select.innerHTML = opts
+    }
+
+    function getFilteredTasks() {
+      if (!selectedPipeline) return allTasks
+      return allTasks.filter(function(t) { return t.pipeline_id === selectedPipeline })
+    }
+
+    function updatePipelineProgress() {
+      var el = document.getElementById('pipeline-progress')
+      if (!selectedPipeline) { el.textContent = ''; return }
+      var filtered = getFilteredTasks()
+      var done = filtered.filter(function(t) { return t.status === 'DONE' }).length
+      el.textContent = done + '/' + filtered.length + ' complete'
+    }
+
+    function onPipelineFilter() {
+      selectedPipeline = document.getElementById('pipeline-filter').value
+      renderBoard(allTasks, null)
+      updatePipelineProgress()
+    }
 
     /* --- Detail panel --- */
     async function openDetail(taskId) {

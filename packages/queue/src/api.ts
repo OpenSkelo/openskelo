@@ -6,6 +6,8 @@ import type { AuditLog } from './audit.js'
 import type { Dispatcher } from './dispatcher.js'
 import { TaskStatus } from './state-machine.js'
 import { TransitionError } from './errors.js'
+import { createDagPipeline } from './pipeline.js'
+import type { CreateDagPipelineInput } from './pipeline.js'
 
 export interface ApiConfig {
   api_key?: string
@@ -254,6 +256,91 @@ export function createApiRouter(
         res.status(404).json({ error: err.message })
         return
       }
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // POST /pipelines
+  router.post('/pipelines', (req: Request, res: Response) => {
+    try {
+      const body = req.body as CreateDagPipelineInput
+      if (!body?.tasks || !Array.isArray(body.tasks) || body.tasks.length === 0) {
+        res.status(400).json({ error: 'tasks array is required' })
+        return
+      }
+
+      for (const node of body.tasks) {
+        if (!node.key || !node.type || !node.summary || !node.prompt || !node.backend) {
+          res.status(400).json({
+            error: `Task "${node.key || '?'}" missing required fields: key, type, summary, prompt, backend`,
+          })
+          return
+        }
+      }
+
+      const tasks = createDagPipeline(taskStore, body)
+      res.status(201).json({
+        pipeline_id: tasks[0].pipeline_id,
+        tasks,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Internal server error'
+      if (msg.includes('Duplicate key') || msg.includes('Unknown dependency') ||
+          msg.includes('Cycle detected') || msg.includes('Self-dependency') ||
+          msg.includes('no root node') || msg.includes('at least one')) {
+        res.status(400).json({ error: msg })
+        return
+      }
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // GET /pipelines
+  router.get('/pipelines', (_req: Request, res: Response) => {
+    try {
+      const allTasks = taskStore.list({})
+      const pipelineMap = new Map<string, { total: number; completed: number }>()
+
+      for (const task of allTasks) {
+        if (!task.pipeline_id) continue
+        const entry = pipelineMap.get(task.pipeline_id) ?? { total: 0, completed: 0 }
+        entry.total++
+        if (task.status === TaskStatus.DONE) entry.completed++
+        pipelineMap.set(task.pipeline_id, entry)
+      }
+
+      const pipelines = Array.from(pipelineMap.entries()).map(([pipeline_id, info]) => ({
+        pipeline_id,
+        task_count: info.total,
+        completed: info.completed,
+        status: info.completed === info.total ? 'completed' : 'active',
+      }))
+
+      const statusFilter = (_req.query.status as string | undefined)
+      if (statusFilter) {
+        res.json(pipelines.filter(p => p.status === statusFilter))
+        return
+      }
+
+      res.json(pipelines)
+    } catch (err) {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // GET /pipelines/:id
+  router.get('/pipelines/:id', (req: Request, res: Response) => {
+    try {
+      const pipelineId = paramId(req)
+      const tasks = taskStore.list({ pipeline_id: pipelineId })
+      if (tasks.length === 0) {
+        res.status(404).json({ error: `Pipeline ${pipelineId} not found` })
+        return
+      }
+      // Sort by pipeline_step
+      tasks.sort((a, b) => (a.pipeline_step ?? 0) - (b.pipeline_step ?? 0))
+      res.json(tasks)
+    } catch (err) {
       res.status(500).json({ error: 'Internal server error' })
     }
   })

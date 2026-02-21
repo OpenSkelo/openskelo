@@ -328,4 +328,97 @@ describe('REST API Router', () => {
 
     expect(Array.isArray(res.body)).toBe(true)
   })
+
+  // Pipeline endpoints
+  it('POST /pipelines creates pipeline with correct structure', async () => {
+    const res = await request(app)
+      .post('/pipelines')
+      .send({
+        tasks: [
+          { key: 'a', type: 'code', summary: 'A', prompt: 'Do A', backend: 'claude-code' },
+          { key: 'b', type: 'code', summary: 'B', prompt: 'Do B', backend: 'claude-code' },
+          { key: 'c', type: 'code', summary: 'C', prompt: 'Do C', backend: 'claude-code', depends_on: ['a', 'b'] },
+        ],
+      })
+      .expect(201)
+
+    expect(res.body).toHaveProperty('pipeline_id')
+    expect(res.body.tasks).toHaveLength(3)
+    // a and b are step 0, c is step 1
+    const steps = res.body.tasks.map((t: Record<string, unknown>) => t.pipeline_step)
+    expect(steps).toContain(0)
+    expect(steps).toContain(1)
+  })
+
+  it('POST /pipelines rejects invalid DAG (cycle)', async () => {
+    const res = await request(app)
+      .post('/pipelines')
+      .send({
+        tasks: [
+          { key: 'a', type: 'code', summary: 'A', prompt: 'A', backend: 'x', depends_on: ['c'] },
+          { key: 'b', type: 'code', summary: 'B', prompt: 'B', backend: 'x', depends_on: ['a'] },
+          { key: 'c', type: 'code', summary: 'C', prompt: 'C', backend: 'x', depends_on: ['b'] },
+        ],
+      })
+      .expect(400)
+
+    expect(res.body.error).toContain('Cycle')
+  })
+
+  it('POST /pipelines rejects missing depends_on reference', async () => {
+    const res = await request(app)
+      .post('/pipelines')
+      .send({
+        tasks: [
+          { key: 'a', type: 'code', summary: 'A', prompt: 'A', backend: 'x', depends_on: ['missing'] },
+        ],
+      })
+      .expect(400)
+
+    expect(res.body.error).toContain('Unknown dependency')
+  })
+
+  it('GET /pipelines/:id returns all tasks in pipeline', async () => {
+    const createRes = await request(app)
+      .post('/pipelines')
+      .send({
+        tasks: [
+          { key: 'a', type: 'code', summary: 'A', prompt: 'Do A', backend: 'claude-code' },
+          { key: 'b', type: 'code', summary: 'B', prompt: 'Do B', backend: 'claude-code', depends_on: ['a'] },
+        ],
+      })
+      .expect(201)
+
+    const pipelineId = createRes.body.pipeline_id
+
+    const res = await request(app)
+      .get(`/pipelines/${pipelineId}`)
+      .expect(200)
+
+    expect(Array.isArray(res.body)).toBe(true)
+    expect(res.body).toHaveLength(2)
+    expect(res.body[0].pipeline_step).toBeLessThanOrEqual(res.body[1].pipeline_step)
+  })
+
+  it('GET /pipelines returns pipeline list', async () => {
+    await request(app)
+      .post('/pipelines')
+      .send({
+        tasks: [
+          { key: 'x', type: 'code', summary: 'X', prompt: 'X', backend: 'claude-code' },
+        ],
+      })
+      .expect(201)
+
+    const res = await request(app)
+      .get('/pipelines')
+      .expect(200)
+
+    expect(Array.isArray(res.body)).toBe(true)
+    expect(res.body.length).toBeGreaterThanOrEqual(1)
+    expect(res.body[0]).toHaveProperty('pipeline_id')
+    expect(res.body[0]).toHaveProperty('task_count')
+    expect(res.body[0]).toHaveProperty('completed')
+    expect(res.body[0]).toHaveProperty('status')
+  })
 })

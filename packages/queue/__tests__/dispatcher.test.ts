@@ -9,6 +9,7 @@ import { PriorityQueue } from '../src/priority-queue.js'
 import { AuditLog } from '../src/audit.js'
 import { Dispatcher } from '../src/dispatcher.js'
 import type { DispatcherConfig, DispatchResult } from '../src/dispatcher.js'
+import { createDagPipeline } from '../src/pipeline.js'
 
 function createMockAdapter(
   name: string,
@@ -432,6 +433,90 @@ describe('Dispatcher', () => {
     // default limit is 1 and there's already 1 IN_PROGRESS code task
     const dispatched = results.filter(r => r.action === 'dispatched')
     expect(dispatched).toHaveLength(0)
+  })
+
+  // Fan-out: two root tasks dispatch in same tick
+  it('fan-out: two root tasks both dispatch in same tick', async () => {
+    const adapter = createHangingAdapter('claude-code', ['code'])
+    const config: DispatcherConfig = { ...DEFAULT_CONFIG, wip_limits: { code: 5 } }
+
+    const tasks = createDagPipeline(taskStore, {
+      tasks: [
+        { key: 'a', type: 'code', summary: 'A', prompt: 'A', backend: 'claude-code' },
+        { key: 'b', type: 'code', summary: 'B', prompt: 'B', backend: 'claude-code' },
+        { key: 'c', type: 'code', summary: 'C', prompt: 'C', backend: 'claude-code', depends_on: ['a', 'b'] },
+      ],
+    })
+
+    // Adapter handles ['code'], so it matches both a and b
+    // But Dispatcher iterates adapters, one task per adapter per tick
+    // With a single adapter, it picks one per tick
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], config)
+    const r1 = await dispatcher.tick()
+    const dispatched1 = r1.filter(r => r.action === 'dispatched')
+    expect(dispatched1).toHaveLength(1)
+
+    // Second tick picks up the other root
+    const r2 = await dispatcher.tick()
+    const dispatched2 = r2.filter(r => r.action === 'dispatched')
+    expect(dispatched2).toHaveLength(1)
+
+    // c should still be PENDING (deps not met)
+    const taskC = taskStore.getById(tasks[2].id)!
+    expect(taskC.status).toBe(TaskStatus.PENDING)
+  })
+
+  // Fan-in: task with two deps does NOT dispatch until both deps are DONE
+  it('fan-in: task with two deps does NOT dispatch until both deps DONE', async () => {
+    const adapter = createHangingAdapter('claude-code', ['code'])
+    const config: DispatcherConfig = { ...DEFAULT_CONFIG, wip_limits: { code: 5 } }
+
+    const tasks = createDagPipeline(taskStore, {
+      tasks: [
+        { key: 'a', type: 'code', summary: 'A', prompt: 'A', backend: 'claude-code' },
+        { key: 'b', type: 'code', summary: 'B', prompt: 'B', backend: 'claude-code' },
+        { key: 'c', type: 'code', summary: 'C', prompt: 'C', backend: 'claude-code', depends_on: ['a', 'b'] },
+      ],
+    })
+
+    // Complete only task A
+    taskStore.transition(tasks[0].id, TaskStatus.IN_PROGRESS, { lease_owner: 'test' })
+    taskStore.transition(tasks[0].id, TaskStatus.REVIEW, { result: 'ok' })
+    taskStore.transition(tasks[0].id, TaskStatus.DONE)
+
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], config)
+    const r = await dispatcher.tick()
+    const dispatched = r.filter(r => r.action === 'dispatched')
+    // Should dispatch B (pending, no unmet deps), NOT C (has unmet dep B)
+    expect(dispatched).toHaveLength(1)
+    expect(dispatched[0].taskId).toBe(tasks[1].id)
+  })
+
+  // Fan-in: task dispatches after last dep completes
+  it('fan-in: task dispatches after last dep transitions to DONE', async () => {
+    const adapter = createHangingAdapter('claude-code', ['code'])
+    const config: DispatcherConfig = { ...DEFAULT_CONFIG, wip_limits: { code: 5 } }
+
+    const tasks = createDagPipeline(taskStore, {
+      tasks: [
+        { key: 'a', type: 'code', summary: 'A', prompt: 'A', backend: 'claude-code' },
+        { key: 'b', type: 'code', summary: 'B', prompt: 'B', backend: 'claude-code' },
+        { key: 'c', type: 'code', summary: 'C', prompt: 'C', backend: 'claude-code', depends_on: ['a', 'b'] },
+      ],
+    })
+
+    // Complete both A and B
+    for (const t of [tasks[0], tasks[1]]) {
+      taskStore.transition(t.id, TaskStatus.IN_PROGRESS, { lease_owner: 'test' })
+      taskStore.transition(t.id, TaskStatus.REVIEW, { result: 'ok' })
+      taskStore.transition(t.id, TaskStatus.DONE)
+    }
+
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], config)
+    const r = await dispatcher.tick()
+    const dispatched = r.filter(r => r.action === 'dispatched')
+    expect(dispatched).toHaveLength(1)
+    expect(dispatched[0].taskId).toBe(tasks[2].id)
   })
 
   // 18. tick() converts Task to TaskInput correctly
