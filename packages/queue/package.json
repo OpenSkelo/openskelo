@@ -24,9 +24,13 @@
     "@openskelo/adapters": "0.0.1",
     "@openskelo/gates": "0.0.1",
     "better-sqlite3": "^11.8.0",
+    "express": "^5.2.1",
     "ulid": "^3.0.2"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.0"
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/express": "^5.0.6",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.2.2"
   }
 }

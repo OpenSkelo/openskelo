@@ -162,7 +162,7 @@ export class TaskStore {
   getById(id: string): Task | null {
     const row = this.db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined
     if (!row) return null
-    return deserializeTaskRow(row) as Task
+    return deserializeTaskRow(row) as unknown as Task
   }
 
   list(filters?: ListFilters): Task[] {
@@ -198,7 +198,7 @@ export class TaskStore {
     }
 
     const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[]
-    return rows.map(row => deserializeTaskRow(row) as Task)
+    return rows.map(row => deserializeTaskRow(row) as unknown as Task)
   }
 
   update(id: string, fields: Partial<Task>): Task {

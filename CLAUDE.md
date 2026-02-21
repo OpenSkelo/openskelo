@@ -105,12 +105,12 @@ openskelo/
 - [x] Day 19-20: SQLite schema + task store
 - [x] Day 21-23: State machine + transition guards
 - [x] Day 24-25: Priority queue + ordering
-- [ ] Day 26-27: Dispatcher + atomic claims
-- [ ] Day 28-29: Leases + watchdog
+- [x] Day 26-27: Dispatcher + atomic claims
+- [x] Day 28-29: Leases + watchdog
 - [x] Day 30-31: Pipeline support
-- [ ] Day 32: REST API
+- [x] Day 32: REST API
 - [x] Day 33: Audit log
-- [ ] Day 34: Dashboard
+- [x] Day 34: Dashboard
 - [ ] Day 35: Publish @openskelo/queue@0.1.0
 
 **Phase 4: Integration (Days 36-42)**

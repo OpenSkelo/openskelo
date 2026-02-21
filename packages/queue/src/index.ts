@@ -32,6 +32,25 @@ export {
 } from './pipeline.js'
 export type { CreatePipelineTask } from './pipeline.js'
 
+// Dispatcher
+export { Dispatcher } from './dispatcher.js'
+export type { DispatcherConfig, DispatchResult } from './dispatcher.js'
+
+// Watchdog
+export { Watchdog } from './watchdog.js'
+export type { WatchdogConfig, WatchdogResult } from './watchdog.js'
+
+// REST API
+export { createApiRouter } from './api.js'
+export type { ApiConfig, ApiDependencies } from './api.js'
+
+// Dashboard
+export { createDashboardRouter } from './dashboard.js'
+
+// Factory
+export { createQueue } from './factory.js'
+export type { QueueConfig, Queue } from './factory.js'
+
 // Errors
 export {
   TransitionError,

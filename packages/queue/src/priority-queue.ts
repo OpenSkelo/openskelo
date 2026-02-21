@@ -48,7 +48,7 @@ export class PriorityQueue {
 
     const row = this.db.prepare(sql).get(...params) as Record<string, unknown> | undefined
     if (!row) return null
-    return deserializeTaskRow(row) as Task
+    return deserializeTaskRow(row) as unknown as Task
   }
 
   reorder(id: string, position: ReorderPosition): void {
