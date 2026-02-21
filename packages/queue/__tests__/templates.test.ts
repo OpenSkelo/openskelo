@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createDatabase } from '../src/db.js'
 import { TaskStore } from '../src/task-store.js'
-import { TemplateStore } from '../src/templates.js'
+import { TemplateStore, BUILTIN_TEMPLATES, seedBuiltinTemplates } from '../src/templates.js'
 import type Database from 'better-sqlite3'
 
 describe('TemplateStore', () => {
@@ -186,5 +186,93 @@ describe('TemplateStore', () => {
   it('instantiate throws for missing template', () => {
     expect(() => templateStore.instantiate('nonexistent'))
       .toThrow('Template not found: nonexistent')
+  })
+
+  it('instantiate with auto_review applies to task template', () => {
+    templateStore.create({ name: 'ar-task', template_type: 'task', definition: taskDef })
+    const autoReview = { reviewers: [{ backend: 'openrouter' }], strategy: 'all_must_approve' }
+    const tasks = templateStore.instantiate('ar-task', { auto_review: autoReview })
+    expect(tasks[0].auto_review).toEqual(autoReview)
+  })
+
+  it('instantiate with auto_review applies to pipeline tasks', () => {
+    templateStore.create({ name: 'ar-pipe', template_type: 'pipeline', definition: pipelineDef })
+    const autoReview = { reviewers: [{ backend: 'openrouter' }], strategy: 'any_approve' }
+    const tasks = templateStore.instantiate('ar-pipe', { auto_review: autoReview })
+    expect(tasks).toHaveLength(2)
+    expect(tasks[0].auto_review).toEqual(autoReview)
+    expect(tasks[1].auto_review).toEqual(autoReview)
+  })
+})
+
+describe('BUILTIN_TEMPLATES', () => {
+  it('contains spec-to-ship and dual-review', () => {
+    const names = BUILTIN_TEMPLATES.map(t => t.name)
+    expect(names).toContain('spec-to-ship')
+    expect(names).toContain('dual-review')
+  })
+
+  it('spec-to-ship is a pipeline template', () => {
+    const specToShip = BUILTIN_TEMPLATES.find(t => t.name === 'spec-to-ship')!
+    expect(specToShip.template_type).toBe('pipeline')
+    const def = specToShip.definition as { tasks: unknown[] }
+    expect(def.tasks).toHaveLength(4)
+  })
+
+  it('dual-review is a task template with auto_review', () => {
+    const dualReview = BUILTIN_TEMPLATES.find(t => t.name === 'dual-review')!
+    expect(dualReview.template_type).toBe('task')
+    const def = dualReview.definition as { auto_review: Record<string, unknown> }
+    expect(def.auto_review.strategy).toBe('merge_then_decide')
+    expect((def.auto_review.reviewers as unknown[]).length).toBe(2)
+  })
+})
+
+describe('seedBuiltinTemplates', () => {
+  let db: Database.Database
+  let taskStore: TaskStore
+  let templateStore: TemplateStore
+
+  beforeEach(() => {
+    db = createDatabase(':memory:')
+    taskStore = new TaskStore(db)
+    templateStore = new TemplateStore(db, taskStore)
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('seeds all builtin templates', () => {
+    const seeded = seedBuiltinTemplates(templateStore)
+    expect(seeded).toBe(BUILTIN_TEMPLATES.length)
+    expect(templateStore.getByName('spec-to-ship')).not.toBeNull()
+    expect(templateStore.getByName('dual-review')).not.toBeNull()
+  })
+
+  it('is idempotent — skips existing templates', () => {
+    seedBuiltinTemplates(templateStore)
+    const secondRun = seedBuiltinTemplates(templateStore)
+    expect(secondRun).toBe(0)
+    expect(templateStore.list().length).toBe(BUILTIN_TEMPLATES.length)
+  })
+
+  it('seeds only missing templates', () => {
+    templateStore.create({
+      name: 'spec-to-ship',
+      template_type: 'task',
+      definition: { type: 'custom' },
+    })
+    const seeded = seedBuiltinTemplates(templateStore)
+    expect(seeded).toBe(BUILTIN_TEMPLATES.length - 1)
+  })
+
+  it('seeded spec-to-ship can be instantiated with variables', () => {
+    seedBuiltinTemplates(templateStore)
+    const tasks = templateStore.instantiate('spec-to-ship', {
+      variables: { feature: 'user-auth' },
+    })
+    expect(tasks.length).toBeGreaterThanOrEqual(4)
+    expect(tasks[0].summary).toContain('user-auth')
   })
 })

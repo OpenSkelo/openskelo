@@ -511,8 +511,20 @@ export function createApiRouter(
     }
     try {
       const id = paramId(req)
-      const { variables, overrides } = req.body ?? {}
-      const tasks = templateStore.instantiate(id, { variables, overrides })
+      const { variables, overrides, review_preset } = req.body ?? {}
+
+      let autoReview: Record<string, unknown> | undefined
+      if (review_preset) {
+        const preset = templateStore.getByName(String(review_preset))
+          ?? templateStore.getById(String(review_preset))
+        if (!preset) {
+          res.status(404).json({ error: `Review preset not found: ${review_preset}` })
+          return
+        }
+        autoReview = (preset.definition as Record<string, unknown>).auto_review as Record<string, unknown>
+      }
+
+      const tasks = templateStore.instantiate(id, { variables, overrides, auto_review: autoReview })
       res.status(201).json({ tasks })
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Internal server error'

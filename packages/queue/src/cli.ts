@@ -72,8 +72,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
 export function buildRunBody(varFlags: Record<string, string>, flags: Record<string, string>): {
   variables?: Record<string, string>
   overrides?: Record<string, unknown>
+  review_preset?: string
 } {
-  const body: { variables?: Record<string, string>; overrides?: Record<string, unknown> } = {}
+  const body: { variables?: Record<string, string>; overrides?: Record<string, unknown>; review_preset?: string } = {}
 
   if (Object.keys(varFlags).length > 0) {
     body.variables = varFlags
@@ -83,6 +84,8 @@ export function buildRunBody(varFlags: Record<string, string>, flags: Record<str
   if (flags['override-summary']) overrides.summary = flags['override-summary']
   if (flags['override-priority']) overrides.priority = parseInt(flags['override-priority'], 10)
   if (Object.keys(overrides).length > 0) body.overrides = overrides
+
+  if (flags['review-preset']) body.review_preset = flags['review-preset']
 
   return body
 }
@@ -271,7 +274,7 @@ Usage:
   openskelo template save            Save a template (--name, --type, --definition or --file)
   openskelo template show <name>     Show template details
   openskelo template delete <name>   Delete a template
-  openskelo run <template> [--var key=value ...]  Run a saved template
+  openskelo run <template> [--var key=value ...] [--review-preset name]  Run a saved template
   openskelo doctor                   Check system readiness
   openskelo help                     Show this help
 

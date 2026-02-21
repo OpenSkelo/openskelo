@@ -86,6 +86,79 @@ function deepSubstitute(
   return obj
 }
 
+export const BUILTIN_TEMPLATES: CreateTemplateInput[] = [
+  {
+    name: 'spec-to-ship',
+    description: 'Full workflow: spec → implement (expand) → test → review',
+    template_type: 'pipeline',
+    definition: {
+      tasks: [
+        {
+          key: 'spec',
+          type: 'spec',
+          summary: 'Write specification for {{feature}}',
+          prompt: 'Write a detailed technical specification for: {{feature}}. Output a JSON array of implementation tasks, each with type, summary, prompt, and backend fields.',
+          backend: '{{spec_backend:-claude-code}}',
+        },
+        {
+          key: 'implement',
+          type: 'code',
+          summary: 'Implement {{feature}}',
+          prompt: 'Implement the feature based on the upstream spec output.',
+          backend: '{{code_backend:-claude-code}}',
+          depends_on: ['spec'],
+          expand: true,
+          expand_config: { mode: '{{expand_mode:-sequential}}' },
+        },
+        {
+          key: 'test',
+          type: 'test',
+          summary: 'Test {{feature}}',
+          prompt: 'Write and run tests for the implemented feature.',
+          backend: '{{test_backend:-claude-code}}',
+          depends_on: ['implement'],
+        },
+        {
+          key: 'review',
+          type: 'review',
+          summary: 'Final review of {{feature}}',
+          prompt: 'Review the complete implementation and tests.',
+          backend: '{{review_backend:-claude-code}}',
+          depends_on: ['test'],
+        },
+      ],
+    },
+  },
+  {
+    name: 'dual-review',
+    description: 'Review preset: two reviewers with merge_then_decide strategy',
+    template_type: 'task',
+    definition: {
+      auto_review: {
+        reviewers: [
+          { backend: '{{reviewer_1:-openrouter}}', model: '{{model_1:-anthropic/claude-sonnet-4-5-20250929}}' },
+          { backend: '{{reviewer_2:-openrouter}}', model: '{{model_2:-google/gemini-2.5-pro}}' },
+        ],
+        strategy: 'merge_then_decide',
+        merge_backend: '{{merge_backend:-openrouter}}',
+        max_iterations: 3,
+      },
+    },
+  },
+]
+
+export function seedBuiltinTemplates(store: TemplateStore): number {
+  let seeded = 0
+  for (const tpl of BUILTIN_TEMPLATES) {
+    const existing = store.getByName(tpl.name)
+    if (!existing) {
+      store.create(tpl)
+      seeded++
+    }
+  }
+  return seeded
+}
+
 export class TemplateStore {
   private db: Database.Database
   private taskStore: TaskStore
@@ -174,7 +247,11 @@ export class TemplateStore {
 
   instantiate(
     idOrName: string,
-    options?: { variables?: Record<string, string>; overrides?: Record<string, unknown> },
+    options?: {
+      variables?: Record<string, string>
+      overrides?: Record<string, unknown>
+      auto_review?: Record<string, unknown>
+    },
   ): Task[] {
     const template = this.getById(idOrName) ?? this.getByName(idOrName)
     if (!template) throw new Error(`Template not found: ${idOrName}`)
@@ -194,10 +271,21 @@ export class TemplateStore {
 
     if (template.template_type === 'pipeline') {
       const pipelineInput = definition as unknown as CreateDagPipelineInput
+      if (options?.auto_review && Array.isArray(pipelineInput.tasks)) {
+        for (const node of pipelineInput.tasks) {
+          const n = node as unknown as Record<string, unknown>
+          if (!n.auto_review) {
+            n.auto_review = options.auto_review
+          }
+        }
+      }
       return createDagPipeline(this.taskStore, pipelineInput, this.db)
     }
 
     const taskInput = definition as unknown as CreateTaskInput
+    if (options?.auto_review && !taskInput.auto_review) {
+      taskInput.auto_review = options.auto_review
+    }
     const task = this.taskStore.create(taskInput)
     return [task]
   }

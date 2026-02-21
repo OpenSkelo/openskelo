@@ -17,6 +17,10 @@ export interface DagNode {
   definition_of_done?: string[]
   max_attempts?: number
   max_bounces?: number
+  expand?: boolean
+  expand_config?: { mode?: string }
+  auto_review?: Record<string, unknown>
+  metadata?: Record<string, unknown>
 }
 
 export interface CreateDagPipelineInput {
@@ -132,6 +136,11 @@ export function createDagPipeline(
       if (node.definition_of_done) taskInput.definition_of_done = node.definition_of_done
       if (node.max_attempts !== undefined) taskInput.max_attempts = node.max_attempts
       if (node.max_bounces !== undefined) taskInput.max_bounces = node.max_bounces
+      if (node.auto_review) taskInput.auto_review = node.auto_review
+      const nodeMetadata: Record<string, unknown> = { ...(node.metadata ?? {}) }
+      if (node.expand) nodeMetadata.expand = true
+      if (node.expand_config) nodeMetadata.expand_config = node.expand_config
+      if (Object.keys(nodeMetadata).length > 0) taskInput.metadata = nodeMetadata
 
       const task = store.create(taskInput)
       keyToId.set(node.key, task.id)

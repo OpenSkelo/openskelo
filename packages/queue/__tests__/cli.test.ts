@@ -350,4 +350,38 @@ describe('CLI template and run commands', () => {
     expect(body.variables).toEqual({ key: 'value' })
     expect(body.overrides).toEqual({ summary: 'Custom' })
   })
+
+  it('parseArgs handles --review-preset flag for run', () => {
+    const result = parseArgs([
+      'node', 'openskelo', 'run', 'my-pipeline',
+      '--review-preset', 'dual-review',
+    ])
+    expect(result.command).toBe('run')
+    expect(result.positionalArgs).toEqual(['my-pipeline'])
+    expect(result.flags['review-preset']).toBe('dual-review')
+  })
+
+  it('buildRunBody includes review_preset from flags', () => {
+    const body = buildRunBody({}, { 'review-preset': 'dual-review' })
+    expect(body.review_preset).toBe('dual-review')
+  })
+
+  it('parseArgs run with --review-preset and --var combined', () => {
+    const result = parseArgs([
+      'node', 'openskelo', 'run', 'spec-to-ship',
+      '--var', 'feature=auth',
+      '--review-preset', 'dual-review',
+      '--config', './custom.yaml',
+    ])
+    expect(result.command).toBe('run')
+    expect(result.positionalArgs).toEqual(['spec-to-ship'])
+    expect(result.varFlags).toEqual({ feature: 'auth' })
+    expect(result.flags['review-preset']).toBe('dual-review')
+    expect(result.flags.config).toBe('./custom.yaml')
+  })
+
+  it('buildRunBody omits review_preset when not set', () => {
+    const body = buildRunBody({ key: 'val' }, {})
+    expect(body.review_preset).toBeUndefined()
+  })
 })

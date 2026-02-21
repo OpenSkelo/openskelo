@@ -64,8 +64,12 @@ export type { WebhookConfig, WebhookEvent } from './webhooks.js'
 export type { TaskStoreConfig } from './task-store.js'
 
 // Templates
-export { TemplateStore } from './templates.js'
+export { TemplateStore, BUILTIN_TEMPLATES, seedBuiltinTemplates } from './templates.js'
 export type { Template, CreateTemplateInput } from './templates.js'
+
+// Expand Handler
+export { ExpandHandler, parseExpandOutput } from './expand-handler.js'
+export type { ExpandedTask } from './expand-handler.js'
 
 // Scheduler
 export { Scheduler, parseDuration } from './scheduler.js'

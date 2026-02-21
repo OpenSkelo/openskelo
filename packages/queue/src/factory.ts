@@ -18,6 +18,8 @@ import { TemplateStore } from './templates.js'
 import { Scheduler } from './scheduler.js'
 import type { ScheduleConfig } from './scheduler.js'
 import { ReviewHandler } from './review-handler.js'
+import { ExpandHandler } from './expand-handler.js'
+import { seedBuiltinTemplates } from './templates.js'
 import { TaskStatus } from './state-machine.js'
 import express from 'express'
 
@@ -103,6 +105,11 @@ export function createQueue(config: QueueConfig): Queue {
       reviewHandler.onFixComplete(task)
     }
 
+    // Expand: when task with expand metadata completes, create child tasks from output
+    if (to === TaskStatus.DONE && (task.metadata as Record<string, unknown>)?.expand) {
+      expandHandler.onExpandComplete(task)
+    }
+
     if (to === TaskStatus.DONE && task.pipeline_id) {
       const pipelineTasks = taskStoreRef.list({ pipeline_id: task.pipeline_id })
       const allDone = pipelineTasks.every(t => t.status === TaskStatus.DONE)
@@ -123,11 +130,14 @@ export function createQueue(config: QueueConfig): Queue {
 
   const auditLog = new AuditLog(db)
   let reviewHandler: ReviewHandler
+  let expandHandler: ExpandHandler
 
   const taskStore = new TaskStore(db, { onTransition })
   taskStoreRef = taskStore
   reviewHandler = new ReviewHandler(taskStore, auditLog, webhookDispatcher)
+  expandHandler = new ExpandHandler(taskStore, auditLog)
   const templateStore = new TemplateStore(db, taskStore)
+  seedBuiltinTemplates(templateStore)
   const priorityQueue = new PriorityQueue(db)
 
   const adapters = config.adapters ?? []
