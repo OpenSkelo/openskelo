@@ -98,6 +98,11 @@ export function createQueue(config: QueueConfig): Queue {
       reviewHandler.onReviewChildComplete(task)
     }
 
+    // Fix task completion: resolve the parent task
+    if (to === TaskStatus.DONE && (task.metadata as Record<string, unknown>)?.fix_for) {
+      reviewHandler.onFixComplete(task)
+    }
+
     if (to === TaskStatus.DONE && task.pipeline_id) {
       const pipelineTasks = taskStoreRef.list({ pipeline_id: task.pipeline_id })
       const allDone = pipelineTasks.every(t => t.status === TaskStatus.DONE)

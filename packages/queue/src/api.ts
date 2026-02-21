@@ -125,7 +125,9 @@ export function createApiRouter(
         return
       }
 
-      const task = taskStore.create(body)
+      const task = (body.inject_before || body.priority_boost !== undefined)
+        ? taskStore.inject(body)
+        : taskStore.create(body)
       res.status(201).json(task)
     } catch (err) {
       res.status(500).json({ error: 'Internal server error' })

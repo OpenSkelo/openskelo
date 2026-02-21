@@ -5,7 +5,7 @@ export { createDatabase } from './db.js'
 
 // Task Store
 export { TaskStore } from './task-store.js'
-export type { Task, CreateTaskInput } from './task-store.js'
+export type { Task, CreateTaskInput, InjectTaskInput } from './task-store.js'
 
 // State Machine
 export {
@@ -72,7 +72,7 @@ export { Scheduler, parseDuration } from './scheduler.js'
 export type { ScheduleConfig, ScheduleEntry } from './scheduler.js'
 
 // Review Handler
-export { ReviewHandler, buildReviewPrompt, buildMergePrompt, parseReviewDecision } from './review-handler.js'
+export { ReviewHandler, buildReviewPrompt, buildMergePrompt, buildFixPrompt, parseReviewDecision } from './review-handler.js'
 export type { ReviewerConfig, AutoReviewConfig, ReviewDecision } from './review-handler.js'
 
 // Errors

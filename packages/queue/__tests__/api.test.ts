@@ -589,6 +589,27 @@ describe('REST API Router', () => {
       .expect(404)
   })
 
+  // Task injection
+  it('POST /tasks with inject_before and priority_boost creates injected task', async () => {
+    const target = taskStore.create(makeTaskInput({ summary: 'target task' }))
+
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        ...makeTaskInput({ summary: 'fix task' }),
+        inject_before: target.id,
+        priority_boost: -10,
+      })
+      .expect(201)
+
+    expect(res.body.priority).toBe(-10)
+    expect(res.body.summary).toBe('fix task')
+
+    // Target should now depend on the injected task
+    const updatedTarget = taskStore.getById(target.id)!
+    expect(updatedTarget.depends_on).toContain(res.body.id)
+  })
+
   // Schedule endpoint
   it('GET /schedules returns empty array when no scheduler', async () => {
     const res = await request(app)

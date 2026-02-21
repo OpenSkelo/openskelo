@@ -69,6 +69,11 @@ export interface CreateTaskInput {
   loop_iteration?: number
 }
 
+export interface InjectTaskInput extends CreateTaskInput {
+  inject_before?: string
+  priority_boost?: number
+}
+
 interface ListFilters {
   status?: TaskStatus
   type?: string
@@ -177,6 +182,23 @@ export class TaskStore {
     )
 
     return this.getById(id)!
+  }
+
+  inject(input: InjectTaskInput): Task {
+    const task = this.create({
+      ...input,
+      priority: input.priority_boost ?? input.priority ?? 0,
+    })
+
+    if (input.inject_before) {
+      const target = this.getById(input.inject_before)
+      if (target) {
+        const newDeps = [...target.depends_on, task.id]
+        this.update(target.id, { depends_on: newDeps })
+      }
+    }
+
+    return task
   }
 
   getById(id: string): Task | null {

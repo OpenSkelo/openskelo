@@ -285,6 +285,57 @@ describe('TaskStore', () => {
     expect(fetched.gates).toEqual(gates)
   })
 
+  describe('inject()', () => {
+    it('creates task with boosted priority', () => {
+      const task = store.inject({
+        ...minimal,
+        priority_boost: -10,
+      })
+      expect(task.priority).toBe(-10)
+      expect(task.status).toBe(TaskStatus.PENDING)
+    })
+
+    it('with inject_before adds dependency to target task', () => {
+      const target = store.create({ ...minimal, summary: 'Target' })
+      const injected = store.inject({
+        ...minimal,
+        summary: 'Injected',
+        inject_before: target.id,
+        priority_boost: -5,
+      })
+
+      const updatedTarget = store.getById(target.id)!
+      expect(updatedTarget.depends_on).toContain(injected.id)
+    })
+
+    it('without inject_before works like create', () => {
+      const task = store.inject({
+        ...minimal,
+        summary: 'Simple inject',
+      })
+      expect(task.id).toBeTruthy()
+      expect(task.summary).toBe('Simple inject')
+      expect(task.priority).toBe(0)
+    })
+
+    it('priority_boost overrides priority', () => {
+      const task = store.inject({
+        ...minimal,
+        priority: 5,
+        priority_boost: -10,
+      })
+      expect(task.priority).toBe(-10)
+    })
+  })
+
+  it('update changes result field', () => {
+    const task = store.create(minimal)
+    moveToInProgress(task.id)
+    store.transition(task.id, TaskStatus.REVIEW, { result: 'original' })
+    const updated = store.update(task.id, { result: 'new result' })
+    expect(updated.result).toBe('new result')
+  })
+
   it('large text fields handled correctly', () => {
     const longPrompt = 'x'.repeat(100_000)
     const task = store.create({ ...minimal, prompt: longPrompt })

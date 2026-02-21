@@ -1,4 +1,4 @@
-import type { TaskStore, Task, CreateTaskInput } from './task-store.js'
+import type { TaskStore, Task, CreateTaskInput, InjectTaskInput } from './task-store.js'
 import type { AuditLog } from './audit.js'
 import { TaskStatus } from './state-machine.js'
 
@@ -180,6 +180,48 @@ export function parseReviewDecision(output: string): ReviewDecision {
       fix: 'Re-run the review with clearer output format',
     },
   }
+}
+
+export function buildFixPrompt(
+  parent: Task,
+  reasoning: string,
+  issues: unknown[],
+): string {
+  const parts = [
+    '## Original Task',
+    `Summary: ${parent.summary}`,
+    '',
+    '## Original Prompt',
+    parent.prompt,
+    '',
+    '## Previous Implementation',
+    parent.result ?? '(no result)',
+    '',
+    '## Review Findings',
+  ]
+
+  if (reasoning) {
+    parts.push(reasoning)
+  }
+
+  if (Array.isArray(issues) && issues.length > 0) {
+    parts.push('')
+    parts.push('## Specific Issues')
+    for (const issue of issues) {
+      const i = issue as Record<string, unknown>
+      const severity = i.severity ?? 'unknown'
+      const description = i.description ?? i.what ?? ''
+      const location = i.location ?? i.where
+      const fix = i.fix
+      parts.push(`- [${severity}] ${description}${location ? ` (${location})` : ''}${fix ? ` → Fix: ${fix}` : ''}`)
+    }
+  }
+
+  parts.push('')
+  parts.push('## Instructions')
+  parts.push('Fix ALL issues listed above. Maintain all existing functionality. Include tests for the fixes.')
+
+  return parts.join('\n')
 }
 
 export class ReviewHandler {
@@ -376,6 +418,28 @@ export class ReviewHandler {
     }
   }
 
+  onFixComplete(fixTask: Task): void {
+    const parentId = fixTask.parent_task_id
+    if (!parentId) return
+    if (!fixTask.metadata?.fix_for) return
+
+    const parent = this.taskStore.getById(parentId)
+    if (!parent) return
+    if (parent.status !== TaskStatus.REVIEW) return
+
+    this.taskStore.update(parent.id, {
+      result: fixTask.result,
+    })
+
+    this.taskStore.transition(parent.id, TaskStatus.DONE)
+
+    this.auditLog.logAction({
+      task_id: parent.id,
+      action: 'fix_resolved',
+      metadata: { fix_task_id: fixTask.id },
+    })
+  }
+
   private applyDecision(parentTask: Task, decision: ReviewDecision): void {
     if (decision.approved) {
       this.auditLog.logAction({
@@ -385,27 +449,64 @@ export class ReviewHandler {
       })
       this.taskStore.transition(parentTask.id, TaskStatus.DONE)
     } else {
-      const feedback = decision.feedback ?? {
-        what: decision.reasoning ?? 'Review rejected',
-        where: 'review',
-        fix: 'Address the reviewer feedback and resubmit',
-      }
-
-      this.auditLog.logAction({
-        task_id: parentTask.id,
-        action: 'auto_review_bounced',
-        metadata: {
-          reasoning: decision.reasoning,
-          feedback,
-          loop_iteration: parentTask.loop_iteration,
-        },
-      })
-
-      this.taskStore.update(parentTask.id, {
-        loop_iteration: parentTask.loop_iteration + 1,
-      })
-
-      this.taskStore.transition(parentTask.id, TaskStatus.PENDING, { feedback })
+      this.createFixTask(parentTask, decision)
     }
+  }
+
+  private createFixTask(parent: Task, decision: ReviewDecision): Task {
+    const feedback = decision.feedback ?? {
+      what: decision.reasoning ?? 'Review rejected',
+      where: 'review',
+      fix: 'Address the reviewer feedback and resubmit',
+    }
+
+    const issues = decision.feedback ? [decision.feedback] : []
+    const fixPrompt = buildFixPrompt(parent, decision.reasoning ?? '', issues)
+
+    // Find downstream task that depends on parent in the same pipeline
+    let downstream: Task | undefined
+    if (parent.pipeline_id) {
+      const allTasks = this.taskStore.list({})
+      downstream = allTasks.find(
+        t => t.depends_on?.includes(parent.id) && t.pipeline_id === parent.pipeline_id,
+      )
+    }
+
+    const injectInput: InjectTaskInput = {
+      type: parent.type,
+      summary: `Fix: ${parent.summary}`,
+      prompt: fixPrompt,
+      backend: parent.backend,
+      parent_task_id: parent.id,
+      pipeline_id: parent.pipeline_id ?? undefined,
+      pipeline_step: parent.pipeline_step ?? undefined,
+      priority_boost: -10,
+      inject_before: downstream?.id,
+      auto_review: parent.auto_review ?? undefined,
+      loop_iteration: parent.loop_iteration + 1,
+      metadata: {
+        fix_for: parent.id,
+        issues_count: issues.length,
+      },
+    }
+
+    const fixTask = this.taskStore.inject(injectInput)
+
+    this.auditLog.logAction({
+      task_id: parent.id,
+      action: 'fix_injected',
+      metadata: {
+        fix_task_id: fixTask.id,
+        blocked_downstream: downstream?.id,
+        priority: -10,
+      },
+    })
+
+    this.taskStore.update(parent.id, {
+      loop_iteration: parent.loop_iteration + 1,
+      metadata: { ...parent.metadata, fix_task_id: fixTask.id },
+    })
+
+    return fixTask
   }
 }

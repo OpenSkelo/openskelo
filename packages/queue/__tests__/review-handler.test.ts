@@ -8,6 +8,7 @@ import {
   ReviewHandler,
   buildReviewPrompt,
   buildMergePrompt,
+  buildFixPrompt,
   parseReviewDecision,
 } from '../src/review-handler.js'
 import type { AutoReviewConfig, ReviewDecision } from '../src/review-handler.js'
@@ -161,6 +162,59 @@ describe('buildMergePrompt', () => {
   })
 })
 
+describe('buildFixPrompt', () => {
+  it('includes original prompt, result, and review findings', () => {
+    const task = {
+      summary: 'Build auth',
+      prompt: 'Implement OAuth flow',
+      result: 'Added basic auth',
+    } as Task
+
+    const prompt = buildFixPrompt(task, 'Missing OAuth scopes', [])
+    expect(prompt).toContain('Build auth')
+    expect(prompt).toContain('Implement OAuth flow')
+    expect(prompt).toContain('Added basic auth')
+    expect(prompt).toContain('Missing OAuth scopes')
+    expect(prompt).toContain('Fix ALL issues')
+  })
+
+  it('includes all issue fields (severity, description, location, fix)', () => {
+    const task = {
+      summary: 'Task',
+      prompt: 'Do it',
+      result: 'Done',
+    } as Task
+
+    const issues = [
+      { severity: 'critical', description: 'SQL injection', location: 'api.ts:42', fix: 'Use parameterized queries' },
+      { severity: 'minor', description: 'Typo', location: 'readme.md:1', fix: 'Fix spelling' },
+    ]
+
+    const prompt = buildFixPrompt(task, '', issues)
+    expect(prompt).toContain('[critical] SQL injection (api.ts:42)')
+    expect(prompt).toContain('Use parameterized queries')
+    expect(prompt).toContain('[minor] Typo (readme.md:1)')
+    expect(prompt).toContain('Fix spelling')
+  })
+
+  it('handles feedback-style issues (what, where, fix)', () => {
+    const task = { summary: 'T', prompt: 'P', result: 'R' } as Task
+    const issues = [
+      { what: 'missing tests', where: 'src/auth.ts', fix: 'add unit tests' },
+    ]
+    const prompt = buildFixPrompt(task, '', issues)
+    expect(prompt).toContain('missing tests')
+    expect(prompt).toContain('src/auth.ts')
+    expect(prompt).toContain('add unit tests')
+  })
+
+  it('handles null result gracefully', () => {
+    const task = { summary: 'T', prompt: 'P', result: null } as Task
+    const prompt = buildFixPrompt(task, 'issues', [])
+    expect(prompt).toContain('(no result)')
+  })
+})
+
 describe('ReviewHandler', () => {
   let db: ReturnType<typeof createDatabase>
   let taskStore: TaskStore
@@ -185,6 +239,15 @@ describe('ReviewHandler', () => {
     return taskStore.transition(task.id, TaskStatus.REVIEW, {
       result: 'Task output here',
     })
+  }
+
+  function completeReviewChild(childId: string, result: string) {
+    taskStore.transition(childId, TaskStatus.IN_PROGRESS, {
+      lease_owner: 'w',
+      lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+    })
+    taskStore.transition(childId, TaskStatus.REVIEW, { result })
+    handler.onTaskReview(taskStore.getById(childId)!)
   }
 
   describe('onTaskReview', () => {
@@ -228,18 +291,8 @@ describe('ReviewHandler', () => {
       const children = taskStore.list({ type: 'review' })
       expect(children).toHaveLength(1)
 
-      // Transition child through to REVIEW
       const child = children[0]
-      taskStore.transition(child.id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'worker-2',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      const reviewChild = taskStore.transition(child.id, TaskStatus.REVIEW, {
-        result: '{"approved": true, "reasoning": "LGTM"}',
-      })
-
-      // ReviewHandler should auto-approve this
-      handler.onTaskReview(reviewChild)
+      completeReviewChild(child.id, '{"approved": true, "reasoning": "LGTM"}')
 
       const updatedChild = taskStore.getById(child.id)!
       expect(updatedChild.status).toBe(TaskStatus.DONE)
@@ -281,21 +334,10 @@ describe('ReviewHandler', () => {
       const children = taskStore.list({ type: 'review' })
         .filter(t => t.parent_task_id === parent.id && !t.metadata?.is_merge)
 
-      // Complete both children with approval
       for (const child of children) {
-        taskStore.transition(child.id, TaskStatus.IN_PROGRESS, {
-          lease_owner: 'w',
-          lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-        })
-        taskStore.transition(child.id, TaskStatus.REVIEW, {
-          result: '{"approved": true, "reasoning": "good"}',
-        })
-        // Auto-approve the review child
-        const reviewChild = taskStore.getById(child.id)!
-        handler.onTaskReview(reviewChild)
+        completeReviewChild(child.id, '{"approved": true, "reasoning": "good"}')
       }
 
-      // Trigger strategy evaluation from last child
       const lastChild = taskStore.getById(children[children.length - 1].id)!
       handler.onReviewChildComplete(lastChild)
 
@@ -303,7 +345,7 @@ describe('ReviewHandler', () => {
       expect(updatedParent.status).toBe(TaskStatus.DONE)
     })
 
-    it('bounces parent when any reviewer rejects', () => {
+    it('creates fix task when any reviewer rejects', () => {
       const config = makeAutoReviewConfig({
         reviewers: [
           { backend: 'openrouter', model: 'model-a' },
@@ -321,31 +363,28 @@ describe('ReviewHandler', () => {
         .filter(t => t.parent_task_id === parent.id)
 
       // First child approves
-      taskStore.transition(children[0].id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'w',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      taskStore.transition(children[0].id, TaskStatus.REVIEW, {
-        result: '{"approved": true}',
-      })
-      handler.onTaskReview(taskStore.getById(children[0].id)!)
+      completeReviewChild(children[0].id, '{"approved": true}')
 
       // Second child rejects
-      taskStore.transition(children[1].id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'w',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      taskStore.transition(children[1].id, TaskStatus.REVIEW, {
-        result: '{"approved": false, "reasoning": "bad", "feedback": {"what": "bug", "where": "here", "fix": "that"}}',
-      })
-      handler.onTaskReview(taskStore.getById(children[1].id)!)
+      completeReviewChild(
+        children[1].id,
+        '{"approved": false, "reasoning": "bad", "feedback": {"what": "bug", "where": "here", "fix": "that"}}',
+      )
 
       handler.onReviewChildComplete(taskStore.getById(children[1].id)!)
 
+      // Parent stays in REVIEW
       const updatedParent = taskStore.getById(parent.id)!
-      expect(updatedParent.status).toBe(TaskStatus.PENDING)
-      expect(updatedParent.bounce_count).toBe(1)
+      expect(updatedParent.status).toBe(TaskStatus.REVIEW)
       expect(updatedParent.loop_iteration).toBe(1)
+
+      // Fix task was created
+      const fixTasks = taskStore.list({})
+        .filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(1)
+      expect(fixTasks[0].priority).toBe(-10)
+      expect(fixTasks[0].summary).toContain('Fix:')
+      expect(fixTasks[0].parent_task_id).toBe(parent.id)
     })
   })
 
@@ -368,17 +407,11 @@ describe('ReviewHandler', () => {
         .filter(t => t.parent_task_id === parent.id)
 
       // First rejects, second approves
-      for (let i = 0; i < children.length; i++) {
-        taskStore.transition(children[i].id, TaskStatus.IN_PROGRESS, {
-          lease_owner: 'w',
-          lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-        })
-        const result = i === 0
-          ? '{"approved": false, "reasoning": "nope", "feedback": {"what": "x", "where": "y", "fix": "z"}}'
-          : '{"approved": true, "reasoning": "good"}'
-        taskStore.transition(children[i].id, TaskStatus.REVIEW, { result })
-        handler.onTaskReview(taskStore.getById(children[i].id)!)
-      }
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "reasoning": "nope", "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      completeReviewChild(children[1].id, '{"approved": true, "reasoning": "good"}')
 
       handler.onReviewChildComplete(taskStore.getById(children[1].id)!)
 
@@ -386,7 +419,7 @@ describe('ReviewHandler', () => {
       expect(updatedParent.status).toBe(TaskStatus.DONE)
     })
 
-    it('bounces parent when no reviewers approve', () => {
+    it('creates fix task when no reviewers approve', () => {
       const config = makeAutoReviewConfig({
         reviewers: [{ backend: 'openrouter', model: 'model-a' }],
         strategy: 'any_approve',
@@ -400,19 +433,18 @@ describe('ReviewHandler', () => {
       const children = taskStore.list({ type: 'review' })
         .filter(t => t.parent_task_id === parent.id)
 
-      taskStore.transition(children[0].id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'w',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      taskStore.transition(children[0].id, TaskStatus.REVIEW, {
-        result: '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
-      })
-      handler.onTaskReview(taskStore.getById(children[0].id)!)
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
 
       handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
 
       const updatedParent = taskStore.getById(parent.id)!
-      expect(updatedParent.status).toBe(TaskStatus.PENDING)
+      expect(updatedParent.status).toBe(TaskStatus.REVIEW)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(1)
     })
   })
 
@@ -436,19 +468,11 @@ describe('ReviewHandler', () => {
         .filter(t => t.parent_task_id === parent.id && !t.metadata?.is_merge)
 
       for (const child of children) {
-        taskStore.transition(child.id, TaskStatus.IN_PROGRESS, {
-          lease_owner: 'w',
-          lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-        })
-        taskStore.transition(child.id, TaskStatus.REVIEW, {
-          result: '{"approved": true, "reasoning": "fine"}',
-        })
-        handler.onTaskReview(taskStore.getById(child.id)!)
+        completeReviewChild(child.id, '{"approved": true, "reasoning": "fine"}')
       }
 
       handler.onReviewChildComplete(taskStore.getById(children[1].id)!)
 
-      // Should have created a merge task
       const allReviewTasks = taskStore.list({ type: 'review' })
       const mergeTasks = allReviewTasks.filter(t => t.metadata?.is_merge)
       expect(mergeTasks).toHaveLength(1)
@@ -470,43 +494,180 @@ describe('ReviewHandler', () => {
       const children = taskStore.list({ type: 'review' })
         .filter(t => t.parent_task_id === parent.id && !t.metadata?.is_merge)
 
-      // Complete review child
-      taskStore.transition(children[0].id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'w',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      taskStore.transition(children[0].id, TaskStatus.REVIEW, {
-        result: '{"approved": true}',
-      })
-      handler.onTaskReview(taskStore.getById(children[0].id)!)
+      completeReviewChild(children[0].id, '{"approved": true}')
       handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
 
-      // Now complete the merge task
       const mergeTasks = taskStore.list({ type: 'review' })
         .filter(t => t.metadata?.is_merge && t.parent_task_id === parent.id)
       expect(mergeTasks).toHaveLength(1)
 
-      const mergeTask = mergeTasks[0]
-      taskStore.transition(mergeTask.id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'w',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      taskStore.transition(mergeTask.id, TaskStatus.REVIEW, {
-        result: '{"approved": true, "reasoning": "all good"}',
-      })
-      handler.onTaskReview(taskStore.getById(mergeTask.id)!)
-      handler.onReviewChildComplete(taskStore.getById(mergeTask.id)!)
+      completeReviewChild(mergeTasks[0].id, '{"approved": true, "reasoning": "all good"}')
+      handler.onReviewChildComplete(taskStore.getById(mergeTasks[0].id)!)
 
       const updatedParent = taskStore.getById(parent.id)!
       expect(updatedParent.status).toBe(TaskStatus.DONE)
     })
-  })
 
-  describe('loop_iteration tracking', () => {
-    it('increments loop_iteration on bounce', () => {
+    it('creates fix task when merge rejects', () => {
       const config = makeAutoReviewConfig({
         reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        strategy: 'merge_then_decide',
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id && !t.metadata?.is_merge)
+
+      completeReviewChild(children[0].id, '{"approved": true}')
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const mergeTasks = taskStore.list({ type: 'review' })
+        .filter(t => t.metadata?.is_merge && t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        mergeTasks[0].id,
+        '{"approved": false, "reasoning": "needs work", "feedback": {"what": "incomplete", "where": "api", "fix": "add tests"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(mergeTasks[0].id)!)
+
+      const updatedParent = taskStore.getById(parent.id)!
+      expect(updatedParent.status).toBe(TaskStatus.REVIEW)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(1)
+    })
+  })
+
+  describe('fix task creation', () => {
+    it('creates fix task with boosted priority (-10)', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "bug", "where": "here", "fix": "that"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(1)
+      expect(fixTasks[0].priority).toBe(-10)
+    })
+
+    it('wires inject_before to downstream dependency', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      // Create a pipeline: parent → downstream
+      const parent = taskStore.create(makeTaskInput({
+        auto_review: config as unknown as Record<string, unknown>,
+        pipeline_id: 'pl-1',
+        pipeline_step: 0,
+      }))
+      const downstream = taskStore.create(makeTaskInput({
+        summary: 'Downstream task',
+        pipeline_id: 'pl-1',
+        pipeline_step: 1,
+        depends_on: [parent.id],
+      }))
+
+      // Move parent to REVIEW
+      taskStore.transition(parent.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(parent.id, TaskStatus.REVIEW, { result: 'output' })
+      const parentInReview = taskStore.getById(parent.id)!
+
+      handler.onTaskReview(parentInReview)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      // Fix task should be injected before downstream
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(1)
+
+      // Downstream should now depend on the fix task
+      const updatedDownstream = taskStore.getById(downstream.id)!
+      expect(updatedDownstream.depends_on).toContain(fixTasks[0].id)
+    })
+
+    it('includes original prompt, result, and review findings in fix prompt', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        prompt: 'Build the auth module',
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "reasoning": "Missing OAuth", "feedback": {"what": "no OAuth", "where": "auth.ts", "fix": "add OAuth"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks[0].prompt).toContain('Build the auth module')
+      expect(fixTasks[0].prompt).toContain('Task output here')
+      expect(fixTasks[0].prompt).toContain('no OAuth')
+    })
+
+    it('passes auto_review config to fix task', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks[0].auto_review).toMatchObject({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
         strategy: 'all_must_approve',
+      })
+    })
+
+    it('increments loop_iteration on fix task', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
       })
 
       const parent = createAndTransitionToReview({
@@ -519,21 +680,149 @@ describe('ReviewHandler', () => {
       const children = taskStore.list({ type: 'review' })
         .filter(t => t.parent_task_id === parent.id)
 
-      taskStore.transition(children[0].id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'w',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      taskStore.transition(children[0].id, TaskStatus.REVIEW, {
-        result: '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
-      })
-      handler.onTaskReview(taskStore.getById(children[0].id)!)
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
       handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks[0].loop_iteration).toBe(1)
 
       const updatedParent = taskStore.getById(parent.id)!
       expect(updatedParent.loop_iteration).toBe(1)
-      expect(updatedParent.status).toBe(TaskStatus.PENDING)
     })
 
+    it('logs fix_injected audit entry', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const logs = auditLog.getTaskHistory(parent.id)
+      const fixLog = logs.find(l => l.action === 'fix_injected')
+      expect(fixLog).toBeDefined()
+      expect(fixLog!.metadata).toHaveProperty('fix_task_id')
+      expect(fixLog!.metadata).toHaveProperty('priority', -10)
+    })
+  })
+
+  describe('onFixComplete', () => {
+    it('updates parent result and transitions to DONE', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      // Get the fix task
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      const fixTask = fixTasks[0]
+
+      // Complete the fix task
+      taskStore.transition(fixTask.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.update(fixTask.id, { result: 'Fixed implementation' })
+      // Simulate the fix task reaching DONE (no auto_review for simplicity)
+      const fixTaskNoReview = taskStore.update(fixTask.id, { auto_review: null })
+      taskStore.transition(fixTask.id, TaskStatus.REVIEW, { result: 'Fixed implementation' })
+      taskStore.transition(fixTask.id, TaskStatus.DONE)
+
+      const completedFix = taskStore.getById(fixTask.id)!
+      handler.onFixComplete(completedFix)
+
+      const updatedParent = taskStore.getById(parent.id)!
+      expect(updatedParent.status).toBe(TaskStatus.DONE)
+      expect(updatedParent.result).toBe('Fixed implementation')
+    })
+
+    it('logs fix_resolved audit entry', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      const fixTask = fixTasks[0]
+
+      // Complete fix task without review
+      taskStore.transition(fixTask.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.update(fixTask.id, { auto_review: null })
+      taskStore.transition(fixTask.id, TaskStatus.REVIEW, { result: 'fixed' })
+      taskStore.transition(fixTask.id, TaskStatus.DONE)
+
+      handler.onFixComplete(taskStore.getById(fixTask.id)!)
+
+      const logs = auditLog.getTaskHistory(parent.id)
+      const fixResolvedLog = logs.find(l => l.action === 'fix_resolved')
+      expect(fixResolvedLog).toBeDefined()
+      expect(fixResolvedLog!.metadata).toHaveProperty('fix_task_id', fixTask.id)
+    })
+
+    it('ignores tasks without fix_for metadata', () => {
+      const task = taskStore.create(makeTaskInput({ parent_task_id: 'some-id' }))
+      handler.onFixComplete(task)
+      // No error, no state change
+    })
+
+    it('ignores if parent is no longer in REVIEW', () => {
+      const parent = createAndTransitionToReview()
+      taskStore.transition(parent.id, TaskStatus.DONE)
+
+      const fixTask = taskStore.create(makeTaskInput({
+        parent_task_id: parent.id,
+        metadata: { fix_for: parent.id },
+      }))
+      handler.onFixComplete(fixTask)
+
+      expect(taskStore.getById(parent.id)!.status).toBe(TaskStatus.DONE)
+    })
+  })
+
+  describe('loop_iteration tracking', () => {
     it('ignores stale review children from prior loop iterations', () => {
       const config = makeAutoReviewConfig({
         reviewers: [{ backend: 'openrouter', model: 'model-a' }],
@@ -545,7 +834,7 @@ describe('ReviewHandler', () => {
         loop_iteration: 1,
       })
 
-      // Stale child from iteration 0 should not influence iteration 1 decision.
+      // Stale child from iteration 0
       const staleChild = taskStore.create({
         type: 'review',
         summary: 'stale review',
@@ -558,14 +847,10 @@ describe('ReviewHandler', () => {
           review_iteration: 0,
         },
       })
-      taskStore.transition(staleChild.id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'w',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      taskStore.transition(staleChild.id, TaskStatus.REVIEW, {
-        result: '{"approved": false, "feedback": {"what": "stale", "where": "old", "fix": "ignore"}}',
-      })
-      handler.onTaskReview(taskStore.getById(staleChild.id)!)
+      completeReviewChild(
+        staleChild.id,
+        '{"approved": false, "feedback": {"what": "stale", "where": "old", "fix": "ignore"}}',
+      )
 
       handler.onTaskReview(parent)
 
@@ -573,14 +858,7 @@ describe('ReviewHandler', () => {
         .filter(t => t.parent_task_id === parent.id && t.metadata?.review_iteration === 1)
       expect(currentChildren).toHaveLength(1)
 
-      taskStore.transition(currentChildren[0].id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'w',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      taskStore.transition(currentChildren[0].id, TaskStatus.REVIEW, {
-        result: '{"approved": true, "reasoning": "current iteration passes"}',
-      })
-      handler.onTaskReview(taskStore.getById(currentChildren[0].id)!)
+      completeReviewChild(currentChildren[0].id, '{"approved": true, "reasoning": "current iteration passes"}')
       handler.onReviewChildComplete(taskStore.getById(currentChildren[0].id)!)
 
       const updatedParent = taskStore.getById(parent.id)!
@@ -591,14 +869,12 @@ describe('ReviewHandler', () => {
   describe('edge cases', () => {
     it('ignores non-review child tasks', () => {
       const task = taskStore.create(makeTaskInput({ type: 'coding' }))
-      // Should not throw
       handler.onReviewChildComplete(task)
     })
 
     it('ignores child tasks with no parent', () => {
       const task = taskStore.create(makeTaskInput({ type: 'review' }))
       handler.onReviewChildComplete(task)
-      // No error
     })
 
     it('does not act if parent is no longer in REVIEW', () => {
@@ -611,23 +887,14 @@ describe('ReviewHandler', () => {
       })
       handler.onTaskReview(parent)
 
-      // Manually transition parent to DONE before children finish
       taskStore.transition(parent.id, TaskStatus.DONE)
 
       const children = taskStore.list({ type: 'review' })
         .filter(t => t.parent_task_id === parent.id)
 
-      taskStore.transition(children[0].id, TaskStatus.IN_PROGRESS, {
-        lease_owner: 'w',
-        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
-      })
-      taskStore.transition(children[0].id, TaskStatus.REVIEW, {
-        result: '{"approved": true}',
-      })
-      handler.onTaskReview(taskStore.getById(children[0].id)!)
+      completeReviewChild(children[0].id, '{"approved": true}')
       handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
 
-      // Parent should still be DONE
       expect(taskStore.getById(parent.id)!.status).toBe(TaskStatus.DONE)
     })
   })
