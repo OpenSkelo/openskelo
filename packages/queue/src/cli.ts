@@ -4,28 +4,34 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { loadConfig } from './config.js'
 import { createQueue } from './factory.js'
+import { runDoctor } from './doctor.js'
 
 export interface ParsedArgs {
   command: string
+  positionalArgs: string[]
   flags: Record<string, string>
 }
+
+const VALID_COMMANDS = ['init', 'start', 'status', 'add', 'list', 'approve', 'bounce', 'doctor', 'help']
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2)
   const command = args[0] ?? 'help'
   const flags: Record<string, string> = {}
+  const positionalArgs: string[] = []
 
   for (let i = 1; i < args.length; i++) {
     if (args[i].startsWith('--') && i + 1 < args.length) {
-      const key = args[i].slice(2)
-      flags[key] = args[i + 1]
+      flags[args[i].slice(2)] = args[i + 1]
       i++
+    } else if (!args[i].startsWith('--')) {
+      positionalArgs.push(args[i])
     }
   }
 
-  const validCommands = ['init', 'start', 'status', 'add', 'list', 'help']
   return {
-    command: validCommands.includes(command) ? command : 'help',
+    command: VALID_COMMANDS.includes(command) ? command : 'help',
+    positionalArgs,
     flags,
   }
 }
@@ -113,13 +119,36 @@ gates:
 
 export function buildRequestHeaders(apiKey?: string, includeJson = false): Record<string, string> {
   const headers: Record<string, string> = {}
-  if (includeJson) {
-    headers['Content-Type'] = 'application/json'
-  }
-  if (apiKey) {
-    headers['x-api-key'] = apiKey
-  }
+  if (includeJson) headers['Content-Type'] = 'application/json'
+  if (apiKey) headers['x-api-key'] = apiKey
   return headers
+}
+
+export function buildInlineTaskBody(flags: Record<string, string>): Record<string, unknown> | null {
+  const { type, summary, prompt, backend } = flags
+  if (!type || !summary || !prompt || !backend) return null
+  return {
+    type,
+    summary,
+    prompt,
+    backend,
+    priority: flags.priority ? parseInt(flags.priority, 10) : 0,
+  }
+}
+
+export function buildBounceBody(flags: Record<string, string>): {
+  to: string
+  feedback: { what: string; where: string; fix: string }
+} | null {
+  if (!flags.reason) return null
+  return {
+    to: 'PENDING',
+    feedback: {
+      what: flags.reason,
+      where: flags.where ?? '',
+      fix: flags.fix ?? '',
+    },
+  }
 }
 
 function printHelp(): void {
@@ -127,16 +156,26 @@ function printHelp(): void {
 OpenSkelo — AI Task Orchestrator
 
 Usage:
-  openskelo init                  Create openskelo.yaml template
-  openskelo start [--config path] Start queue, dispatcher, and API server
-  openskelo status [--config path] Show queue health status
-  openskelo add [--config path]   Add task (reads JSON from stdin)
-  openskelo list [--config path] [--status STATUS] List tasks
-  openskelo help                  Show this help
+  openskelo init                     Create openskelo.yaml template
+  openskelo start [--config path]    Start queue, dispatcher, and API server
+  openskelo status [--config path]   Show queue health status
+  openskelo add [--config path]      Add task from stdin JSON or inline flags
+  openskelo list [--config path]     List tasks (--status to filter)
+  openskelo approve <task-id>        Approve a task in REVIEW → DONE
+  openskelo bounce <task-id>         Bounce a task in REVIEW → PENDING
+  openskelo doctor                   Check system readiness
+  openskelo help                     Show this help
+
+Add (inline):
+  openskelo add --type code --summary "Fix bug" --prompt "Fix auth" --backend claude-code
+
+Bounce:
+  openskelo bounce <id> --reason "Missing tests" --where "src/auth.ts" --fix "Add unit tests"
 
 Options:
-  --config path   Path to config file (default: ./openskelo.yaml)
-  --status STATUS Filter tasks by status (PENDING, IN_PROGRESS, REVIEW, DONE, BLOCKED)
+  --config path     Path to config file (default: ./openskelo.yaml)
+  --status STATUS   Filter tasks by status
+  --priority N      Task priority (default: 0)
 `)
 }
 
@@ -147,7 +186,6 @@ async function cmdInit(): Promise<void> {
     process.exitCode = 1
     return
   }
-
   fs.writeFileSync(filePath, generateTemplate())
   console.log('Created openskelo.yaml')
   console.log('Edit the config, then run: openskelo start')
@@ -187,7 +225,6 @@ async function cmdStatus(flags: Record<string, string>): Promise<void> {
       headers: buildRequestHeaders(config.server?.api_key),
     })
     const data = await res.json() as { status: string; counts: Record<string, number> }
-
     console.log(`Status: ${data.status}`)
     console.log('Task counts:')
     for (const [status, count] of Object.entries(data.counts)) {
@@ -205,19 +242,22 @@ async function cmdAdd(flags: Record<string, string>): Promise<void> {
   const port = config.server?.port ?? 4820
   const host = config.server?.host ?? '127.0.0.1'
 
-  let input = ''
-  if (flags.file) {
-    input = fs.readFileSync(flags.file, 'utf-8')
+  let body: Record<string, unknown>
+
+  const inline = buildInlineTaskBody(flags)
+  if (inline) {
+    body = inline
+  } else if (flags.file) {
+    body = JSON.parse(fs.readFileSync(flags.file, 'utf-8'))
   } else {
     const chunks: Buffer[] = []
     for await (const chunk of process.stdin) {
       chunks.push(chunk as Buffer)
     }
-    input = Buffer.concat(chunks).toString('utf-8')
+    body = JSON.parse(Buffer.concat(chunks).toString('utf-8'))
   }
 
   try {
-    const body = JSON.parse(input)
     const res = await fetch(`http://${host}:${port}/tasks`, {
       method: 'POST',
       headers: buildRequestHeaders(config.server?.api_key, true),
@@ -240,9 +280,7 @@ async function cmdList(flags: Record<string, string>): Promise<void> {
 
   try {
     let url = `http://${host}:${port}/tasks`
-    if (flags.status) {
-      url += `?status=${encodeURIComponent(flags.status)}`
-    }
+    if (flags.status) url += `?status=${encodeURIComponent(flags.status)}`
 
     const res = await fetch(url, {
       headers: buildRequestHeaders(config.server?.api_key),
@@ -270,22 +308,154 @@ async function cmdList(flags: Record<string, string>): Promise<void> {
   }
 }
 
+async function cmdApprove(positionalArgs: string[], flags: Record<string, string>): Promise<void> {
+  const taskId = positionalArgs[0]
+  if (!taskId) {
+    console.error('Usage: openskelo approve <task-id>')
+    process.exitCode = 1
+    return
+  }
+
+  const config = loadConfig(flags.config)
+  const port = config.server?.port ?? 4820
+  const host = config.server?.host ?? '127.0.0.1'
+  const apiKey = config.server?.api_key
+
+  try {
+    const getRes = await fetch(`http://${host}:${port}/tasks/${taskId}`, {
+      headers: buildRequestHeaders(apiKey),
+    })
+    if (!getRes.ok) {
+      console.error(`Task ${taskId} not found`)
+      process.exitCode = 1
+      return
+    }
+
+    const task = await getRes.json() as Record<string, unknown>
+    if (task.status !== 'REVIEW') {
+      console.error(`Task ${taskId} is in ${task.status}, can only approve from REVIEW`)
+      process.exitCode = 1
+      return
+    }
+
+    const transRes = await fetch(`http://${host}:${port}/tasks/${taskId}/transition`, {
+      method: 'POST',
+      headers: buildRequestHeaders(apiKey, true),
+      body: JSON.stringify({ to: 'DONE' }),
+    })
+
+    if (!transRes.ok) {
+      const err = await transRes.json() as { error: string }
+      console.error(`Failed to approve: ${err.error}`)
+      process.exitCode = 1
+      return
+    }
+
+    console.log(`Task ${taskId} approved`)
+  } catch {
+    console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+    process.exitCode = 1
+  }
+}
+
+async function cmdBounce(positionalArgs: string[], flags: Record<string, string>): Promise<void> {
+  const taskId = positionalArgs[0]
+  if (!taskId) {
+    console.error('Usage: openskelo bounce <task-id> --reason "..."')
+    process.exitCode = 1
+    return
+  }
+
+  const body = buildBounceBody(flags)
+  if (!body) {
+    console.error('--reason is required for bounce')
+    process.exitCode = 1
+    return
+  }
+
+  const config = loadConfig(flags.config)
+  const port = config.server?.port ?? 4820
+  const host = config.server?.host ?? '127.0.0.1'
+  const apiKey = config.server?.api_key
+
+  try {
+    const getRes = await fetch(`http://${host}:${port}/tasks/${taskId}`, {
+      headers: buildRequestHeaders(apiKey),
+    })
+    if (!getRes.ok) {
+      console.error(`Task ${taskId} not found`)
+      process.exitCode = 1
+      return
+    }
+
+    const task = await getRes.json() as Record<string, unknown>
+    if (task.status !== 'REVIEW') {
+      console.error(`Task ${taskId} is in ${task.status}, can only bounce from REVIEW`)
+      process.exitCode = 1
+      return
+    }
+
+    const transRes = await fetch(`http://${host}:${port}/tasks/${taskId}/transition`, {
+      method: 'POST',
+      headers: buildRequestHeaders(apiKey, true),
+      body: JSON.stringify(body),
+    })
+
+    if (!transRes.ok) {
+      const err = await transRes.json() as { error: string }
+      console.error(`Failed to bounce: ${err.error}`)
+      process.exitCode = 1
+      return
+    }
+
+    const updated = await transRes.json() as Record<string, unknown>
+    console.log(`Task ${taskId} bounced -> PENDING (bounce #${updated.bounce_count})`)
+  } catch {
+    console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+    process.exitCode = 1
+  }
+}
+
+async function cmdDoctor(flags: Record<string, string>): Promise<void> {
+  const configPath = flags.config ?? path.join(process.cwd(), 'openskelo.yaml')
+  let port = 4820
+
+  try {
+    const config = loadConfig(configPath)
+    port = config.server?.port ?? 4820
+  } catch {
+    // Config may not exist yet — doctor will report it
+  }
+
+  const checks = await runDoctor(configPath, port)
+
+  for (const check of checks) {
+    const icon = check.ok ? '\u2713' : '\u2717'
+    console.log(`${icon} ${check.detail}`)
+  }
+
+  const failed = checks.filter(c => !c.ok)
+  if (failed.length > 0) {
+    console.log(`\n${failed.length} issue(s) found`)
+    process.exitCode = 1
+  } else {
+    console.log('\nAll checks passed')
+  }
+}
+
 async function main(): Promise<void> {
-  const { command, flags } = parseArgs(process.argv)
+  const { command, positionalArgs, flags } = parseArgs(process.argv)
 
   switch (command) {
-    case 'init':
-      return cmdInit()
-    case 'start':
-      return cmdStart(flags)
-    case 'status':
-      return cmdStatus(flags)
-    case 'add':
-      return cmdAdd(flags)
-    case 'list':
-      return cmdList(flags)
-    default:
-      printHelp()
+    case 'init': return cmdInit()
+    case 'start': return cmdStart(flags)
+    case 'status': return cmdStatus(flags)
+    case 'add': return cmdAdd(flags)
+    case 'list': return cmdList(flags)
+    case 'approve': return cmdApprove(positionalArgs, flags)
+    case 'bounce': return cmdBounce(positionalArgs, flags)
+    case 'doctor': return cmdDoctor(flags)
+    default: printHelp()
   }
 }
 

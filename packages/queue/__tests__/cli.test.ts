@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { parseArgs, generateTemplate, buildRequestHeaders } from '../src/cli.js'
+import {
+  parseArgs,
+  generateTemplate,
+  buildRequestHeaders,
+  buildInlineTaskBody,
+  buildBounceBody,
+} from '../src/cli.js'
 
 describe('CLI arg parsing', () => {
   it('parses "init" command', () => {
@@ -30,6 +36,21 @@ describe('CLI arg parsing', () => {
     expect(result.command).toBe('list')
   })
 
+  it('parses "approve" command', () => {
+    const result = parseArgs(['node', 'openskelo', 'approve'])
+    expect(result.command).toBe('approve')
+  })
+
+  it('parses "bounce" command', () => {
+    const result = parseArgs(['node', 'openskelo', 'bounce'])
+    expect(result.command).toBe('bounce')
+  })
+
+  it('parses "doctor" command', () => {
+    const result = parseArgs(['node', 'openskelo', 'doctor'])
+    expect(result.command).toBe('doctor')
+  })
+
   it('parses --config flag', () => {
     const result = parseArgs(['node', 'openskelo', 'start', '--config', './custom.yaml'])
     expect(result.command).toBe('start')
@@ -47,10 +68,128 @@ describe('CLI arg parsing', () => {
     expect(result.command).toBe('help')
   })
 
-  it('CLI request headers include x-api-key when config has api_key', () => {
+  it('parses positional args for approve', () => {
+    const result = parseArgs(['node', 'openskelo', 'approve', 'TASK-123'])
+    expect(result.command).toBe('approve')
+    expect(result.positionalArgs).toEqual(['TASK-123'])
+  })
+
+  it('parses positional args with flags for bounce', () => {
+    const result = parseArgs([
+      'node', 'openskelo', 'bounce', 'TASK-456',
+      '--reason', 'Missing tests',
+      '--where', 'src/auth.ts',
+      '--fix', 'Add tests',
+    ])
+    expect(result.command).toBe('bounce')
+    expect(result.positionalArgs).toEqual(['TASK-456'])
+    expect(result.flags.reason).toBe('Missing tests')
+    expect(result.flags.where).toBe('src/auth.ts')
+    expect(result.flags.fix).toBe('Add tests')
+  })
+})
+
+describe('buildRequestHeaders', () => {
+  it('includes x-api-key when configured', () => {
     const headers = buildRequestHeaders('secret-key', true)
     expect(headers['x-api-key']).toBe('secret-key')
     expect(headers['Content-Type']).toBe('application/json')
+  })
+
+  it('omits x-api-key when not configured', () => {
+    const headers = buildRequestHeaders(undefined, false)
+    expect(headers['x-api-key']).toBeUndefined()
+    expect(headers['Content-Type']).toBeUndefined()
+  })
+})
+
+describe('buildInlineTaskBody', () => {
+  it('constructs correct task body from all flags', () => {
+    const body = buildInlineTaskBody({
+      type: 'code',
+      summary: 'Fix login bug',
+      prompt: 'Review src/auth/login.ts',
+      backend: 'claude-code',
+    })
+    expect(body).toEqual({
+      type: 'code',
+      summary: 'Fix login bug',
+      prompt: 'Review src/auth/login.ts',
+      backend: 'claude-code',
+      priority: 0,
+    })
+  })
+
+  it('returns null when required flags are missing', () => {
+    expect(buildInlineTaskBody({ type: 'code', summary: 'test' })).toBeNull()
+    expect(buildInlineTaskBody({ type: 'code' })).toBeNull()
+    expect(buildInlineTaskBody({})).toBeNull()
+  })
+
+  it('parses priority flag', () => {
+    const body = buildInlineTaskBody({
+      type: 'code',
+      summary: 'Fix bug',
+      prompt: 'Fix it',
+      backend: 'claude-code',
+      priority: '2',
+    })
+    expect(body!.priority).toBe(2)
+  })
+
+  it('all flags together produce valid CreateTaskInput', () => {
+    const body = buildInlineTaskBody({
+      type: 'code',
+      summary: 'Refactor auth',
+      prompt: 'Refactor src/auth.ts to use async/await',
+      backend: 'claude-code',
+      priority: '1',
+    })
+    expect(body).not.toBeNull()
+    expect(body!.type).toBe('code')
+    expect(body!.summary).toBe('Refactor auth')
+    expect(body!.prompt).toBe('Refactor src/auth.ts to use async/await')
+    expect(body!.backend).toBe('claude-code')
+    expect(body!.priority).toBe(1)
+  })
+})
+
+describe('buildBounceBody', () => {
+  it('constructs correct transition with feedback', () => {
+    const body = buildBounceBody({
+      reason: 'Missing error handling',
+      where: 'src/auth.ts',
+      fix: 'Add try/catch',
+    })
+    expect(body).toEqual({
+      to: 'PENDING',
+      feedback: {
+        what: 'Missing error handling',
+        where: 'src/auth.ts',
+        fix: 'Add try/catch',
+      },
+    })
+  })
+
+  it('requires --reason flag', () => {
+    expect(buildBounceBody({})).toBeNull()
+    expect(buildBounceBody({ where: 'src/auth.ts' })).toBeNull()
+  })
+
+  it('defaults --where and --fix to empty string', () => {
+    const body = buildBounceBody({ reason: 'Bad output' })
+    expect(body!.feedback.where).toBe('')
+    expect(body!.feedback.fix).toBe('')
+  })
+
+  it('includes --where and --fix when present', () => {
+    const body = buildBounceBody({
+      reason: 'Tests fail',
+      where: 'test/auth.test.ts',
+      fix: 'Fix assertion',
+    })
+    expect(body!.feedback.where).toBe('test/auth.test.ts')
+    expect(body!.feedback.fix).toBe('Fix assertion')
   })
 })
 
@@ -95,6 +234,5 @@ describe('CLI init', () => {
     const filePath = path.join(tmpDir, 'openskelo.yaml')
     fs.writeFileSync(filePath, 'existing')
     expect(fs.existsSync(filePath)).toBe(true)
-    // The CLI's init command checks for existing file — tested via the function
   })
 })
