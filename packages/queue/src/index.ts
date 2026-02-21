@@ -73,7 +73,7 @@ export type { ScheduleConfig, ScheduleEntry } from './scheduler.js'
 
 // Review Handler
 export { ReviewHandler, buildReviewPrompt, buildMergePrompt, buildFixPrompt, parseReviewDecision } from './review-handler.js'
-export type { ReviewerConfig, AutoReviewConfig, ReviewDecision } from './review-handler.js'
+export type { ReviewerConfig, AutoReviewConfig, ReviewDecision, ReviewChainEntry } from './review-handler.js'
 
 // Errors
 export {

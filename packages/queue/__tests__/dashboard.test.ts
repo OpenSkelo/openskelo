@@ -133,4 +133,32 @@ describe('Dashboard', () => {
     const res = await request(app).get('/dashboard').expect(200)
     expect(res.text).toContain('pipeline-filter')
   })
+
+  it('Dashboard HTML contains NEEDS HUMAN badge markup', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('NEEDS HUMAN')
+    expect(res.text).toContain('needs_human')
+  })
+
+  it('Dashboard HTML contains human escalation banner markup', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('Human Review Required')
+    expect(res.text).toContain('escalation_reason')
+  })
+
+  it('Dashboard HTML contains review chain section', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('review-chain-section')
+    expect(res.text).toContain('Review History')
+    expect(res.text).toContain('loadReviewChain')
+  })
+
+  it('Dashboard HTML contains iteration count with max', async () => {
+    const app = createTestApp()
+    const res = await request(app).get('/dashboard').expect(200)
+    expect(res.text).toContain('max_iterations')
+  })
 })

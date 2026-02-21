@@ -7,6 +7,7 @@ import type { PriorityQueue } from './priority-queue.js'
 import type { AuditLog } from './audit.js'
 import type { Dispatcher } from './dispatcher.js'
 import type { Scheduler } from './scheduler.js'
+import type { ReviewHandler } from './review-handler.js'
 import { TaskStatus } from './state-machine.js'
 import { TransitionError } from './errors.js'
 import { createDagPipeline } from './pipeline.js'
@@ -28,6 +29,7 @@ export interface ApiDependencies {
   auditLog: AuditLog
   dispatcher: Dispatcher
   scheduler?: Scheduler
+  reviewHandler?: ReviewHandler
 }
 
 const PUBLIC_PATHS = ['/health', '/dashboard']
@@ -58,7 +60,7 @@ export function createApiRouter(
   config?: ApiConfig,
 ): Router {
   const router = Router()
-  const { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler } = deps
+  const { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler, reviewHandler } = deps
 
   if (config?.api_key) {
     router.use(authMiddleware(config.api_key))
@@ -172,6 +174,28 @@ export function createApiRouter(
         return
       }
       res.json(task)
+    } catch (err) {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // GET /tasks/:id/review-chain
+  router.get('/tasks/:id/review-chain', (req: Request, res: Response) => {
+    try {
+      if (!reviewHandler) {
+        res.status(501).json({ error: 'Review handler not available' })
+        return
+      }
+
+      const id = paramId(req)
+      const task = taskStore.getById(id)
+      if (!task) {
+        res.status(404).json({ error: `Task ${id} not found` })
+        return
+      }
+
+      const chain = reviewHandler.getReviewChain(id)
+      res.json(chain)
     } catch (err) {
       res.status(500).json({ error: 'Internal server error' })
     }

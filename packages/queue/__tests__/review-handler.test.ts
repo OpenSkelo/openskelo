@@ -1255,6 +1255,356 @@ describe('ReviewHandler', () => {
     })
   })
 
+  describe('getReviewChain', () => {
+    it('returns single entry for task with no reviews', () => {
+      const task = createAndTransitionToReview()
+      const chain = handler.getReviewChain(task.id)
+      expect(chain).toHaveLength(1)
+      expect(chain[0].task_id).toBe(task.id)
+      expect(chain[0].review_children).toEqual([])
+      expect(chain[0].fix_task_id).toBeNull()
+    })
+
+    it('returns chain with review children', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(children[0].id, '{"approved": true, "reasoning": "LGTM"}')
+
+      const chain = handler.getReviewChain(parent.id)
+      expect(chain).toHaveLength(1)
+      expect(chain[0].review_children).toHaveLength(1)
+      expect(chain[0].review_children[0].approved).toBe(true)
+      expect(chain[0].review_children[0].reasoning).toBe('LGTM')
+      expect(chain[0].review_children[0].reviewer).toBe('openrouter/model-a')
+    })
+
+    it('returns multi-entry chain after rejection and fix', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "reasoning": "bad", "feedback": {"what": "bug", "where": "here", "fix": "that"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const chain = handler.getReviewChain(parent.id)
+      expect(chain).toHaveLength(2)
+      expect(chain[0].task_id).toBe(parent.id)
+      expect(chain[0].review_children[0].approved).toBe(false)
+      expect(chain[0].fix_task_id).toBeTruthy()
+      expect(chain[1].task_id).toBe(chain[0].fix_task_id)
+      expect(chain[1].loop_iteration).toBe(1)
+    })
+
+    it('navigates to root when given a fix task id', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTask = taskStore.list({}).find(t => t.metadata?.fix_for === parent.id)!
+
+      // Get chain starting from fix task — should still show full chain from root
+      const chain = handler.getReviewChain(fixTask.id)
+      expect(chain).toHaveLength(2)
+      expect(chain[0].task_id).toBe(parent.id)
+      expect(chain[1].task_id).toBe(fixTask.id)
+    })
+
+    it('navigates to root when given a review child id', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      const chain = handler.getReviewChain(children[0].id)
+      expect(chain[0].task_id).toBe(parent.id)
+    })
+
+    it('returns empty array for non-existent task', () => {
+      expect(handler.getReviewChain('NONEXISTENT')).toEqual([])
+    })
+  })
+
+  describe('human escalation — max_iterations', () => {
+    it('escalates after reaching max_iterations (default 3)', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      // Parent at loop_iteration 2 (= max_iterations - 1 = 3 - 1)
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 2,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "reasoning": "still bad", "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      // Should NOT create a fix task
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(0)
+
+      // Should set needs_human
+      const updatedParent = taskStore.getById(parent.id)!
+      expect(updatedParent.metadata.needs_human).toBe(true)
+      expect(updatedParent.metadata.escalation_reason).toBeDefined()
+      expect(updatedParent.status).toBe(TaskStatus.REVIEW)
+    })
+
+    it('escalates at custom max_iterations', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        max_iterations: 5,
+      })
+
+      // At iter 4 (= max_iterations - 1 = 5 - 1), should escalate
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 4,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(0)
+
+      expect(taskStore.getById(parent.id)!.metadata.needs_human).toBe(true)
+    })
+
+    it('allows fix at iteration below max_iterations', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        max_iterations: 5,
+      })
+
+      // At iter 3, should still allow fix (3 < 5 - 1 = 4)
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 3,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(1)
+    })
+
+    it('logs human_escalation_required audit entry', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        max_iterations: 2,
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 1,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const logs = auditLog.getTaskHistory(parent.id)
+      const escalationLog = logs.find(l => l.action === 'human_escalation_required')
+      expect(escalationLog).toBeDefined()
+      expect(escalationLog!.metadata).toHaveProperty('max_iterations', 2)
+    })
+
+    it('emits human_escalation webhook event', () => {
+      const webhookDispatcher = new WebhookDispatcher([])
+      const emitSpy = vi.spyOn(webhookDispatcher, 'emit')
+      const handlerWithWebhook = new ReviewHandler(taskStore, auditLog, webhookDispatcher)
+
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        max_iterations: 1,
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 0,
+      })
+      handlerWithWebhook.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handlerWithWebhook.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const escalationEvent = emitSpy.mock.calls.find(c => c[0].event === 'human_escalation')
+      expect(escalationEvent).toBeDefined()
+      expect(escalationEvent![0].metadata?.reason).toBe('max_iterations_reached')
+    })
+  })
+
+  describe('hard cap safety net', () => {
+    it('skips auto-review when loop_iteration >= 10', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        max_iterations: 20, // Higher than hard cap
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 10,
+      })
+
+      handler.onTaskReview(parent)
+
+      // No review children should be created
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+      expect(children).toHaveLength(0)
+
+      // Should set needs_human
+      const updatedParent = taskStore.getById(parent.id)!
+      expect(updatedParent.metadata.needs_human).toBe(true)
+      expect(updatedParent.metadata.escalation_reason).toBe('Hard iteration cap reached')
+    })
+
+    it('logs hard_cap_reached audit entry', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        max_iterations: 20,
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 10,
+      })
+
+      handler.onTaskReview(parent)
+
+      const logs = auditLog.getTaskHistory(parent.id)
+      const hardCapLog = logs.find(l => l.action === 'hard_cap_reached')
+      expect(hardCapLog).toBeDefined()
+      expect(hardCapLog!.metadata).toHaveProperty('hard_cap', 10)
+    })
+
+    it('emits human_escalation webhook for hard cap', () => {
+      const webhookDispatcher = new WebhookDispatcher([])
+      const emitSpy = vi.spyOn(webhookDispatcher, 'emit')
+      const handlerWithWebhook = new ReviewHandler(taskStore, auditLog, webhookDispatcher)
+
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        max_iterations: 20,
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 10,
+      })
+
+      handlerWithWebhook.onTaskReview(parent)
+
+      const escalationEvent = emitSpy.mock.calls.find(c => c[0].event === 'human_escalation')
+      expect(escalationEvent).toBeDefined()
+      expect(escalationEvent![0].metadata?.reason).toBe('hard_cap')
+    })
+
+    it('caps max_iterations at HARD_CAP when set higher', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        max_iterations: 20,
+      })
+
+      // At iter 9 (= HARD_CAP - 1 = 10 - 1), applyDecision should escalate
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 9,
+      })
+      handler.onTaskReview(parent)
+
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(
+        children[0].id,
+        '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      )
+      handler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const fixTasks = taskStore.list({}).filter(t => t.metadata?.fix_for === parent.id)
+      expect(fixTasks).toHaveLength(0)
+
+      expect(taskStore.getById(parent.id)!.metadata.needs_human).toBe(true)
+    })
+  })
+
   describe('edge cases', () => {
     it('ignores non-review child tasks', () => {
       const task = taskStore.create(makeTaskInput({ type: 'coding' }))

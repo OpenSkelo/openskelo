@@ -160,6 +160,10 @@ export function buildDashboardHtml(apiKey?: string): string {
     }
     .audit-entry .ts { color: #64748b; }
     .audit-entry .action { color: #e2e8f0; font-weight: 500; }
+    .escalation-banner {
+      background: #7f1d1d; border: 1px solid #ef4444; border-radius: 6px;
+      padding: 10px 12px; margin: 10px 0; font-size: 12px;
+    }
 
     /* Toast */
     #toast-container {
@@ -344,7 +348,12 @@ export function buildDashboardHtml(apiKey?: string): string {
       }
       var loopBadge = ''
       if (t.loop_iteration && t.loop_iteration > 0) {
-        loopBadge = '<span class="badge" style="color:#3b82f6">\\u{1F504} iter ' + t.loop_iteration + '</span>'
+        var maxIter = (t.auto_review && t.auto_review.max_iterations) || 3
+        loopBadge = '<span class="badge" style="color:#3b82f6">\\u{1F504} iter ' + t.loop_iteration + '/' + maxIter + '</span>'
+      }
+      var humanBadge = ''
+      if (t.metadata && t.metadata.needs_human) {
+        humanBadge = '<span class="badge" style="color:#ef4444;font-weight:600">\\u{1F6A8} NEEDS HUMAN</span>'
       }
 
       return '<div class="card' + pClass + '" onclick="openDetail(\\'' + escapeHtml(t.id) + '\\')">' +
@@ -359,6 +368,7 @@ export function buildDashboardHtml(apiKey?: string): string {
           pipeline +
           holdBadge +
           loopBadge +
+          humanBadge +
         '</div>' +
       '</div>'
     }
@@ -468,13 +478,22 @@ export function buildDashboardHtml(apiKey?: string): string {
         html += detailField('Loop Iteration', '\\u{1F504} ' + task.loop_iteration)
       }
 
+      if (task.metadata && task.metadata.needs_human) {
+        html += '<div style="background:#7f1d1d;border:1px solid #ef4444;border-radius:6px;padding:10px 12px;margin:10px 0;font-size:12px">'
+        html += '<strong style="color:#fca5a5">\\u{1F6A8} Human Review Required</strong><br>'
+        html += '<span style="color:#fca5a5">' + escapeHtml(task.metadata.escalation_reason || 'Max review iterations reached') + '</span>'
+        html += '</div>'
+      }
+
       html += renderActions(task)
+      html += '<div class="audit-section" id="review-chain-section"><div class="detail-label">Review History</div><div style="color:#64748b;font-size:11px">Loading...</div></div>'
       html += '<div class="audit-section" id="audit-log"><div class="detail-label">Audit History</div><div style="color:#64748b;font-size:11px">Loading...</div></div>'
 
       content.innerHTML = html
       panel.classList.add('open')
       overlay.classList.add('open')
 
+      loadReviewChain(taskId)
       loadAudit(taskId)
     }
 
@@ -531,6 +550,42 @@ export function buildDashboardHtml(apiKey?: string): string {
         })
         el.innerHTML = html
       } catch (e) { /* audit load fail is non-critical */ }
+    }
+
+    async function loadReviewChain(taskId) {
+      try {
+        var res = await fetch('/tasks/' + encodeURIComponent(taskId) + '/review-chain', { headers: apiHeaders() })
+        var el = document.getElementById('review-chain-section')
+        if (!res.ok || res.status === 501) {
+          el.innerHTML = '<div class="detail-label">Review History</div><div style="color:#64748b;font-size:11px">Not available</div>'
+          return
+        }
+        var chain = await res.json()
+        if (!chain.length || chain.length <= 1 && chain[0].review_children.length === 0) {
+          el.innerHTML = '<div class="detail-label">Review History</div><div style="color:#64748b;font-size:11px">No review history</div>'
+          return
+        }
+        var html = '<div class="detail-label">Review History</div>'
+        chain.forEach(function(entry, idx) {
+          html += '<div style="padding:6px 0;border-bottom:1px solid #1e293b;font-size:11px">'
+          html += '<div style="color:#e2e8f0;font-weight:500">Iteration ' + entry.loop_iteration + ' \\u2014 ' + escapeHtml(entry.summary) + '</div>'
+          html += '<div style="color:#64748b">' + escapeHtml(entry.status) + '</div>'
+          if (entry.review_children.length > 0) {
+            entry.review_children.forEach(function(rc) {
+              var icon = rc.approved === true ? '\\u2705' : rc.approved === false ? '\\u274C' : '\\u23F3'
+              html += '<div style="margin-left:12px;color:#94a3b8">'
+              html += icon + ' ' + escapeHtml(rc.reviewer)
+              if (rc.reasoning) html += ' \\u2014 ' + escapeHtml(preview(rc.reasoning, 80))
+              html += '</div>'
+            })
+          }
+          if (entry.fix_task_id) {
+            html += '<div style="margin-left:12px;color:#f59e0b">\\u{1F527} Fix: ' + escapeHtml(entry.fix_task_id).slice(0, 10) + '..</div>'
+          }
+          html += '</div>'
+        })
+        el.innerHTML = html
+      } catch (e) { /* review chain load fail is non-critical */ }
     }
 
     function closePanel() {

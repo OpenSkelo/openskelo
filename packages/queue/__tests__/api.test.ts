@@ -14,6 +14,7 @@ import type { DispatcherConfig } from '../src/dispatcher.js'
 import { createApiRouter } from '../src/api.js'
 import type { ApiDependencies, ApiConfig } from '../src/api.js'
 import { TemplateStore } from '../src/templates.js'
+import { ReviewHandler } from '../src/review-handler.js'
 
 function createHangingAdapter(name: string, taskTypes: string[]): ExecutionAdapter {
   return {
@@ -630,5 +631,86 @@ describe('REST API Router', () => {
       .expect(200)
 
     expect(Array.isArray(res.body)).toBe(true)
+  })
+
+  // Review chain endpoint
+  describe('GET /tasks/:id/review-chain', () => {
+    it('returns review chain for a task', async () => {
+      const reviewHandler = new ReviewHandler(taskStore, auditLog)
+      const appWithReview = createTestApp({ ...deps, reviewHandler })
+
+      const task = taskStore.create(makeTaskInput())
+
+      const res = await request(appWithReview)
+        .get(`/tasks/${task.id}/review-chain`)
+        .expect(200)
+
+      expect(Array.isArray(res.body)).toBe(true)
+      expect(res.body).toHaveLength(1)
+      expect(res.body[0].task_id).toBe(task.id)
+    })
+
+    it('returns 404 for non-existent task', async () => {
+      const reviewHandler = new ReviewHandler(taskStore, auditLog)
+      const appWithReview = createTestApp({ ...deps, reviewHandler })
+
+      const res = await request(appWithReview)
+        .get('/tasks/NONEXISTENT/review-chain')
+        .expect(404)
+
+      expect(res.body).toHaveProperty('error')
+    })
+
+    it('returns 501 when reviewHandler not available', async () => {
+      const res = await request(app)
+        .get('/tasks/some-id/review-chain')
+        .expect(501)
+
+      expect(res.body.error).toContain('Review handler not available')
+    })
+
+    it('returns chain with review children and fix tasks', async () => {
+      const reviewHandler = new ReviewHandler(taskStore, auditLog)
+      const appWithReview = createTestApp({ ...deps, reviewHandler })
+
+      const task = taskStore.create(makeTaskInput({
+        auto_review: {
+          reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+          strategy: 'all_must_approve',
+        } as unknown as Record<string, unknown>,
+      }))
+
+      // Move to REVIEW
+      taskStore.transition(task.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(task.id, TaskStatus.REVIEW, { result: 'output' })
+      const taskInReview = taskStore.getById(task.id)!
+      reviewHandler.onTaskReview(taskInReview)
+
+      // Complete review child with rejection
+      const children = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === task.id)
+
+      taskStore.transition(children[0].id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(children[0].id, TaskStatus.REVIEW, {
+        result: '{"approved": false, "feedback": {"what": "x", "where": "y", "fix": "z"}}',
+      })
+      reviewHandler.onTaskReview(taskStore.getById(children[0].id)!)
+      reviewHandler.onReviewChildComplete(taskStore.getById(children[0].id)!)
+
+      const res = await request(appWithReview)
+        .get(`/tasks/${task.id}/review-chain`)
+        .expect(200)
+
+      expect(res.body).toHaveLength(2)
+      expect(res.body[0].review_children).toHaveLength(1)
+      expect(res.body[0].fix_task_id).toBeTruthy()
+      expect(res.body[1].task_id).toBe(res.body[0].fix_task_id)
+    })
   })
 })

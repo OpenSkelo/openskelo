@@ -195,7 +195,7 @@ export function createQueue(config: QueueConfig): Queue {
       }
 
       app.use(createApiRouter(
-        { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler },
+        { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler, reviewHandler },
         apiConfig,
       ))
       app.use(createDashboardRouter(config.server?.api_key))

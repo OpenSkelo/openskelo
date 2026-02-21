@@ -13,7 +13,26 @@ export interface AutoReviewConfig {
   reviewers: ReviewerConfig[]
   strategy: 'all_must_approve' | 'any_approve' | 'merge_then_decide'
   merge_backend?: string
+  max_iterations?: number
 }
+
+export interface ReviewChainEntry {
+  task_id: string
+  summary: string
+  type: string
+  status: TaskStatus
+  loop_iteration: number
+  result: string | null
+  review_children: Array<{
+    task_id: string
+    reviewer: string
+    approved: boolean | null
+    reasoning: string | null
+  }>
+  fix_task_id: string | null
+}
+
+const HARD_CAP = 10
 
 export interface ReviewDecision {
   approved: boolean
@@ -236,6 +255,69 @@ export class ReviewHandler {
     this.webhookDispatcher = webhookDispatcher
   }
 
+  getReviewChain(taskId: string): ReviewChainEntry[] {
+    let root = this.taskStore.getById(taskId)
+    if (!root) return []
+
+    // If we landed on a review child, jump to its parent
+    if (root.type === 'review' && root.parent_task_id) {
+      root = this.taskStore.getById(root.parent_task_id) ?? root
+    }
+
+    // Walk up through fix_for chain to find root
+    const seen = new Set<string>()
+    while (root.metadata?.fix_for && !seen.has(root.id)) {
+      seen.add(root.id)
+      const parent = this.taskStore.getById(String(root.metadata.fix_for))
+      if (!parent) break
+      root = parent
+    }
+
+    // Walk down: root → fix child → fix child's fix child → ...
+    const chain: ReviewChainEntry[] = []
+    let current: Task | null = root
+    seen.clear()
+
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id)
+
+      const reviewChildren = this.taskStore.list({ type: 'review' })
+        .filter(t =>
+          t.parent_task_id === current!.id
+          && !t.metadata?.is_merge,
+        )
+
+      const fixChild = this.taskStore.list({})
+        .find(t =>
+          t.parent_task_id === current!.id
+          && t.metadata?.fix_for === current!.id,
+        )
+
+      chain.push({
+        task_id: current.id,
+        summary: current.summary,
+        type: current.type,
+        status: current.status,
+        loop_iteration: current.loop_iteration,
+        result: current.result,
+        review_children: reviewChildren.map(c => {
+          const decision = c.result ? parseReviewDecision(c.result) : null
+          return {
+            task_id: c.id,
+            reviewer: `${c.metadata?.reviewer_backend ?? 'unknown'}${c.metadata?.reviewer_model ? '/' + c.metadata.reviewer_model : ''}`,
+            approved: decision?.approved ?? null,
+            reasoning: decision?.reasoning ?? null,
+          }
+        }),
+        fix_task_id: fixChild?.id ?? null,
+      })
+
+      current = fixChild ?? null
+    }
+
+    return chain
+  }
+
   onTaskReview(task: Task): void {
     // Auto-approve review children (review of review not needed)
     if (task.type === 'review' && task.parent_task_id) {
@@ -250,6 +332,33 @@ export class ReviewHandler {
 
     const config = task.auto_review as AutoReviewConfig | null
     if (!config || !config.reviewers || config.reviewers.length === 0) {
+      return
+    }
+
+    // Hard cap: safety net to prevent infinite loops
+    if (task.loop_iteration >= HARD_CAP) {
+      this.auditLog.logAction({
+        task_id: task.id,
+        action: 'hard_cap_reached',
+        metadata: { loop_iteration: task.loop_iteration, hard_cap: HARD_CAP },
+      })
+      this.taskStore.update(task.id, {
+        metadata: {
+          ...task.metadata,
+          needs_human: true,
+          escalation_reason: 'Hard iteration cap reached',
+        },
+      })
+      this.webhookDispatcher?.emit({
+        event: 'human_escalation',
+        task_id: task.id,
+        task_summary: task.summary,
+        task_type: task.type,
+        task_status: task.status,
+        pipeline_id: task.pipeline_id ?? undefined,
+        timestamp: new Date().toISOString(),
+        metadata: { loop_iteration: task.loop_iteration, reason: 'hard_cap' },
+      })
       return
     }
 
@@ -485,6 +594,43 @@ export class ReviewHandler {
       })
       this.taskStore.transition(parentTask.id, TaskStatus.DONE)
     } else {
+      const config = parentTask.auto_review as AutoReviewConfig | null
+      const maxIter = Math.min(config?.max_iterations ?? 3, HARD_CAP)
+
+      if (parentTask.loop_iteration >= maxIter - 1) {
+        this.auditLog.logAction({
+          task_id: parentTask.id,
+          action: 'human_escalation_required',
+          metadata: {
+            loop_iteration: parentTask.loop_iteration,
+            max_iterations: maxIter,
+            reasoning: decision.reasoning,
+          },
+        })
+        this.taskStore.update(parentTask.id, {
+          metadata: {
+            ...parentTask.metadata,
+            needs_human: true,
+            escalation_reason: decision.reasoning ?? 'Max iterations reached',
+          },
+        })
+        this.webhookDispatcher?.emit({
+          event: 'human_escalation',
+          task_id: parentTask.id,
+          task_summary: parentTask.summary,
+          task_type: parentTask.type,
+          task_status: parentTask.status,
+          pipeline_id: parentTask.pipeline_id ?? undefined,
+          timestamp: new Date().toISOString(),
+          metadata: {
+            loop_iteration: parentTask.loop_iteration,
+            max_iterations: maxIter,
+            reason: 'max_iterations_reached',
+          },
+        })
+        return
+      }
+
       this.createFixTask(parentTask, decision)
     }
   }
