@@ -154,6 +154,19 @@ export function parseReviewDecision(output: string): ReviewDecision {
 
   // Heuristic fallback
   const lower = output.toLowerCase()
+  const rejectionHints = ['not approved', 'not approve', 'reject', 'rejected', 'needs changes']
+  if (rejectionHints.some(hint => lower.includes(hint))) {
+    return {
+      approved: false,
+      reasoning: 'Heuristic: detected rejection language',
+      feedback: {
+        what: 'Reviewer indicated rejection in free-form output',
+        where: 'review',
+        fix: 'Address noted issues and re-run review',
+      },
+    }
+  }
+
   if (lower.includes('approved') || lower.includes('looks good') || lower.includes('lgtm')) {
     return { approved: true, reasoning: 'Heuristic: detected approval language' }
   }
@@ -223,6 +236,7 @@ export class ReviewHandler {
           reviewer_index: i,
           reviewer_backend: reviewer.backend,
           reviewer_model: reviewer.model ?? null,
+          review_iteration: task.loop_iteration,
         },
       }
 
@@ -235,14 +249,21 @@ export class ReviewHandler {
       return
     }
 
+    const parentTask = this.taskStore.getById(childTask.parent_task_id)
+    if (!parentTask) return
+
+    const currentIteration = parentTask.loop_iteration
+
     // Check if this is a merge task
     if (childTask.metadata?.is_merge) {
+      const mergeIteration = Number(childTask.metadata?.review_iteration ?? 0)
+      if (mergeIteration !== currentIteration) return
       this.onMergeComplete(childTask)
       return
     }
 
-    const parentTask = this.taskStore.getById(childTask.parent_task_id)
-    if (!parentTask) return
+    const childIteration = Number(childTask.metadata?.review_iteration ?? 0)
+    if (childIteration !== currentIteration) return
 
     // Parent must still be in REVIEW
     if (parentTask.status !== TaskStatus.REVIEW) return
@@ -250,9 +271,15 @@ export class ReviewHandler {
     const config = parentTask.auto_review as AutoReviewConfig | null
     if (!config) return
 
-    // Get all review children for this parent
+    // Get review children only for the current iteration
     const allChildren = this.taskStore.list({ type: 'review' })
-      .filter(t => t.parent_task_id === parentTask.id && !t.metadata?.is_merge)
+      .filter(t =>
+        t.parent_task_id === parentTask.id
+        && !t.metadata?.is_merge
+        && Number(t.metadata?.review_iteration ?? 0) === currentIteration,
+      )
+
+    if (allChildren.length === 0) return
 
     const completedChildren = allChildren.filter(t => t.status === TaskStatus.DONE)
 
@@ -337,7 +364,10 @@ export class ReviewHandler {
           prompt: mergePrompt,
           backend: mergeBackend,
           parent_task_id: parentTask.id,
-          metadata: { is_merge: true },
+          metadata: {
+            is_merge: true,
+            review_iteration: parentTask.loop_iteration,
+          },
         }
 
         this.taskStore.create(mergeInput)

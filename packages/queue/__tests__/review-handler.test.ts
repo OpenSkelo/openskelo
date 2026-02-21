@@ -68,6 +68,11 @@ describe('parseReviewDecision', () => {
     expect(decision.approved).toBe(true)
   })
 
+  it('does not treat "not approved" as approval', () => {
+    const decision = parseReviewDecision('This is not approved yet. Needs changes.')
+    expect(decision.approved).toBe(false)
+  })
+
   it('falls back to heuristic for "lgtm"', () => {
     const decision = parseReviewDecision('LGTM, ship it!')
     expect(decision.approved).toBe(true)
@@ -527,6 +532,59 @@ describe('ReviewHandler', () => {
       const updatedParent = taskStore.getById(parent.id)!
       expect(updatedParent.loop_iteration).toBe(1)
       expect(updatedParent.status).toBe(TaskStatus.PENDING)
+    })
+
+    it('ignores stale review children from prior loop iterations', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+        strategy: 'all_must_approve',
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 1,
+      })
+
+      // Stale child from iteration 0 should not influence iteration 1 decision.
+      const staleChild = taskStore.create({
+        type: 'review',
+        summary: 'stale review',
+        prompt: 'stale',
+        backend: 'openrouter/model-a',
+        parent_task_id: parent.id,
+        metadata: {
+          reviewer_backend: 'openrouter',
+          reviewer_model: 'model-a',
+          review_iteration: 0,
+        },
+      })
+      taskStore.transition(staleChild.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(staleChild.id, TaskStatus.REVIEW, {
+        result: '{"approved": false, "feedback": {"what": "stale", "where": "old", "fix": "ignore"}}',
+      })
+      handler.onTaskReview(taskStore.getById(staleChild.id)!)
+
+      handler.onTaskReview(parent)
+
+      const currentChildren = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id && t.metadata?.review_iteration === 1)
+      expect(currentChildren).toHaveLength(1)
+
+      taskStore.transition(currentChildren[0].id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'w',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+      taskStore.transition(currentChildren[0].id, TaskStatus.REVIEW, {
+        result: '{"approved": true, "reasoning": "current iteration passes"}',
+      })
+      handler.onTaskReview(taskStore.getById(currentChildren[0].id)!)
+      handler.onReviewChildComplete(taskStore.getById(currentChildren[0].id)!)
+
+      const updatedParent = taskStore.getById(parent.id)!
+      expect(updatedParent.status).toBe(TaskStatus.DONE)
     })
   })
 
