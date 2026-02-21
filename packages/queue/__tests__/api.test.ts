@@ -561,6 +561,37 @@ describe('REST API Router', () => {
     expect(res.body.tasks[0].prompt).toBe('Analyze src/auth.ts')
   })
 
+  it('POST /templates/:id/run rejects review_preset without auto_review', async () => {
+    await request(app)
+      .post('/templates')
+      .send({
+        name: 'pipeline-to-run',
+        template_type: 'pipeline',
+        definition: {
+          tasks: [
+            { key: 'a', type: 'code', summary: 'A', prompt: 'A', backend: 'claude-code' },
+          ],
+        },
+      })
+      .expect(201)
+
+    await request(app)
+      .post('/templates')
+      .send({
+        name: 'not-a-review-preset',
+        template_type: 'task',
+        definition: { type: 'code', summary: 'X', prompt: 'X', backend: 'claude-code' },
+      })
+      .expect(201)
+
+    const res = await request(app)
+      .post('/templates/pipeline-to-run/run')
+      .send({ review_preset: 'not-a-review-preset' })
+      .expect(400)
+
+    expect(res.body.error).toContain('not a review preset')
+  })
+
   it('PUT /templates/:id rejects invalid template_type', async () => {
     const createRes = await request(app)
       .post('/templates')

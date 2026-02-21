@@ -521,7 +521,16 @@ export function createApiRouter(
           res.status(404).json({ error: `Review preset not found: ${review_preset}` })
           return
         }
-        autoReview = (preset.definition as Record<string, unknown>).auto_review as Record<string, unknown>
+
+        const candidate = (preset.definition as Record<string, unknown>).auto_review
+        if (!candidate || typeof candidate !== 'object') {
+          res.status(400).json({
+            error: `Template "${preset.name}" is not a review preset (missing auto_review)`,
+          })
+          return
+        }
+
+        autoReview = candidate as Record<string, unknown>
       }
 
       const tasks = templateStore.instantiate(id, { variables, overrides, auto_review: autoReview })

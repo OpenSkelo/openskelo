@@ -48,19 +48,22 @@ describe('parseExpandOutput', () => {
     expect(() => parseExpandOutput('[]')).toThrow('contains no tasks')
   })
 
-  it('rejects exceeding 20 task cap', () => {
+  it('caps expanded output to 20 tasks', () => {
     const tasks = Array.from({ length: 21 }, (_, i) => ({
       type: 'code',
       summary: `Task ${i}`,
       prompt: `Do ${i}`,
       backend: 'cc',
     }))
-    expect(() => parseExpandOutput(JSON.stringify(tasks))).toThrow('exceeds 20 task cap')
+    const result = parseExpandOutput(JSON.stringify(tasks))
+    expect(result).toHaveLength(20)
+    expect(result[0].summary).toBe('Task 0')
+    expect(result[19].summary).toBe('Task 19')
   })
 
   it('rejects tasks missing required fields', () => {
     const input = JSON.stringify([{ type: 'code', summary: 'A' }])
-    expect(() => parseExpandOutput(input)).toThrow('missing required fields')
+    expect(() => parseExpandOutput(input)).toThrow('missing required fields (summary, prompt)')
   })
 
   it('preserves optional fields', () => {
@@ -79,6 +82,13 @@ describe('parseExpandOutput', () => {
     expect(result[0].acceptance_criteria).toEqual(['works'])
     expect(result[0].definition_of_done).toEqual(['tested'])
     expect(result[0].metadata).toEqual({ custom: true })
+  })
+
+  it('allows type and backend to be omitted', () => {
+    const input = JSON.stringify([{ summary: 'A', prompt: 'P' }])
+    const result = parseExpandOutput(input)
+    expect(result[0].type).toBeUndefined()
+    expect(result[0].backend).toBeUndefined()
   })
 })
 
@@ -143,6 +153,48 @@ describe('ExpandHandler', () => {
     expect(children[0].depends_on).toEqual([])
     expect(children[1].depends_on).toContain(children[0].id)
     expect(children[2].depends_on).toContain(children[1].id)
+  })
+
+  it('defaults omitted type and backend from parent expand task', () => {
+    const result = JSON.stringify([
+      { summary: 'Inherit fields', prompt: 'Do inherited thing' },
+    ])
+    const task = createExpandTask({ result })
+    handler.onExpandComplete(task)
+
+    const children = taskStore.list({}).filter(t => t.parent_task_id === task.id)
+    expect(children).toHaveLength(1)
+    expect(children[0].type).toBe(task.type)
+    expect(children[0].backend).toBe(task.backend)
+  })
+
+  it('uses incremental pipeline_step in sequential mode', () => {
+    const result = JSON.stringify([
+      { summary: 'Step A', prompt: 'A' },
+      { summary: 'Step B', prompt: 'B' },
+      { summary: 'Step C', prompt: 'C' },
+    ])
+    const task = createExpandTask({ result, pipelineId: 'step-pipe', pipelineStep: 4 })
+    handler.onExpandComplete(task)
+
+    const children = taskStore.list({})
+      .filter(t => t.parent_task_id === task.id)
+      .sort((a, b) => (a.metadata.expand_index as number) - (b.metadata.expand_index as number))
+
+    expect(children.map(c => c.pipeline_step)).toEqual([5, 6, 7])
+  })
+
+  it('is idempotent for repeated completion handling', () => {
+    const result = JSON.stringify([
+      { summary: 'Only once', prompt: 'P' },
+    ])
+    const task = createExpandTask({ result })
+
+    handler.onExpandComplete(task)
+    handler.onExpandComplete(task)
+
+    const children = taskStore.list({}).filter(t => t.parent_task_id === task.id)
+    expect(children).toHaveLength(1)
   })
 
   it('creates expanded tasks in parallel mode', () => {

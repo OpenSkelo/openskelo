@@ -4,10 +4,10 @@ import type { AuditLog } from './audit.js'
 const MAX_EXPANDED_TASKS = 20
 
 export interface ExpandedTask {
-  type: string
+  type?: string
   summary: string
   prompt: string
-  backend: string
+  backend?: string
   priority?: number
   acceptance_criteria?: string[]
   definition_of_done?: string[]
@@ -37,28 +37,24 @@ export function parseExpandOutput(result: string): ExpandedTask[] {
     throw new Error('Expand output contains no tasks')
   }
 
-  if (tasks.length > MAX_EXPANDED_TASKS) {
-    throw new Error(
-      `Expand output exceeds ${MAX_EXPANDED_TASKS} task cap (got ${tasks.length})`,
-    )
-  }
+  const cappedTasks = tasks.slice(0, MAX_EXPANDED_TASKS)
 
-  return tasks.map((t, i) => {
+  return cappedTasks.map((t, i) => {
     if (!t || typeof t !== 'object') {
       throw new Error(`Expand task ${i} is not an object`)
     }
     const obj = t as Record<string, unknown>
-    if (!obj.type || !obj.summary || !obj.prompt || !obj.backend) {
+    if (!obj.summary || !obj.prompt) {
       throw new Error(
-        `Expand task ${i} missing required fields (type, summary, prompt, backend)`,
+        `Expand task ${i} missing required fields (summary, prompt)`,
       )
     }
     const expanded: ExpandedTask = {
-      type: String(obj.type),
       summary: String(obj.summary),
       prompt: String(obj.prompt),
-      backend: String(obj.backend),
     }
+    if (obj.type !== undefined) expanded.type = String(obj.type)
+    if (obj.backend !== undefined) expanded.backend = String(obj.backend)
     if (obj.priority !== undefined) expanded.priority = Number(obj.priority)
     if (Array.isArray(obj.acceptance_criteria)) {
       expanded.acceptance_criteria = obj.acceptance_criteria.map(String)
@@ -92,6 +88,17 @@ export class ExpandHandler {
       return
     }
 
+    const existingChildren = this.taskStore.list({})
+      .filter(t => t.parent_task_id === task.id && t.metadata?.expanded_from === task.id)
+    if (existingChildren.length > 0) {
+      this.auditLog.logAction({
+        task_id: task.id,
+        action: 'expand_already_applied',
+        metadata: { existing_children: existingChildren.length },
+      })
+      return
+    }
+
     let expandedTasks: ExpandedTask[]
     try {
       expandedTasks = parseExpandOutput(task.result)
@@ -119,15 +126,15 @@ export class ExpandHandler {
       }
 
       const input: CreateTaskInput = {
-        type: def.type,
+        type: def.type ?? task.type,
         summary: def.summary,
         prompt: def.prompt,
-        backend: def.backend,
+        backend: def.backend ?? task.backend,
         priority: def.priority ?? task.priority,
         acceptance_criteria: def.acceptance_criteria,
         definition_of_done: def.definition_of_done,
         pipeline_id: task.pipeline_id ?? undefined,
-        pipeline_step: (task.pipeline_step ?? 0) + 1,
+        pipeline_step: (task.pipeline_step ?? 0) + 1 + (mode === 'sequential' ? i : 0),
         parent_task_id: task.id,
         depends_on: dependsOn.length > 0 ? dependsOn : undefined,
         metadata: {
