@@ -104,7 +104,9 @@ export function createQueue(config: QueueConfig): Queue {
       const app = express()
       app.use(express.json())
 
-      const apiConfig: ApiConfig = {}
+      const apiConfig: ApiConfig = {
+        lease_ttl_ms: leaseTtlMs,
+      }
       if (config.server?.api_key) {
         apiConfig.api_key = config.server.api_key
       }

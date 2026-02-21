@@ -286,6 +286,39 @@ describe('Dispatcher', () => {
     expect(() => dispatcher.heartbeat('nonexistent')).toThrow()
   })
 
+  it('tick() heartbeats during long-running execution and stops after completion', async () => {
+    vi.useFakeTimers()
+
+    try {
+      let resolveExecution: ((result: AdapterResult) => void) | null = null
+      const adapter = createMockAdapter('claude-code', ['code'], () => new Promise<AdapterResult>((resolve) => {
+        resolveExecution = resolve
+      }))
+      const task = taskStore.create(makeTaskInput())
+      const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
+      const heartbeatSpy = vi.spyOn(dispatcher, 'heartbeat')
+
+      await dispatcher.tick()
+
+      vi.advanceTimersByTime(DEFAULT_CONFIG.heartbeat_interval_ms)
+      expect(heartbeatSpy).toHaveBeenCalledWith(task.id)
+
+      resolveExecution?.({
+        output: 'done',
+        exit_code: 0,
+        duration_ms: 100,
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+
+      const callsAfterComplete = heartbeatSpy.mock.calls.length
+      vi.advanceTimersByTime(DEFAULT_CONFIG.heartbeat_interval_ms * 2)
+      expect(heartbeatSpy).toHaveBeenCalledTimes(callsAfterComplete)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   // 13. release() transitions task back to PENDING
   it('release() transitions task back to PENDING', async () => {
     const adapter = createHangingAdapter('claude-code', ['code'])

@@ -242,6 +242,23 @@ describe('REST API Router', () => {
     expect(res.body.lease_expires_at).toBeDefined()
   })
 
+  it('POST /tasks/claim-next uses configured lease_ttl_ms', async () => {
+    const customApp = createTestApp(deps, { lease_ttl_ms: 30000 })
+    const task = taskStore.create(makeTaskInput())
+
+    const before = Date.now()
+    const res = await request(customApp)
+      .post('/tasks/claim-next')
+      .send({ lease_owner: 'my-agent' })
+      .expect(200)
+    const after = Date.now()
+
+    expect(res.body.id).toBe(task.id)
+    const leaseTime = new Date(res.body.lease_expires_at).getTime()
+    expect(leaseTime).toBeGreaterThanOrEqual(before + 30000)
+    expect(leaseTime).toBeLessThanOrEqual(after + 30000)
+  })
+
   // 14. POST /tasks/claim-next returns 404 when empty
   it('POST /tasks/claim-next returns 404 when no pending tasks', async () => {
     const res = await request(app)

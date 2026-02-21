@@ -9,6 +9,7 @@ import { TransitionError } from './errors.js'
 
 export interface ApiConfig {
   api_key?: string
+  lease_ttl_ms?: number
 }
 
 export interface ApiDependencies {
@@ -52,6 +53,8 @@ export function createApiRouter(
     router.use(authMiddleware(config.api_key))
   }
 
+  const leaseTtlMs = config?.lease_ttl_ms ?? 1200000
+
   // GET /health
   router.get('/health', (_req: Request, res: Response) => {
     try {
@@ -88,7 +91,7 @@ export function createApiRouter(
         lease_owner,
       })
 
-      const leaseExpiresAt = new Date(Date.now() + 1200000).toISOString()
+      const leaseExpiresAt = new Date(Date.now() + leaseTtlMs).toISOString()
       const task = taskStore.update(next.id, {
         lease_owner,
         lease_expires_at: leaseExpiresAt,

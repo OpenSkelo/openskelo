@@ -154,7 +154,22 @@ export class Dispatcher {
         const upstreamResults = getUpstreamResults(candidate, this.taskStore)
         const taskInput = taskToInput(candidate, upstreamResults)
 
-        void adapter.execute(taskInput).then((adapterResult) => {
+        const executionPromise = adapter.execute(taskInput)
+        const heartbeatInterval = setInterval(() => {
+          try {
+            this.heartbeat(taskId)
+          } catch {
+            // Best effort — heartbeat failures should not crash execution
+          }
+        }, this.config.heartbeat_interval_ms)
+
+        const clearHeartbeat = () => {
+          clearInterval(heartbeatInterval)
+        }
+
+        void executionPromise.then((adapterResult) => {
+          clearHeartbeat()
+
           // On success, transition to REVIEW
           try {
             this.taskStore.transition(taskId, TaskStatus.REVIEW, {
@@ -180,6 +195,8 @@ export class Dispatcher {
             }
           }
         }).catch((err: Error) => {
+          clearHeartbeat()
+
           // On error, release lease
           try {
             this.release(taskId, err.message)
