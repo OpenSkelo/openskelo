@@ -234,7 +234,26 @@ export class Dispatcher {
             }
           }
 
-          // On success, transition to REVIEW
+          if (adapterResult.exit_code !== 0) {
+            try {
+              this.auditLog.logAction({
+                task_id: taskId,
+                action: 'execution_failed',
+                actor: adapter.name,
+                before_state: TaskStatus.IN_PROGRESS,
+                after_state: TaskStatus.IN_PROGRESS,
+                metadata: {
+                  exit_code: adapterResult.exit_code,
+                  duration_ms: adapterResult.duration_ms,
+                  ...(adapterResult.failure_code ? { failure_code: adapterResult.failure_code } : {}),
+                },
+              })
+            } catch {
+              // Best effort — telemetry should never block execution flow
+            }
+          }
+
+          // Transition to REVIEW after execution (success or failure)
           try {
             this.taskStore.transition(taskId, TaskStatus.REVIEW, {
               result: adapterResult.output,
