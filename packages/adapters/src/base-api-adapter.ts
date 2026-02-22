@@ -5,6 +5,7 @@ import type {
   TaskInput,
 } from './types.js'
 import type { RetryContext } from '@openskelo/gates'
+import { classifyFailure, classifyHttpStatus } from './utils/classify-failure.js'
 
 export abstract class BaseApiAdapter implements ExecutionAdapter {
   readonly name: string
@@ -73,6 +74,7 @@ export abstract class BaseApiAdapter implements ExecutionAdapter {
           output: errMessage,
           exit_code: 1,
           duration_ms: performance.now() - start,
+          failure_code: classifyHttpStatus(response.status),
         }
       }
 
@@ -81,10 +83,12 @@ export abstract class BaseApiAdapter implements ExecutionAdapter {
       result.duration_ms = performance.now() - start
       return result
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
       return {
-        output: err instanceof Error ? err.message : String(err),
+        output: errMsg,
         exit_code: 1,
         duration_ms: performance.now() - start,
+        failure_code: classifyFailure(1, errMsg),
       }
     } finally {
       clearTimeout(timer)

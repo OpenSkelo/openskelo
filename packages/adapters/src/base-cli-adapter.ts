@@ -6,6 +6,7 @@ import type {
   TaskInput,
 } from './types.js'
 import type { RetryContext } from '@openskelo/gates'
+import { classifyFailure } from './utils/classify-failure.js'
 
 export abstract class BaseCliAdapter implements ExecutionAdapter {
   readonly name: string
@@ -60,13 +61,18 @@ export abstract class BaseCliAdapter implements ExecutionAdapter {
 
       const result = this.parseOutput(stdout, stderr, exitCode, task)
       result.duration_ms = performance.now() - start
+      if (result.exit_code !== 0) {
+        result.failure_code = classifyFailure(result.exit_code, `${stdout}\n${stderr}`)
+      }
       return result
-    } catch {
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
       return {
-        output: '',
+        output: errMsg,
         exit_code: 1,
         duration_ms: performance.now() - start,
         structured: null,
+        failure_code: classifyFailure(1, errMsg),
       }
     }
   }

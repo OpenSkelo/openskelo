@@ -14,6 +14,7 @@ export { AiderAdapter } from './adapters/aider.js'
 
 // Utilities
 export { buildTaskPrompt } from './utils/prompt-builder.js'
+export { classifyFailure, classifyHttpStatus } from './utils/classify-failure.js'
 
 // Types
 export type {
@@ -24,6 +25,7 @@ export type {
   CostInfo,
   BounceContext,
   TaskRetryContext,
+  FailureCode,
 } from './types.js'
 
 export type { RetryContext } from './types.js'

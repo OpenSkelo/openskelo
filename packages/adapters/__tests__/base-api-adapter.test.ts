@@ -208,6 +208,48 @@ describe('BaseApiAdapter', () => {
     expect(result.duration_ms).toBeGreaterThan(30)
   })
 
+  it('sets failure_code from HTTP status on non-ok response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('Internal Server Error'),
+    })
+
+    const result = await adapter.execute(makeTask())
+    expect(result.exit_code).toBe(1)
+    expect(result.failure_code).toBe('unknown')
+  })
+
+  it('sets failure_code=permission_required for 403', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: () => Promise.resolve('Forbidden'),
+    })
+
+    const result = await adapter.execute(makeTask())
+    expect(result.failure_code).toBe('permission_required')
+  })
+
+  it('sets failure_code from output on network error', async () => {
+    mockFetch.mockRejectedValue(new Error('ECONNREFUSED'))
+
+    const result = await adapter.execute(makeTask())
+    expect(result.exit_code).toBe(1)
+    expect(result.failure_code).toBe('network_error')
+  })
+
+  it('does not set failure_code on success', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ text: 'ok' }),
+    })
+
+    const result = await adapter.execute(makeTask())
+    expect(result.exit_code).toBe(0)
+    expect(result.failure_code).toBeUndefined()
+  })
+
   it('merges task backend_config with defaults', async () => {
     const adapterWithDefaults = new (class extends BaseApiAdapter {
       constructor(fetchFn: typeof fetch) {

@@ -757,6 +757,61 @@ describe('Dispatcher', () => {
     expect(updated.times_applied).toBe(0)
   })
 
+  it('stores last_failure_code in task metadata when adapter returns failure_code', async () => {
+    const adapter = createMockAdapter('claude-code', ['code'], async () => ({
+      output: 'EPERM: operation not permitted',
+      exit_code: 1,
+      duration_ms: 50,
+      failure_code: 'permission_required' as const,
+    }))
+
+    const task = taskStore.create(makeTaskInput())
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
+    await dispatcher.tick()
+
+    await new Promise(r => setTimeout(r, 50))
+
+    const updated = taskStore.getById(task.id)!
+    expect(updated.metadata?.last_failure_code).toBe('permission_required')
+  })
+
+  it('logs failure_classified audit entry when failure_code is present', async () => {
+    const adapter = createMockAdapter('claude-code', ['code'], async () => ({
+      output: 'rate limit exceeded',
+      exit_code: 1,
+      duration_ms: 50,
+      failure_code: 'rate_limited' as const,
+    }))
+
+    const task = taskStore.create(makeTaskInput())
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
+    await dispatcher.tick()
+
+    await new Promise(r => setTimeout(r, 50))
+
+    const entries = auditLog.getTaskHistory(task.id)
+    const classified = entries.find(e => e.action === 'failure_classified')
+    expect(classified).toBeDefined()
+    expect(classified!.metadata?.failure_code).toBe('rate_limited')
+  })
+
+  it('does not store failure_code when adapter succeeds', async () => {
+    const adapter = createMockAdapter('claude-code', ['code'], async () => ({
+      output: 'done',
+      exit_code: 0,
+      duration_ms: 50,
+    }))
+
+    const task = taskStore.create(makeTaskInput())
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
+    await dispatcher.tick()
+
+    await new Promise(r => setTimeout(r, 50))
+
+    const updated = taskStore.getById(task.id)!
+    expect(updated.metadata?.last_failure_code).toBeUndefined()
+  })
+
   it('skips lesson injection for review and lesson task types', async () => {
     const lessonStore = new LessonStore(db)
     lessonStore.create({ rule: 'Always validate everything', category: 'validation' })

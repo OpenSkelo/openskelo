@@ -11,6 +11,16 @@ export interface CostInfo {
   usd?: number
 }
 
+// ── Failure classification ──
+
+export type FailureCode =
+  | 'permission_required'
+  | 'rate_limited'
+  | 'timeout'
+  | 'tool_unavailable'
+  | 'network_error'
+  | 'unknown'
+
 // ── Adapter result ──
 
 export interface AdapterResult {
@@ -21,6 +31,7 @@ export interface AdapterResult {
   exit_code: number
   duration_ms: number
   cost?: CostInfo
+  failure_code?: FailureCode
 }
 
 // ── Adapter config ──

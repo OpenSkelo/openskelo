@@ -210,6 +210,30 @@ export class Dispatcher {
         void executionPromise.then((adapterResult) => {
           clearHeartbeat()
 
+          // Track failure_code in task metadata for telemetry
+          if (adapterResult.failure_code) {
+            try {
+              const current = this.taskStore.getById(taskId)
+              this.taskStore.update(taskId, {
+                metadata: {
+                  ...(current?.metadata ?? {}),
+                  last_failure_code: adapterResult.failure_code,
+                },
+              })
+              this.auditLog.logAction({
+                task_id: taskId,
+                action: 'failure_classified',
+                actor: adapter.name,
+                metadata: {
+                  failure_code: adapterResult.failure_code,
+                  exit_code: adapterResult.exit_code,
+                },
+              })
+            } catch {
+              // Best effort — telemetry should never block execution flow
+            }
+          }
+
           // On success, transition to REVIEW
           try {
             this.taskStore.transition(taskId, TaskStatus.REVIEW, {
@@ -224,6 +248,7 @@ export class Dispatcher {
               metadata: {
                 exit_code: adapterResult.exit_code,
                 duration_ms: adapterResult.duration_ms,
+                ...(adapterResult.failure_code ? { failure_code: adapterResult.failure_code } : {}),
               },
             })
 

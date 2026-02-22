@@ -195,4 +195,28 @@ describe('BaseCliAdapter', () => {
     )
     expect(result.exit_code).not.toBe(0)
   })
+
+  it('sets failure_code=timeout for exit code 124', async () => {
+    const result = await adapter.execute(
+      makeTask({ backend_config: { command: 'sleep', args: ['10'], timeout_ms: 200 } })
+    )
+    expect(result.exit_code).toBe(124)
+    expect(result.failure_code).toBe('timeout')
+  }, 5000)
+
+  it('sets failure_code for non-zero exit code', async () => {
+    const result = await adapter.execute(
+      makeTask({ backend_config: { command: 'sh', args: ['-c', 'exit 1'] } })
+    )
+    expect(result.exit_code).toBe(1)
+    expect(result.failure_code).toBeDefined()
+  })
+
+  it('does not set failure_code on success', async () => {
+    const result = await adapter.execute(
+      makeTask({ backend_config: { command: 'echo', args: ['ok'] } })
+    )
+    expect(result.exit_code).toBe(0)
+    expect(result.failure_code).toBeUndefined()
+  })
 })
