@@ -578,6 +578,7 @@ describe('Dispatcher', () => {
     taskStore.create(makeTaskInput({
       type: 'code',
       backend: 'openrouter/anthropic/claude-opus-4-5',
+      metadata: { system_prompt: 'You are a strict reviewer' },
     }))
 
     const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG)
@@ -588,6 +589,7 @@ describe('Dispatcher', () => {
     expect(capturedInput).not.toBeNull()
     expect(capturedInput!.backend).toBe('openrouter')
     expect(capturedInput!.backend_config?.model).toBe('anthropic/claude-opus-4-5')
+    expect(capturedInput!.metadata?.system_prompt).toBe('You are a strict reviewer')
   })
 
   // tick() skips held tasks

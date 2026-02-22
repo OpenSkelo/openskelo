@@ -38,6 +38,9 @@ function taskToInput(task: Task, upstreamResults: Record<string, unknown>): Task
   if (task.backend_config) {
     input.backend_config = task.backend_config as TaskInput['backend_config']
   }
+  if (task.metadata && Object.keys(task.metadata).length > 0) {
+    input.metadata = task.metadata as TaskInput['metadata']
+  }
   if (Object.keys(upstreamResults).length > 0) {
     input.upstream_results = upstreamResults
   }
