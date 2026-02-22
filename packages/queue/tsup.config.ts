@@ -8,6 +8,7 @@ export default defineConfig([
     clean: true,
     sourcemap: true,
     external: ['better-sqlite3'],
+    noExternal: ['@openskelo/adapters', '@openskelo/gates'],
   },
   {
     entry: ['src/cli.ts'],
@@ -15,6 +16,7 @@ export default defineConfig([
     dts: false,
     sourcemap: true,
     external: ['better-sqlite3'],
+    noExternal: ['@openskelo/adapters', '@openskelo/gates'],
     banner: { js: '#!/usr/bin/env node' },
   },
 ])

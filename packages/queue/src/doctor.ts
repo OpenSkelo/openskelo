@@ -80,6 +80,32 @@ export function checkPort(port: number): Promise<DoctorCheck> {
   })
 }
 
+export function checkRuntimeIntegrity(): DoctorCheck {
+  const queueCliPath = 'packages/queue/dist/cli.js'
+  const adaptersPath = 'packages/adapters/dist/index.js'
+
+  if (!fs.existsSync(queueCliPath)) {
+    return { label: 'Runtime', ok: false, detail: `${queueCliPath} missing` }
+  }
+
+  if (!fs.existsSync(adaptersPath)) {
+    return { label: 'Runtime', ok: false, detail: `${adaptersPath} missing` }
+  }
+
+  const probe = spawnSync(process.execPath, [queueCliPath, '--help'], {
+    encoding: 'utf-8',
+    stdio: 'pipe',
+    shell: false,
+  })
+
+  if (probe.status !== 0) {
+    const stderr = (probe.stderr || '').trim().split('\n')[0] || 'bootstrap failed'
+    return { label: 'Runtime', ok: false, detail: `queue CLI bootstrap failed: ${stderr}` }
+  }
+
+  return { label: 'Runtime', ok: true, detail: 'queue CLI bootstrap/import integrity OK' }
+}
+
 export interface AdapterInfo {
   name: string
   command: string
@@ -115,6 +141,7 @@ export async function runDoctor(configPath: string, port: number): Promise<Docto
   checks.push(checkNodeVersion())
   checks.push(await checkSqliteModule())
   checks.push(checkConfigFile(configPath))
+  checks.push(checkRuntimeIntegrity())
 
   const adapters = extractAdapterCommands(configPath)
   for (const adapter of adapters) {
