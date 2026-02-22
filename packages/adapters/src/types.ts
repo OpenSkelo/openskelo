@@ -15,6 +15,7 @@ export interface CostInfo {
 
 export type FailureCode =
   | 'permission_required'
+  | 'auth_required'
   | 'rate_limited'
   | 'timeout'
   | 'tool_unavailable'
