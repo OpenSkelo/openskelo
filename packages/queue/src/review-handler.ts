@@ -35,6 +35,19 @@ export interface ReviewChainEntry {
 
 const HARD_CAP = 10
 
+/**
+ * v1_interim: Current remediation handles one case — Claude Code permission prompts.
+ * It detects the blocker via string matching and retries with --dangerously-skip-permissions.
+ *
+ * P7 will replace this with:
+ * - Structured failure_code on AdapterResult (permission_required, rate_limited, timeout, etc.)
+ * - General failure classification utility shared across all adapters
+ * - OpenClaw remediation adapter (admin-privileged bot handles blockers)
+ * - Remediation routing: failure_code → choose remediation strategy (retry, escalate to OpenClaw, human)
+ * - Transient failure auto-retry (rate_limited, timeout, network_error) at dispatcher level
+ *
+ * See: P7 spec (pending)
+ */
 export interface RemediationConfig {
   enabled?: boolean
   max_attempts?: number
@@ -899,6 +912,8 @@ export class ReviewHandler {
     return false
   }
 
+  // v1_interim: only Claude permission prompt detection.
+  // P7 adds: structured failure_code taxonomy + OpenClaw remediation routing.
   private detectRemediationMatch(task: Task): RemediationMatch | null {
     const combined = `${task.last_error ?? ''}\n${task.result ?? ''}`.toLowerCase()
 

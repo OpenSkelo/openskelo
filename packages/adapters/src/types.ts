@@ -60,6 +60,7 @@ export interface TaskInput {
   upstream_results?: Record<string, unknown>
   retry_context?: TaskRetryContext
   bounce_context?: BounceContext
+  metadata?: Record<string, unknown>
 }
 
 // ── Execution adapter interface ──

@@ -288,4 +288,33 @@ describe('OpenRouterAdapter', () => {
     const headers = mockFetch.mock.calls[0][1].headers
     expect(headers.Authorization).toBe('Bearer task-key')
   })
+
+  it('includes system message when task.metadata.system_prompt is set', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockSuccessResponse),
+    })
+
+    await adapter.execute(makeTask({
+      metadata: { system_prompt: 'You are a security reviewer' },
+    }))
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.messages).toHaveLength(2)
+    expect(body.messages[0]).toEqual({ role: 'system', content: 'You are a security reviewer' })
+    expect(body.messages[1].role).toBe('user')
+  })
+
+  it('omits system message when no system_prompt in metadata', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockSuccessResponse),
+    })
+
+    await adapter.execute(makeTask())
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+    expect(body.messages).toHaveLength(1)
+    expect(body.messages[0].role).toBe('user')
+  })
 })

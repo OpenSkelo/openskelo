@@ -212,19 +212,56 @@ describe('BUILTIN_TEMPLATES', () => {
     expect(names).toContain('dual-review')
   })
 
-  it('spec-to-ship is a pipeline template', () => {
+  it('spec-to-ship is a pipeline template with write-spec and create-tasks', () => {
     const specToShip = BUILTIN_TEMPLATES.find(t => t.name === 'spec-to-ship')!
     expect(specToShip.template_type).toBe('pipeline')
-    const def = specToShip.definition as { tasks: unknown[] }
-    expect(def.tasks).toHaveLength(4)
+    const def = specToShip.definition as { tasks: Array<Record<string, unknown>> }
+    expect(def.tasks).toHaveLength(2)
+    expect(def.tasks[0].key).toBe('write-spec')
+    expect(def.tasks[1].key).toBe('create-tasks')
   })
 
-  it('dual-review is a task template with auto_review', () => {
+  it('spec-to-ship write-spec task has structured JSON output instruction', () => {
+    const specToShip = BUILTIN_TEMPLATES.find(t => t.name === 'spec-to-ship')!
+    const def = specToShip.definition as { tasks: Array<Record<string, unknown>> }
+    const writeSpec = def.tasks[0]
+    expect(writeSpec.prompt).toContain('user_stories')
+    expect((writeSpec.metadata as Record<string, unknown>).system_prompt).toBeDefined()
+  })
+
+  it('spec-to-ship create-tasks has expand: true', () => {
+    const specToShip = BUILTIN_TEMPLATES.find(t => t.name === 'spec-to-ship')!
+    const def = specToShip.definition as { tasks: Array<Record<string, unknown>> }
+    const createTasks = def.tasks[1]
+    expect(createTasks.expand).toBe(true)
+    expect(createTasks.depends_on).toEqual(['write-spec'])
+  })
+
+  it('dual-review has two reviewers with prompt_template and merge_backend', () => {
     const dualReview = BUILTIN_TEMPLATES.find(t => t.name === 'dual-review')!
     expect(dualReview.template_type).toBe('task')
     const def = dualReview.definition as { auto_review: Record<string, unknown> }
     expect(def.auto_review.strategy).toBe('merge_then_decide')
-    expect((def.auto_review.reviewers as unknown[]).length).toBe(2)
+    const reviewers = def.auto_review.reviewers as Array<Record<string, unknown>>
+    expect(reviewers).toHaveLength(2)
+    expect(def.auto_review.merge_backend).toBeDefined()
+    // Both reviewers have prompt_template
+    for (const reviewer of reviewers) {
+      expect(reviewer.prompt_template).toBeDefined()
+      expect(typeof reviewer.prompt_template).toBe('string')
+    }
+  })
+
+  it('dual-review reviewers have structured output instruction in prompt_template', () => {
+    const dualReview = BUILTIN_TEMPLATES.find(t => t.name === 'dual-review')!
+    const def = dualReview.definition as { auto_review: Record<string, unknown> }
+    const reviewers = def.auto_review.reviewers as Array<Record<string, unknown>>
+    // First reviewer is security, second is code quality
+    expect(reviewers[0].prompt_template).toContain('security reviewer')
+    expect(reviewers[1].prompt_template).toContain('code quality reviewer')
+    for (const reviewer of reviewers) {
+      expect(reviewer.prompt_template).toContain('approved')
+    }
   })
 })
 
@@ -272,7 +309,7 @@ describe('seedBuiltinTemplates', () => {
     const tasks = templateStore.instantiate('spec-to-ship', {
       variables: { feature: 'user-auth' },
     })
-    expect(tasks.length).toBeGreaterThanOrEqual(4)
+    expect(tasks.length).toBeGreaterThanOrEqual(2)
     expect(tasks[0].summary).toContain('user-auth')
   })
 })

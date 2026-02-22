@@ -39,10 +39,17 @@ export class OpenRouterAdapter extends BaseApiAdapter {
   buildRequestBody(task: TaskInput, config: AdapterConfig): unknown {
     const model = config.model ?? DEFAULT_MODEL
     const prompt = buildTaskPrompt(task)
-    return {
-      model,
-      messages: [{ role: 'user', content: prompt }],
+    const messages: Array<{ role: string; content: string }> = []
+
+    // System prompt from task metadata (used by review tasks, strategy tasks, etc.)
+    const systemPrompt = task.metadata?.system_prompt as string | undefined
+    if (systemPrompt) {
+      messages.push({ role: 'system', content: systemPrompt })
     }
+
+    messages.push({ role: 'user', content: prompt })
+
+    return { model, messages }
   }
 
   parseResponse(data: unknown, _task: TaskInput): AdapterResult {
