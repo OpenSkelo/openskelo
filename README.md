@@ -211,3 +211,6 @@ OpenSkelo is the bones that make everything else work together.
 ## License
 
 MIT — do whatever you want with it.
+
+## Temporary OpenSkelo testing branch
+Created: 2026-02-21
