@@ -8,6 +8,7 @@ import type { AuditLog } from './audit.js'
 import type { Dispatcher } from './dispatcher.js'
 import type { Scheduler } from './scheduler.js'
 import type { ReviewHandler } from './review-handler.js'
+import type { LessonStore } from './lessons.js'
 import { TaskStatus } from './state-machine.js'
 import { TransitionError } from './errors.js'
 import { createDagPipeline } from './pipeline.js'
@@ -30,6 +31,7 @@ export interface ApiDependencies {
   dispatcher: Dispatcher
   scheduler?: Scheduler
   reviewHandler?: ReviewHandler
+  lessonStore?: LessonStore
 }
 
 const PUBLIC_PATHS = ['/health', '/dashboard']
@@ -60,7 +62,7 @@ export function createApiRouter(
   config?: ApiConfig,
 ): Router {
   const router = Router()
-  const { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler, reviewHandler } = deps
+  const { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler, reviewHandler, lessonStore } = deps
 
   if (config?.api_key) {
     router.use(authMiddleware(config.api_key))
@@ -557,6 +559,63 @@ export function createApiRouter(
     }
     try {
       res.json(scheduler.getStatus())
+    } catch {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // --- Lesson endpoints ---
+
+  // GET /lessons
+  router.get('/lessons', (req: Request, res: Response) => {
+    if (!lessonStore) {
+      res.status(501).json({ error: 'Lesson store not available' })
+      return
+    }
+    try {
+      const category = req.query.category as string | undefined
+      const limitStr = req.query.limit as string | undefined
+      const limit = limitStr ? parseInt(limitStr, 10) : undefined
+      const lessons = lessonStore.list({ category, limit })
+      res.json(lessons)
+    } catch {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // POST /lessons
+  router.post('/lessons', (req: Request, res: Response) => {
+    if (!lessonStore) {
+      res.status(501).json({ error: 'Lesson store not available' })
+      return
+    }
+    try {
+      const body = req.body ?? {}
+      if (!body.rule || !body.category) {
+        res.status(400).json({ error: 'Missing required fields: rule, category' })
+        return
+      }
+      const lesson = lessonStore.create(body)
+      res.status(201).json(lesson)
+    } catch {
+      res.status(500).json({ error: 'Internal server error' })
+    }
+  })
+
+  // DELETE /lessons/:id
+  router.delete('/lessons/:id', (req: Request, res: Response) => {
+    if (!lessonStore) {
+      res.status(501).json({ error: 'Lesson store not available' })
+      return
+    }
+    try {
+      const id = paramId(req)
+      const deleted = lessonStore.delete(id)
+      if (!deleted) {
+        res.status(404).json({ error: `Lesson ${id} not found` })
+        return
+      }
+      res.json({ ok: true })
     } catch {
       res.status(500).json({ error: 'Internal server error' })
     }

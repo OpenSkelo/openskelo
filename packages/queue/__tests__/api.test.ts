@@ -15,6 +15,7 @@ import { createApiRouter } from '../src/api.js'
 import type { ApiDependencies, ApiConfig } from '../src/api.js'
 import { TemplateStore } from '../src/templates.js'
 import { ReviewHandler } from '../src/review-handler.js'
+import { LessonStore } from '../src/lessons.js'
 
 function createHangingAdapter(name: string, taskTypes: string[]): ExecutionAdapter {
   return {
@@ -742,6 +743,72 @@ describe('REST API Router', () => {
       expect(res.body[0].review_children).toHaveLength(1)
       expect(res.body[0].fix_task_id).toBeTruthy()
       expect(res.body[1].task_id).toBe(res.body[0].fix_task_id)
+    })
+  })
+
+  describe('Lesson endpoints', () => {
+    it('POST /lessons creates a lesson', async () => {
+      const lessonStore = new LessonStore(db)
+      const appWithLessons = createTestApp({ ...deps, lessonStore })
+
+      const res = await request(appWithLessons)
+        .post('/lessons')
+        .send({ rule: 'Always validate input', category: 'validation', severity: 'high' })
+        .expect(201)
+
+      expect(res.body.rule).toBe('Always validate input')
+      expect(res.body.category).toBe('validation')
+      expect(res.body.severity).toBe('high')
+      expect(res.body.id).toBeDefined()
+    })
+
+    it('GET /lessons returns lessons with optional category filter', async () => {
+      const lessonStore = new LessonStore(db)
+      lessonStore.create({ rule: 'Rule A', category: 'security' })
+      lessonStore.create({ rule: 'Rule B', category: 'testing' })
+      const appWithLessons = createTestApp({ ...deps, lessonStore })
+
+      const allRes = await request(appWithLessons)
+        .get('/lessons')
+        .expect(200)
+      expect(allRes.body).toHaveLength(2)
+
+      const filteredRes = await request(appWithLessons)
+        .get('/lessons?category=security')
+        .expect(200)
+      expect(filteredRes.body).toHaveLength(1)
+      expect(filteredRes.body[0].category).toBe('security')
+    })
+
+    it('DELETE /lessons/:id deletes a lesson', async () => {
+      const lessonStore = new LessonStore(db)
+      const lesson = lessonStore.create({ rule: 'Delete me', category: 'test' })
+      const appWithLessons = createTestApp({ ...deps, lessonStore })
+
+      await request(appWithLessons)
+        .delete(`/lessons/${lesson.id}`)
+        .expect(200)
+
+      expect(lessonStore.getById(lesson.id)).toBeNull()
+    })
+
+    it('DELETE /lessons/:id returns 404 for non-existent', async () => {
+      const lessonStore = new LessonStore(db)
+      const appWithLessons = createTestApp({ ...deps, lessonStore })
+
+      await request(appWithLessons)
+        .delete('/lessons/nonexistent')
+        .expect(404)
+    })
+
+    it('POST /lessons returns 400 for missing fields', async () => {
+      const lessonStore = new LessonStore(db)
+      const appWithLessons = createTestApp({ ...deps, lessonStore })
+
+      await request(appWithLessons)
+        .post('/lessons')
+        .send({ rule: 'Missing category' })
+        .expect(400)
     })
   })
 })

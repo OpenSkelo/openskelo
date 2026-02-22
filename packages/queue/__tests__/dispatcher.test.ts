@@ -10,6 +10,7 @@ import { AuditLog } from '../src/audit.js'
 import { Dispatcher } from '../src/dispatcher.js'
 import type { DispatcherConfig, DispatchResult } from '../src/dispatcher.js'
 import { createDagPipeline } from '../src/pipeline.js'
+import { LessonStore } from '../src/lessons.js'
 
 function createMockAdapter(
   name: string,
@@ -692,5 +693,57 @@ describe('Dispatcher', () => {
     expect(capturedInput!.backend).toBe('claude-code')
     expect(capturedInput!.backend_config).toEqual({ model: 'opus' })
     expect(capturedInput!.upstream_results).toEqual({ [dep.id]: { key: 'value' } })
+  })
+
+  it('injects relevant lessons into task prompt', async () => {
+    const lessonStore = new LessonStore(db)
+    lessonStore.create({ rule: 'Always validate input before processing', category: 'validation', severity: 'high' })
+    lessonStore.create({ rule: 'Handle network errors gracefully', category: 'error-handling', severity: 'medium' })
+
+    let capturedInput: TaskInput | null = null
+    const adapter = createMockAdapter('claude-code', ['code'], async (input) => {
+      capturedInput = input
+      return { output: 'done', exit_code: 0, duration_ms: 50 }
+    })
+
+    taskStore.create(makeTaskInput({ prompt: 'Validate and process user input data' }))
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG, lessonStore)
+    await dispatcher.tick()
+
+    expect(capturedInput).not.toBeNull()
+    expect(capturedInput!.prompt).toContain('Lessons Learned')
+    expect(capturedInput!.prompt).toContain('Always validate input')
+  })
+
+  it('increments times_applied for injected lessons', async () => {
+    const lessonStore = new LessonStore(db)
+    const lesson = lessonStore.create({ rule: 'Always validate input data', category: 'validation' })
+    expect(lesson.times_applied).toBe(0)
+
+    const adapter = createHangingAdapter('claude-code', ['code'])
+    taskStore.create(makeTaskInput({ prompt: 'Validate input data from user' }))
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG, lessonStore)
+    await dispatcher.tick()
+
+    const updated = lessonStore.getById(lesson.id)!
+    expect(updated.times_applied).toBe(1)
+  })
+
+  it('skips lesson injection for review and lesson task types', async () => {
+    const lessonStore = new LessonStore(db)
+    lessonStore.create({ rule: 'Always validate everything', category: 'validation' })
+
+    let capturedInput: TaskInput | null = null
+    const adapter = createMockAdapter('claude-code', ['code', 'review', 'lesson'], async (input) => {
+      capturedInput = input
+      return { output: 'done', exit_code: 0, duration_ms: 50 }
+    })
+
+    taskStore.create(makeTaskInput({ type: 'review', prompt: 'Review the validate implementation' }))
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG, lessonStore)
+    await dispatcher.tick()
+
+    expect(capturedInput).not.toBeNull()
+    expect(capturedInput!.prompt).not.toContain('Lessons Learned')
   })
 })

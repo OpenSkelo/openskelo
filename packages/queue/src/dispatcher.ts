@@ -4,6 +4,7 @@ import type { PriorityQueue } from './priority-queue.js'
 import type { AuditLog } from './audit.js'
 import { TaskStatus } from './state-machine.js'
 import { areDependenciesMet, getUpstreamResults } from './pipeline.js'
+import type { LessonStore } from './lessons.js'
 
 export interface DispatcherConfig {
   poll_interval_ms: number
@@ -61,6 +62,7 @@ export class Dispatcher {
   private auditLog: AuditLog
   private adapters: ExecutionAdapter[]
   private config: DispatcherConfig
+  private lessonStore?: LessonStore
   private intervalId: ReturnType<typeof setInterval> | null = null
 
   constructor(
@@ -69,12 +71,14 @@ export class Dispatcher {
     auditLog: AuditLog,
     adapters: ExecutionAdapter[],
     config: DispatcherConfig,
+    lessonStore?: LessonStore,
   ) {
     this.taskStore = taskStore
     this.priorityQueue = priorityQueue
     this.auditLog = auditLog
     this.adapters = adapters
     this.config = config
+    this.lessonStore = lessonStore
   }
 
   async tick(): Promise<DispatchResult[]> {
@@ -172,6 +176,27 @@ export class Dispatcher {
         const taskId = candidate.id
         const upstreamResults = getUpstreamResults(candidate, this.taskStore)
         const taskInput = taskToInput(candidate, upstreamResults)
+
+        // Inject relevant lessons into prompt (skip for lesson/review tasks)
+        const skipLessonTypes = new Set(['lesson', 'review'])
+        if (this.lessonStore && !skipLessonTypes.has(candidate.type)) {
+          const lessons = this.lessonStore.getRelevant(candidate.prompt, 5)
+          if (lessons.length > 0) {
+            const lessonBlock = lessons
+              .map(l => `- [${l.severity}] ${l.rule}`)
+              .join('\n')
+            taskInput.prompt = `## Lessons Learned\nApply these rules from previous work:\n${lessonBlock}\n\n${taskInput.prompt}`
+            for (const l of lessons) {
+              this.lessonStore.incrementApplied(l.id)
+            }
+            this.taskStore.update(taskId, {
+              metadata: {
+                ...(candidate.metadata ?? {}),
+                lessons_applied: lessons.map(l => l.id),
+              },
+            })
+          }
+        }
 
         const executionPromise = adapter.execute(taskInput)
         const heartbeatInterval = setInterval(() => {

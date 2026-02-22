@@ -21,6 +21,7 @@ import { ReviewHandler } from './review-handler.js'
 import { ExpandHandler } from './expand-handler.js'
 import { seedBuiltinTemplates } from './templates.js'
 import { TaskStatus } from './state-machine.js'
+import { LessonStore, parseLessonOutput } from './lessons.js'
 import express from 'express'
 
 export interface QueueConfig {
@@ -110,6 +111,24 @@ export function createQueue(config: QueueConfig): Queue {
       expandHandler.onExpandComplete(task)
     }
 
+    // Lesson: when lesson extraction task completes, parse and store the lesson
+    if (to === TaskStatus.DONE && task.type === 'lesson') {
+      if (task.result) {
+        const parsed = parseLessonOutput(task.result)
+        if (parsed) {
+          const meta = task.metadata as Record<string, unknown>
+          parsed.source_task_id = String(meta?.lesson_source_task_id ?? '')
+          parsed.source_fix_id = String(meta?.lesson_source_fix_id ?? '')
+          lessonStore.create(parsed)
+          auditLog.logAction({
+            task_id: task.id,
+            action: 'lesson_stored',
+            metadata: { rule: parsed.rule, category: parsed.category },
+          })
+        }
+      }
+    }
+
     if (to === TaskStatus.DONE && task.pipeline_id) {
       const pipelineTasks = taskStoreRef.list({ pipeline_id: task.pipeline_id })
       const allDone = pipelineTasks.every(t => t.status === TaskStatus.DONE)
@@ -136,6 +155,7 @@ export function createQueue(config: QueueConfig): Queue {
   taskStoreRef = taskStore
   reviewHandler = new ReviewHandler(taskStore, auditLog, webhookDispatcher)
   expandHandler = new ExpandHandler(taskStore, auditLog)
+  const lessonStore = new LessonStore(db)
   const templateStore = new TemplateStore(db, taskStore)
   seedBuiltinTemplates(templateStore)
   const priorityQueue = new PriorityQueue(db)
@@ -166,6 +186,7 @@ export function createQueue(config: QueueConfig): Queue {
     auditLog,
     adapters,
     dispatcherConfig,
+    lessonStore,
   )
 
   const watchdog = new Watchdog(taskStore, auditLog, watchdogConfig)
@@ -205,7 +226,7 @@ export function createQueue(config: QueueConfig): Queue {
       }
 
       app.use(createApiRouter(
-        { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler, reviewHandler },
+        { db, taskStore, templateStore, priorityQueue, auditLog, dispatcher, scheduler, reviewHandler, lessonStore },
         apiConfig,
       ))
       app.use(createDashboardRouter(config.server?.api_key))

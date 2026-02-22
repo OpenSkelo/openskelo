@@ -12,7 +12,7 @@ export interface ParsedArgs {
   varFlags: Record<string, string>
 }
 
-const VALID_COMMANDS = ['init', 'start', 'status', 'add', 'list', 'approve', 'bounce', 'doctor', 'template', 'run', 'help']
+const VALID_COMMANDS = ['init', 'start', 'status', 'add', 'list', 'approve', 'bounce', 'doctor', 'template', 'run', 'lessons', 'help']
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2)
@@ -22,8 +22,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const positionalArgs: string[] = []
   let subcommand: string | undefined
 
-  // Detect subcommand for "template" command
-  const hasSubcommand = command === 'template' && args[1] && !args[1].startsWith('--')
+  // Detect subcommand for "template" and "lessons" commands
+  const hasSubcommand = (command === 'template' || command === 'lessons') && args[1] && !args[1].startsWith('--')
   if (hasSubcommand) {
     subcommand = args[1]
   }
@@ -275,6 +275,9 @@ Usage:
   openskelo template show <name>     Show template details
   openskelo template delete <name>   Delete a template
   openskelo run <template> [--var key=value ...] [--review-preset name]  Run a saved template
+  openskelo lessons list             List stored lessons (--category to filter)
+  openskelo lessons add              Add a lesson (--rule, --category, --severity)
+  openskelo lessons delete <id>      Delete a lesson
   openskelo doctor                   Check system readiness
   openskelo help                     Show this help
 
@@ -763,6 +766,113 @@ async function cmdRun(positionalArgs: string[], flags: Record<string, string>, v
   }
 }
 
+async function cmdLessons(subcommand: string | undefined, positionalArgs: string[], flags: Record<string, string>): Promise<void> {
+  const config = loadConfig(flags.config)
+  const port = config.server?.port ?? 4820
+  const host = config.server?.host ?? '127.0.0.1'
+  const apiKey = config.server?.api_key
+
+  switch (subcommand) {
+    case 'list': {
+      try {
+        let url = `http://${host}:${port}/lessons`
+        if (flags.category) url += `?category=${encodeURIComponent(flags.category)}`
+
+        const res = await fetch(url, {
+          headers: buildRequestHeaders(apiKey),
+        })
+        if (!res.ok) {
+          console.error(`Failed: ${await parseErrorMessage(res)}`)
+          process.exitCode = 1
+          return
+        }
+        const lessons = await res.json() as Array<Record<string, unknown>>
+        if (lessons.length === 0) {
+          console.log('No lessons found.')
+          return
+        }
+        console.log(`${'ID'.padEnd(12)} ${'CATEGORY'.padEnd(16)} ${'SEV'.padEnd(8)} ${'USED'.padEnd(6)} RULE`)
+        console.log('-'.repeat(70))
+        for (const l of lessons) {
+          const id = String(l.id).slice(0, 10) + '..'
+          const category = String(l.category).padEnd(16)
+          const severity = String(l.severity).padEnd(8)
+          const used = String(l.times_applied).padEnd(6)
+          const rule = String(l.rule).slice(0, 40)
+          console.log(`${id} ${category} ${severity} ${used} ${rule}`)
+        }
+        console.log(`\n${lessons.length} lesson(s)`)
+      } catch {
+        console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+        process.exitCode = 1
+      }
+      return
+    }
+
+    case 'add': {
+      if (!flags.rule || !flags.category) {
+        console.error('Usage: openskelo lessons add --rule "..." --category <category> [--severity <level>]')
+        process.exitCode = 1
+        return
+      }
+      try {
+        const res = await fetch(`http://${host}:${port}/lessons`, {
+          method: 'POST',
+          headers: buildRequestHeaders(apiKey, true),
+          body: JSON.stringify({
+            rule: flags.rule,
+            category: flags.category,
+            severity: flags.severity ?? 'medium',
+          }),
+        })
+        if (!res.ok) {
+          console.error(`Failed: ${await parseErrorMessage(res)}`)
+          process.exitCode = 1
+          return
+        }
+        const lesson = await res.json() as Record<string, unknown>
+        console.log(`Created lesson ${lesson.id}`)
+        console.log(`  Rule: ${lesson.rule}`)
+        console.log(`  Category: ${lesson.category}`)
+        console.log(`  Severity: ${lesson.severity}`)
+      } catch {
+        console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+        process.exitCode = 1
+      }
+      return
+    }
+
+    case 'delete': {
+      const lessonId = positionalArgs[0]
+      if (!lessonId) {
+        console.error('Usage: openskelo lessons delete <id>')
+        process.exitCode = 1
+        return
+      }
+      try {
+        const res = await fetch(`http://${host}:${port}/lessons/${encodeURIComponent(lessonId)}`, {
+          method: 'DELETE',
+          headers: buildRequestHeaders(apiKey),
+        })
+        if (!res.ok) {
+          console.error(`Failed: ${await parseErrorMessage(res)}`)
+          process.exitCode = 1
+          return
+        }
+        console.log(`Deleted lesson "${lessonId}"`)
+      } catch {
+        console.error(`Could not connect to OpenSkelo at http://${host}:${port}`)
+        process.exitCode = 1
+      }
+      return
+    }
+
+    default:
+      console.error('Usage: openskelo lessons <list|add|delete>')
+      process.exitCode = 1
+  }
+}
+
 async function main(): Promise<void> {
   const { command, subcommand, positionalArgs, flags, varFlags } = parseArgs(process.argv)
 
@@ -776,6 +886,7 @@ async function main(): Promise<void> {
     case 'bounce': return cmdBounce(positionalArgs, flags)
     case 'template': return cmdTemplate(subcommand, positionalArgs, flags)
     case 'run': return cmdRun(positionalArgs, flags, varFlags)
+    case 'lessons': return cmdLessons(subcommand, positionalArgs, flags)
     case 'doctor': return cmdDoctor(flags)
     default: printHelp()
   }

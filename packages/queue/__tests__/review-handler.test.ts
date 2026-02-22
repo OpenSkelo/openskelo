@@ -1714,4 +1714,65 @@ describe('ReviewHandler', () => {
       expect(taskStore.getById(parent.id)!.status).toBe(TaskStatus.DONE)
     })
   })
+
+  describe('Lesson extraction', () => {
+    it('creates a lesson task after fix completes', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+      })
+      handler.onTaskReview(parent)
+
+      const reviewChildren = taskStore.list({ type: 'review' })
+        .filter(t => t.parent_task_id === parent.id)
+
+      completeReviewChild(reviewChildren[0].id, JSON.stringify({
+        approved: false,
+        reasoning: 'Missing validation',
+        feedback: { what: 'no input validation', where: 'handler.ts', fix: 'add zod schema' },
+      }))
+      handler.onReviewChildComplete(taskStore.getById(reviewChildren[0].id)!)
+
+      // Fix task should be created
+      const fixTasks = taskStore.list({})
+        .filter(t => t.parent_task_id === parent.id && t.metadata?.fix_for)
+      expect(fixTasks).toHaveLength(1)
+
+      // Complete the fix task
+      const fixTask = fixTasks[0]
+      taskStore.transition(fixTask.id, TaskStatus.IN_PROGRESS, { lease_owner: 'test' })
+      taskStore.transition(fixTask.id, TaskStatus.REVIEW, { result: 'Fixed the validation issue' })
+      taskStore.transition(fixTask.id, TaskStatus.DONE)
+
+      handler.onFixComplete(taskStore.getById(fixTask.id)!)
+
+      // Lesson task should be created
+      const lessonTasks = taskStore.list({ type: 'lesson' })
+      expect(lessonTasks).toHaveLength(1)
+      expect(lessonTasks[0].parent_task_id).toBe(parent.id)
+      expect(lessonTasks[0].priority).toBe(50)
+      expect(lessonTasks[0].metadata?.lesson_source_task_id).toBe(parent.id)
+      expect(lessonTasks[0].metadata?.lesson_source_fix_id).toBe(fixTask.id)
+    })
+
+    it('auto-approves lesson tasks at REVIEW', () => {
+      const lessonTask = taskStore.create({
+        type: 'lesson',
+        summary: 'Extract lesson',
+        prompt: 'Extract it',
+        backend: 'claude-code',
+        parent_task_id: 'some-parent',
+      })
+      taskStore.transition(lessonTask.id, TaskStatus.IN_PROGRESS, { lease_owner: 'test' })
+      taskStore.transition(lessonTask.id, TaskStatus.REVIEW, { result: 'lesson output' })
+
+      const updated = taskStore.getById(lessonTask.id)!
+      handler.onTaskReview(updated)
+
+      expect(taskStore.getById(lessonTask.id)!.status).toBe(TaskStatus.DONE)
+    })
+  })
 })

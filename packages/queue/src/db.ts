@@ -99,4 +99,15 @@ const SCHEMA = `
     last_run_at   TEXT,
     next_run_at   TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS lessons (
+    id              TEXT PRIMARY KEY,
+    rule            TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    source_task_id  TEXT,
+    source_fix_id   TEXT,
+    severity        TEXT DEFAULT 'medium',
+    created_at      TEXT NOT NULL,
+    times_applied   INTEGER DEFAULT 0
+  );
 `

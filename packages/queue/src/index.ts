@@ -79,6 +79,10 @@ export type { ScheduleConfig, ScheduleEntry } from './scheduler.js'
 export { ReviewHandler, buildReviewPrompt, buildMergePrompt, buildFixPrompt, parseReviewDecision } from './review-handler.js'
 export type { ReviewerConfig, AutoReviewConfig, ReviewDecision, ReviewChainEntry } from './review-handler.js'
 
+// Lessons
+export { LessonStore, parseLessonOutput, buildLessonPrompt } from './lessons.js'
+export type { Lesson, CreateLessonInput } from './lessons.js'
+
 // Errors
 export {
   TransitionError,

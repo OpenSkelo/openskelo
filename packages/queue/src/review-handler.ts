@@ -2,6 +2,7 @@ import type { TaskStore, Task, CreateTaskInput, InjectTaskInput } from './task-s
 import type { AuditLog } from './audit.js'
 import type { WebhookDispatcher } from './webhooks.js'
 import { TaskStatus } from './state-machine.js'
+import { buildLessonPrompt } from './lessons.js'
 
 export interface ReviewerConfig {
   backend: string
@@ -325,8 +326,8 @@ export class ReviewHandler {
   }
 
   onTaskReview(task: Task): void {
-    // Auto-approve review children (review of review not needed)
-    if (task.type === 'review' && task.parent_task_id) {
+    // Auto-approve review children and lesson tasks (review of review/lesson not needed)
+    if ((task.type === 'review' || task.type === 'lesson') && task.parent_task_id) {
       this.auditLog.logAction({
         task_id: task.id,
         action: 'auto_approve_review_child',
@@ -640,6 +641,51 @@ export class ReviewHandler {
         metadata: { fix_task_id: fixTask.id, unhold_count: unheldCount },
       })
     }
+
+    // Extract lesson from fix cycle (fire-and-forget, low priority)
+    this.createLessonTask(parent, fixTask)
+  }
+
+  private createLessonTask(parent: Task, fixTask: Task): void {
+    // Gather review findings from review children
+    const reviewChildren = this.taskStore.list({ type: 'review' })
+      .filter(t => t.parent_task_id === parent.id)
+    const findings = reviewChildren
+      .map(c => {
+        const decision = c.result ? parseReviewDecision(c.result) : null
+        return decision?.feedback ? decision.feedback : null
+      })
+      .filter(Boolean)
+
+    const lessonPrompt = buildLessonPrompt(
+      { summary: parent.summary, prompt: parent.prompt, result: parent.result },
+      { result: fixTask.result },
+      findings,
+    )
+
+    const lessonInput: CreateTaskInput = {
+      type: 'lesson',
+      summary: `Extract lesson from fix: ${parent.summary}`,
+      prompt: lessonPrompt,
+      backend: parent.backend,
+      parent_task_id: parent.id,
+      priority: 50,
+      metadata: {
+        lesson_source_task_id: parent.id,
+        lesson_source_fix_id: fixTask.id,
+      },
+    }
+
+    this.taskStore.create(lessonInput)
+
+    this.auditLog.logAction({
+      task_id: parent.id,
+      action: 'lesson_extraction_created',
+      metadata: {
+        fix_task_id: fixTask.id,
+        findings_count: findings.length,
+      },
+    })
   }
 
   private applyDecision(parentTask: Task, decision: ReviewDecision): void {
