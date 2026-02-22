@@ -33,11 +33,18 @@ export interface CreateLessonInput {
   severity?: string
 }
 
+const VALID_SEVERITIES = new Set(['critical', 'high', 'medium', 'low'])
+
 const SEVERITY_WEIGHT: Record<string, number> = {
   critical: 4,
   high: 3,
   medium: 2,
   low: 1,
+}
+
+function normalizeSeverity(severity?: string): string {
+  const value = String(severity ?? 'medium').toLowerCase().trim()
+  return VALID_SEVERITIES.has(value) ? value : 'medium'
 }
 
 const STOP_WORDS = new Set([
@@ -62,11 +69,13 @@ export function parseLessonOutput(output: string): CreateLessonInput | null {
 
   try {
     const parsed = JSON.parse(jsonStr)
-    if (typeof parsed.rule === 'string' && typeof parsed.category === 'string') {
+    const rule = typeof parsed.rule === 'string' ? parsed.rule.trim() : ''
+    const category = typeof parsed.category === 'string' ? parsed.category.trim() : ''
+    if (rule && category) {
       return {
-        rule: parsed.rule,
-        category: parsed.category,
-        severity: typeof parsed.severity === 'string' ? parsed.severity : 'medium',
+        rule,
+        category,
+        severity: normalizeSeverity(parsed.severity),
       }
     }
   } catch {
@@ -119,6 +128,16 @@ export class LessonStore {
   }
 
   create(input: CreateLessonInput): Lesson {
+    const rule = String(input.rule ?? '').trim()
+    const category = String(input.category ?? '').trim()
+    if (!rule || !category) {
+      throw new Error('rule and category are required')
+    }
+
+    if (input.severity && !VALID_SEVERITIES.has(String(input.severity).toLowerCase())) {
+      throw new Error(`Invalid lesson severity: ${input.severity}`)
+    }
+
     const id = ulid()
     const now = new Date().toISOString()
 
@@ -127,11 +146,11 @@ export class LessonStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, 0)
     `).run(
       id,
-      input.rule,
-      input.category,
+      rule,
+      category,
       input.source_task_id ?? null,
       input.source_fix_id ?? null,
-      input.severity ?? 'medium',
+      normalizeSeverity(input.severity),
       now,
     )
 

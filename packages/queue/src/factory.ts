@@ -117,13 +117,29 @@ export function createQueue(config: QueueConfig): Queue {
         const parsed = parseLessonOutput(task.result)
         if (parsed) {
           const meta = task.metadata as Record<string, unknown>
-          parsed.source_task_id = String(meta?.lesson_source_task_id ?? '')
-          parsed.source_fix_id = String(meta?.lesson_source_fix_id ?? '')
-          lessonStore.create(parsed)
+          const sourceTask = typeof meta?.lesson_source_task_id === 'string'
+            ? meta.lesson_source_task_id.trim()
+            : ''
+          const sourceFix = typeof meta?.lesson_source_fix_id === 'string'
+            ? meta.lesson_source_fix_id.trim()
+            : ''
+
+          const stored = lessonStore.create({
+            ...parsed,
+            source_task_id: sourceTask || undefined,
+            source_fix_id: sourceFix || undefined,
+          })
+
           auditLog.logAction({
             task_id: task.id,
             action: 'lesson_stored',
-            metadata: { rule: parsed.rule, category: parsed.category },
+            metadata: { lesson_id: stored.id, rule: stored.rule, category: stored.category },
+          })
+        } else {
+          auditLog.logAction({
+            task_id: task.id,
+            action: 'lesson_parse_failed',
+            metadata: { output_preview: task.result.slice(0, 200) },
           })
         }
       }

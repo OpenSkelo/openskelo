@@ -597,7 +597,12 @@ export function createApiRouter(
       }
       const lesson = lessonStore.create(body)
       res.status(201).json(lesson)
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Internal server error'
+      if (message.includes('Invalid lesson severity') || message.includes('rule and category are required')) {
+        res.status(400).json({ error: message })
+        return
+      }
       res.status(500).json({ error: 'Internal server error' })
     }
   })

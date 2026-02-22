@@ -41,6 +41,14 @@ describe('LessonStore', () => {
     expect(lesson.severity).toBe('medium')
   })
 
+  it('rejects invalid severity values', () => {
+    expect(() => store.create({
+      rule: 'Test rule',
+      category: 'testing',
+      severity: 'urgent',
+    })).toThrow('Invalid lesson severity')
+  })
+
   it('stores source_task_id and source_fix_id', () => {
     const lesson = store.create({
       rule: 'Check errors',
@@ -187,6 +195,12 @@ describe('parseLessonOutput', () => {
 
   it('defaults severity to medium', () => {
     const output = JSON.stringify({ rule: 'Some rule', category: 'testing' })
+    const result = parseLessonOutput(output)
+    expect(result!.severity).toBe('medium')
+  })
+
+  it('normalizes unknown severity to medium', () => {
+    const output = JSON.stringify({ rule: 'Some rule', category: 'testing', severity: 'urgent' })
     const result = parseLessonOutput(output)
     expect(result!.severity).toBe('medium')
   })

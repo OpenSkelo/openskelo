@@ -810,5 +810,17 @@ describe('REST API Router', () => {
         .send({ rule: 'Missing category' })
         .expect(400)
     })
+
+    it('POST /lessons returns 400 for invalid severity', async () => {
+      const lessonStore = new LessonStore(db)
+      const appWithLessons = createTestApp({ ...deps, lessonStore })
+
+      const res = await request(appWithLessons)
+        .post('/lessons')
+        .send({ rule: 'Use validation', category: 'validation', severity: 'urgent' })
+        .expect(400)
+
+      expect(res.body.error).toContain('Invalid lesson severity')
+    })
   })
 })

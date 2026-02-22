@@ -1758,6 +1758,80 @@ describe('ReviewHandler', () => {
       expect(lessonTasks[0].metadata?.lesson_source_fix_id).toBe(fixTask.id)
     })
 
+    it('does not create duplicate lesson task for the same fix', () => {
+      const parent = createAndTransitionToReview()
+
+      const fixTask = taskStore.create(makeTaskInput({
+        summary: 'fix',
+        parent_task_id: parent.id,
+        metadata: { fix_for: parent.id },
+        loop_iteration: parent.loop_iteration,
+      }))
+      taskStore.transition(fixTask.id, TaskStatus.IN_PROGRESS, { lease_owner: 'test' })
+      taskStore.transition(fixTask.id, TaskStatus.REVIEW, { result: 'fixed' })
+      taskStore.transition(fixTask.id, TaskStatus.DONE)
+
+      handler.onFixComplete(taskStore.getById(fixTask.id)!)
+      handler.onFixComplete(taskStore.getById(fixTask.id)!)
+
+      const lessonTasks = taskStore.list({ type: 'lesson' })
+        .filter(t => t.metadata?.lesson_source_fix_id === fixTask.id)
+      expect(lessonTasks).toHaveLength(1)
+    })
+
+    it('lesson prompt excludes stale iteration feedback', () => {
+      const config = makeAutoReviewConfig({
+        reviewers: [{ backend: 'openrouter', model: 'model-a' }],
+      })
+
+      const parent = createAndTransitionToReview({
+        auto_review: config as unknown as Record<string, unknown>,
+        loop_iteration: 2,
+      })
+
+      const staleReview = taskStore.create(makeTaskInput({
+        type: 'review',
+        summary: 'stale',
+        prompt: 'stale',
+        backend: 'openrouter/model-a',
+        parent_task_id: parent.id,
+        metadata: { review_iteration: 1, reviewer_backend: 'openrouter' },
+      }))
+      completeReviewChild(staleReview.id, JSON.stringify({
+        approved: false,
+        feedback: { what: 'STALE_FEEDBACK', where: 'old.ts', fix: 'ignore' },
+      }))
+
+      const currentReview = taskStore.create(makeTaskInput({
+        type: 'review',
+        summary: 'current',
+        prompt: 'current',
+        backend: 'openrouter/model-a',
+        parent_task_id: parent.id,
+        metadata: { review_iteration: 2, reviewer_backend: 'openrouter' },
+      }))
+      completeReviewChild(currentReview.id, JSON.stringify({
+        approved: false,
+        feedback: { what: 'CURRENT_FEEDBACK', where: 'new.ts', fix: 'fix now' },
+      }))
+
+      const fixTask = taskStore.create(makeTaskInput({
+        summary: 'fix',
+        parent_task_id: parent.id,
+        metadata: { fix_for: parent.id },
+        loop_iteration: 2,
+      }))
+      taskStore.transition(fixTask.id, TaskStatus.IN_PROGRESS, { lease_owner: 'test' })
+      taskStore.transition(fixTask.id, TaskStatus.REVIEW, { result: 'fixed' })
+      taskStore.transition(fixTask.id, TaskStatus.DONE)
+
+      handler.onFixComplete(taskStore.getById(fixTask.id)!)
+
+      const lessonTask = taskStore.list({ type: 'lesson' })[0]
+      expect(lessonTask.prompt).toContain('CURRENT_FEEDBACK')
+      expect(lessonTask.prompt).not.toContain('STALE_FEEDBACK')
+    })
+
     it('auto-approves lesson tasks at REVIEW', () => {
       const lessonTask = taskStore.create({
         type: 'lesson',

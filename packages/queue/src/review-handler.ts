@@ -647,9 +647,29 @@ export class ReviewHandler {
   }
 
   private createLessonTask(parent: Task, fixTask: Task): void {
-    // Gather review findings from review children
+    const existingLessonTask = this.taskStore.list({ type: 'lesson' })
+      .find(t => t.parent_task_id === parent.id && t.metadata?.lesson_source_fix_id === fixTask.id)
+
+    if (existingLessonTask) {
+      this.auditLog.logAction({
+        task_id: parent.id,
+        action: 'lesson_extraction_exists',
+        metadata: {
+          fix_task_id: fixTask.id,
+          lesson_task_id: existingLessonTask.id,
+        },
+      })
+      return
+    }
+
+    // Gather findings from reviewer tasks in the same iteration (exclude merge tasks).
     const reviewChildren = this.taskStore.list({ type: 'review' })
-      .filter(t => t.parent_task_id === parent.id)
+      .filter(t =>
+        t.parent_task_id === parent.id
+        && !Boolean(t.metadata?.is_merge)
+        && Number(t.metadata?.review_iteration ?? fixTask.loop_iteration) === fixTask.loop_iteration,
+      )
+
     const findings = reviewChildren
       .map(c => {
         const decision = c.result ? parseReviewDecision(c.result) : null
@@ -673,6 +693,7 @@ export class ReviewHandler {
       metadata: {
         lesson_source_task_id: parent.id,
         lesson_source_fix_id: fixTask.id,
+        review_iteration: fixTask.loop_iteration,
       },
     }
 
