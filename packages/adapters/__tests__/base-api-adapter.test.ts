@@ -220,6 +220,17 @@ describe('BaseApiAdapter', () => {
     expect(result.failure_code).toBe('unknown')
   })
 
+  it('sets failure_code=auth_required for 401', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve('Unauthorized'),
+    })
+
+    const result = await adapter.execute(makeTask())
+    expect(result.failure_code).toBe('auth_required')
+  })
+
   it('sets failure_code=permission_required for 403', async () => {
     mockFetch.mockResolvedValue({
       ok: false,

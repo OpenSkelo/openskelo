@@ -332,16 +332,39 @@ describe('ReviewHandler', () => {
         allow_dangerous_claude_retry: true,
       })
 
-      const task = createAndTransitionToReview({
-        backend: 'shell',
-        result: 'requires your approval in the permission prompt',
-      })
+      const task = createAndTransitionToReview(
+        { backend: 'shell' },
+        'requires your approval in the permission prompt',
+      )
 
       handler.onTaskReview(task)
 
       const updated = taskStore.getById(task.id)!
       expect(updated.status).toBe(TaskStatus.REVIEW)
       expect(updated.metadata.remediation_attempts).toBeUndefined()
+    })
+
+    it('auto-remediates when structured failure code is permission_required', () => {
+      handler = new ReviewHandler(taskStore, auditLog, undefined, {
+        enabled: true,
+        max_attempts: 1,
+        allow_dangerous_claude_retry: true,
+      })
+
+      const task = createAndTransitionToReview(
+        {
+          backend: 'claude-code',
+          metadata: { last_failure_code: 'permission_required' },
+        },
+        'generic failure output without prompt phrase',
+      )
+
+      handler.onTaskReview(task)
+
+      const updated = taskStore.getById(task.id)!
+      expect(updated.status).toBe(TaskStatus.PENDING)
+      expect(updated.backend_config.args).toContain('--dangerously-skip-permissions')
+      expect(updated.metadata.remediation_attempts).toBe(1)
     })
 
     it('does not create duplicate review children for the same iteration', () => {

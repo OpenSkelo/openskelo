@@ -912,9 +912,17 @@ export class ReviewHandler {
     return false
   }
 
-  // v1_interim: only Claude permission prompt detection.
-  // P7 adds: structured failure_code taxonomy + OpenClaw remediation routing.
+  // v1_interim: permission remediation only.
+  // P7 adds: broader failure_code taxonomy + OpenClaw remediation routing.
   private detectRemediationMatch(task: Task): RemediationMatch | null {
+    const failureCode = String(task.metadata?.last_failure_code ?? '').toLowerCase().trim()
+    if (failureCode === 'permission_required') {
+      return {
+        code: 'claude_permission_prompt',
+        detail: 'Detected permission blocker from structured failure code',
+      }
+    }
+
     const combined = `${task.last_error ?? ''}\n${task.result ?? ''}`.toLowerCase()
 
     const permissionHints = [

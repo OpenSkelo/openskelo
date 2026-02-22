@@ -11,6 +11,10 @@ const PATTERNS: FailurePattern[] = [
     code: 'permission_required',
   },
   {
+    hints: ['unauthorized', 'authentication required', 'invalid api key', 'invalid token', '401'],
+    code: 'auth_required',
+  },
+  {
     hints: ['rate limit', 'rate_limit', '429', 'too many requests', 'throttled'],
     code: 'rate_limited',
   },
@@ -60,6 +64,7 @@ export function classifyFailure(
  * Used by BaseApiAdapter for non-ok responses.
  */
 export function classifyHttpStatus(status: number): FailureCode {
+  if (status === 401) return 'auth_required'
   if (status === 429) return 'rate_limited'
   if (status === 403) return 'permission_required'
   if (status === 408 || status === 504) return 'timeout'

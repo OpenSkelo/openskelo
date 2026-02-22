@@ -16,6 +16,12 @@ describe('classifyFailure', () => {
     expect(classifyFailure(1, 'Use --dangerously-skip-permissions to bypass')).toBe('permission_required')
   })
 
+  it('detects auth_required from output', () => {
+    expect(classifyFailure(1, 'HTTP 401 unauthorized')).toBe('auth_required')
+    expect(classifyFailure(1, 'Authentication required for this endpoint')).toBe('auth_required')
+    expect(classifyFailure(1, 'Invalid API key')).toBe('auth_required')
+  })
+
   it('detects rate_limited from output', () => {
     expect(classifyFailure(1, 'Error: rate limit exceeded')).toBe('rate_limited')
     expect(classifyFailure(1, 'HTTP 429 Too Many Requests')).toBe('rate_limited')
@@ -52,6 +58,10 @@ describe('classifyFailure', () => {
 })
 
 describe('classifyHttpStatus', () => {
+  it('maps 401 to auth_required', () => {
+    expect(classifyHttpStatus(401)).toBe('auth_required')
+  })
+
   it('maps 429 to rate_limited', () => {
     expect(classifyHttpStatus(429)).toBe('rate_limited')
   })
