@@ -18,6 +18,7 @@ import { TemplateStore } from './templates.js'
 import { Scheduler } from './scheduler.js'
 import type { ScheduleConfig } from './scheduler.js'
 import { ReviewHandler } from './review-handler.js'
+import type { RemediationConfig } from './review-handler.js'
 import { ExpandHandler } from './expand-handler.js'
 import { seedBuiltinTemplates } from './templates.js'
 import { TaskStatus } from './state-machine.js'
@@ -49,6 +50,7 @@ export interface QueueConfig {
   }
   webhooks?: WebhookConfig[]
   schedules?: ScheduleConfig[]
+  remediation?: RemediationConfig
 }
 
 export interface Queue {
@@ -169,7 +171,7 @@ export function createQueue(config: QueueConfig): Queue {
 
   const taskStore = new TaskStore(db, { onTransition })
   taskStoreRef = taskStore
-  reviewHandler = new ReviewHandler(taskStore, auditLog, webhookDispatcher)
+  reviewHandler = new ReviewHandler(taskStore, auditLog, webhookDispatcher, config.remediation)
   expandHandler = new ExpandHandler(taskStore, auditLog)
   const lessonStore = new LessonStore(db)
   const templateStore = new TemplateStore(db, taskStore)

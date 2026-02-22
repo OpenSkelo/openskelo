@@ -66,6 +66,11 @@ interface RawConfig {
     every: string
     enabled?: boolean
   }>
+  remediation?: {
+    enabled?: boolean
+    max_attempts?: number
+    allow_dangerous_claude_retry?: boolean
+  }
 }
 
 function substituteEnvVars(text: string): string {
@@ -158,6 +163,14 @@ export function loadConfig(configPath?: string): QueueConfig & { gates?: Record<
       every: s.every,
       enabled: s.enabled,
     }))
+  }
+
+  if (raw.remediation) {
+    config.remediation = {
+      enabled: raw.remediation.enabled,
+      max_attempts: raw.remediation.max_attempts,
+      allow_dangerous_claude_retry: raw.remediation.allow_dangerous_claude_retry,
+    }
   }
 
   return config

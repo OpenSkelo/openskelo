@@ -140,6 +140,29 @@ adapters:
     expect(config.server?.host).toBe('0.0.0.0')
   })
 
+  it('remediation config parsed correctly', () => {
+    const configPath = writeYaml('openskelo.yaml', `
+db_path: ./test.db
+
+remediation:
+  enabled: true
+  max_attempts: 2
+  allow_dangerous_claude_retry: true
+
+adapters:
+  - name: shell
+    type: cli
+    task_types: [script]
+`)
+
+    const config = loadConfig(configPath)
+    expect(config.remediation).toEqual({
+      enabled: true,
+      max_attempts: 2,
+      allow_dangerous_claude_retry: true,
+    })
+  })
+
   it('gates config parsed correctly', () => {
     const configPath = writeYaml('openskelo.yaml', `
 db_path: ./test.db

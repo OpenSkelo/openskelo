@@ -35,6 +35,17 @@ export interface ReviewChainEntry {
 
 const HARD_CAP = 10
 
+export interface RemediationConfig {
+  enabled?: boolean
+  max_attempts?: number
+  allow_dangerous_claude_retry?: boolean
+}
+
+interface RemediationMatch {
+  code: 'claude_permission_prompt'
+  detail: string
+}
+
 export interface ReviewDecision {
   approved: boolean
   feedback?: { what: string; where: string; fix: string }
@@ -249,11 +260,22 @@ export class ReviewHandler {
   private taskStore: TaskStore
   private auditLog: AuditLog
   private webhookDispatcher?: WebhookDispatcher
+  private remediation: Required<RemediationConfig>
 
-  constructor(taskStore: TaskStore, auditLog: AuditLog, webhookDispatcher?: WebhookDispatcher) {
+  constructor(
+    taskStore: TaskStore,
+    auditLog: AuditLog,
+    webhookDispatcher?: WebhookDispatcher,
+    remediation?: RemediationConfig,
+  ) {
     this.taskStore = taskStore
     this.auditLog = auditLog
     this.webhookDispatcher = webhookDispatcher
+    this.remediation = {
+      enabled: remediation?.enabled ?? false,
+      max_attempts: remediation?.max_attempts ?? 1,
+      allow_dangerous_claude_retry: remediation?.allow_dangerous_claude_retry ?? false,
+    }
   }
 
   getReviewChain(taskId: string): ReviewChainEntry[] {
@@ -334,6 +356,11 @@ export class ReviewHandler {
         metadata: { parent_task_id: task.parent_task_id },
       })
       this.taskStore.transition(task.id, TaskStatus.DONE)
+      return
+    }
+
+    // Before auto-review fanout, attempt policy-driven remediation for known runtime blockers.
+    if (this.tryAutoRemediation(task)) {
       return
     }
 
@@ -757,6 +784,140 @@ export class ReviewHandler {
 
       this.createFixTask(parentTask, decision)
     }
+  }
+
+  private tryAutoRemediation(task: Task): boolean {
+    if (!this.remediation.enabled) return false
+
+    const match = this.detectRemediationMatch(task)
+    if (!match) return false
+
+    const attempts = Number(task.metadata?.remediation_attempts ?? 0)
+    const maxAttempts = Math.max(0, this.remediation.max_attempts)
+
+    if (attempts >= maxAttempts) {
+      this.auditLog.logAction({
+        task_id: task.id,
+        action: 'auto_remediation_exhausted',
+        metadata: {
+          remediation_code: match.code,
+          attempts,
+          max_attempts: maxAttempts,
+        },
+      })
+
+      this.taskStore.update(task.id, {
+        metadata: {
+          ...task.metadata,
+          needs_human: true,
+          escalation_reason: `Auto-remediation exhausted for ${match.code}`,
+          remediation_last_code: match.code,
+          remediation_last_at: new Date().toISOString(),
+        },
+      })
+
+      this.webhookDispatcher?.emit({
+        event: 'human_escalation',
+        task_id: task.id,
+        task_summary: task.summary,
+        task_type: task.type,
+        task_status: task.status,
+        pipeline_id: task.pipeline_id ?? undefined,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          reason: 'remediation_exhausted',
+          remediation_code: match.code,
+          attempts,
+          max_attempts: maxAttempts,
+        },
+      })
+
+      return false
+    }
+
+    if (match.code === 'claude_permission_prompt') {
+      if (!this.remediation.allow_dangerous_claude_retry) return false
+
+      const backendPrefix = task.backend.split('/')[0].toLowerCase()
+      if (!backendPrefix.includes('claude')) return false
+
+      const currentArgs = Array.isArray(task.backend_config?.args)
+        ? [...task.backend_config.args]
+        : []
+      if (!currentArgs.includes('--dangerously-skip-permissions')) {
+        currentArgs.push('--dangerously-skip-permissions')
+      }
+
+      this.taskStore.update(task.id, {
+        backend_config: {
+          ...(task.backend_config ?? {}),
+          args: currentArgs,
+        },
+        metadata: {
+          ...task.metadata,
+          remediation_attempts: attempts + 1,
+          remediation_last_code: match.code,
+          remediation_last_at: new Date().toISOString(),
+          remediation_last_detail: match.detail,
+        },
+      })
+
+      try {
+        this.taskStore.transition(task.id, TaskStatus.PENDING, {
+          feedback: {
+            what: 'Execution blocked by adapter permission prompt',
+            where: 'adapter runtime',
+            fix: 'Auto-remediation patched backend args and re-queued for retry',
+          },
+        })
+      } catch (err) {
+        this.auditLog.logAction({
+          task_id: task.id,
+          action: 'auto_remediation_transition_failed',
+          metadata: {
+            remediation_code: match.code,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        })
+        return false
+      }
+
+      this.auditLog.logAction({
+        task_id: task.id,
+        action: 'auto_remediation_applied',
+        metadata: {
+          remediation_code: match.code,
+          attempts_after: attempts + 1,
+          backend: task.backend,
+          patched_args: currentArgs,
+        },
+      })
+
+      return true
+    }
+
+    return false
+  }
+
+  private detectRemediationMatch(task: Task): RemediationMatch | null {
+    const combined = `${task.last_error ?? ''}\n${task.result ?? ''}`.toLowerCase()
+
+    const permissionHints = [
+      'requires your approval in the permission prompt',
+      'permission prompt',
+      'permission mode setting',
+      'approve the pending',
+      'cannot proceed because',
+    ]
+
+    if (permissionHints.some(hint => combined.includes(hint))) {
+      return {
+        code: 'claude_permission_prompt',
+        detail: 'Detected permission prompt blocker in adapter output',
+      }
+    }
+
+    return null
   }
 
   private createFixTask(parent: Task, decision: ReviewDecision): Task {

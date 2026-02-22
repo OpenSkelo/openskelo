@@ -160,6 +160,12 @@ server:
   host: \${HOST:-127.0.0.1}
   # api_key: \${OPENSKELO_API_KEY}
 
+# Auto-remediation policy (optional)
+# remediation:
+#   enabled: true
+#   max_attempts: 1
+#   allow_dangerous_claude_retry: false
+
 # Gates per task type
 gates:
   code:

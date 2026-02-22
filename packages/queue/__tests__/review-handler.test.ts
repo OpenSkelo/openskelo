@@ -231,6 +231,7 @@ describe('ReviewHandler', () => {
 
   function createAndTransitionToReview(
     input: Partial<CreateTaskInput> = {},
+    reviewResult = 'Task output here',
   ): Task {
     const task = taskStore.create(makeTaskInput(input))
     taskStore.transition(task.id, TaskStatus.IN_PROGRESS, {
@@ -238,7 +239,7 @@ describe('ReviewHandler', () => {
       lease_expires_at: new Date(Date.now() + 60000).toISOString(),
     })
     return taskStore.transition(task.id, TaskStatus.REVIEW, {
-      result: 'Task output here',
+      result: reviewResult,
     })
   }
 
@@ -279,6 +280,68 @@ describe('ReviewHandler', () => {
 
       const children = taskStore.list({ type: 'review' })
       expect(children).toHaveLength(0)
+    })
+
+    it('auto-remediates permission-blocked task back to PENDING when enabled', () => {
+      handler = new ReviewHandler(taskStore, auditLog, undefined, {
+        enabled: true,
+        max_attempts: 1,
+        allow_dangerous_claude_retry: true,
+      })
+
+      const task = createAndTransitionToReview(
+        { backend: 'claude-code' },
+        "I'm unable to proceed because `git checkout` requires your approval in the permission prompt.",
+      )
+
+      handler.onTaskReview(task)
+
+      const updated = taskStore.getById(task.id)!
+      expect(updated.status).toBe(TaskStatus.PENDING)
+      expect(updated.backend_config.args).toContain('--dangerously-skip-permissions')
+      expect(updated.metadata.remediation_attempts).toBe(1)
+    })
+
+    it('does not auto-remediate when max attempts are exhausted', () => {
+      handler = new ReviewHandler(taskStore, auditLog, undefined, {
+        enabled: true,
+        max_attempts: 1,
+        allow_dangerous_claude_retry: true,
+      })
+
+      const task = createAndTransitionToReview(
+        {
+          backend: 'claude-code',
+          metadata: { remediation_attempts: 1 },
+        },
+        'requires your approval in the permission prompt',
+      )
+
+      handler.onTaskReview(task)
+
+      const updated = taskStore.getById(task.id)!
+      expect(updated.status).toBe(TaskStatus.REVIEW)
+      expect(updated.metadata.needs_human).toBe(true)
+      expect(updated.metadata.escalation_reason).toContain('Auto-remediation exhausted')
+    })
+
+    it('does not auto-remediate non-claude backends', () => {
+      handler = new ReviewHandler(taskStore, auditLog, undefined, {
+        enabled: true,
+        max_attempts: 2,
+        allow_dangerous_claude_retry: true,
+      })
+
+      const task = createAndTransitionToReview({
+        backend: 'shell',
+        result: 'requires your approval in the permission prompt',
+      })
+
+      handler.onTaskReview(task)
+
+      const updated = taskStore.getById(task.id)!
+      expect(updated.status).toBe(TaskStatus.REVIEW)
+      expect(updated.metadata.remediation_attempts).toBeUndefined()
     })
 
     it('does not create duplicate review children for the same iteration', () => {
