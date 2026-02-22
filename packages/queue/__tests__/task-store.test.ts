@@ -203,6 +203,23 @@ describe('TaskStore', () => {
         'Use transition()',
       )
     })
+
+    it('does not throw when onTransition hook fails after commit', () => {
+      const localStore = new TaskStore(db, {
+        onTransition: () => {
+          throw new Error('hook failure')
+        },
+      })
+
+      const task = localStore.create(minimal)
+      const updated = localStore.transition(task.id, TaskStatus.IN_PROGRESS, {
+        lease_owner: 'adapter-1',
+        lease_expires_at: new Date(Date.now() + 60000).toISOString(),
+      })
+
+      expect(updated.status).toBe(TaskStatus.IN_PROGRESS)
+      expect(localStore.getById(task.id)!.status).toBe(TaskStatus.IN_PROGRESS)
+    })
   })
 
   describe('dependency validation', () => {

@@ -271,7 +271,14 @@ export class TaskStore {
     })
 
     const { updated, from } = tx.immediate(id, to, context)
-    this.config.onTransition?.(updated, from, to)
+
+    try {
+      this.config.onTransition?.(updated, from, to)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`onTransition hook failed for task ${updated.id}: ${message}`)
+    }
+
     return updated
   }
 

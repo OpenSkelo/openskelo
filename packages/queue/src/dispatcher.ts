@@ -178,6 +178,7 @@ export class Dispatcher {
         const taskInput = taskToInput(candidate, upstreamResults)
 
         // Inject relevant lessons into prompt (skip for lesson/review tasks)
+        let lessonsApplied: Array<{ id: string }> = []
         const skipLessonTypes = new Set(['lesson', 'review'])
         if (this.lessonStore && !skipLessonTypes.has(candidate.type)) {
           const lessons = this.lessonStore.getRelevant(candidate.prompt, 5)
@@ -186,15 +187,7 @@ export class Dispatcher {
               .map(l => `- [${l.severity}] ${l.rule}`)
               .join('\n')
             taskInput.prompt = `## Lessons Learned\nApply these rules from previous work:\n${lessonBlock}\n\n${taskInput.prompt}`
-            for (const l of lessons) {
-              this.lessonStore.incrementApplied(l.id)
-            }
-            this.taskStore.update(taskId, {
-              metadata: {
-                ...(candidate.metadata ?? {}),
-                lessons_applied: lessons.map(l => l.id),
-              },
-            })
+            lessonsApplied = lessons.map(lesson => ({ id: lesson.id }))
           }
         }
 
@@ -230,6 +223,20 @@ export class Dispatcher {
                 duration_ms: adapterResult.duration_ms,
               },
             })
+
+            if (this.lessonStore && lessonsApplied.length > 0) {
+              for (const lesson of lessonsApplied) {
+                this.lessonStore.incrementApplied(lesson.id)
+              }
+
+              const latest = this.taskStore.getById(taskId)
+              this.taskStore.update(taskId, {
+                metadata: {
+                  ...(latest?.metadata ?? {}),
+                  lessons_applied: lessonsApplied.map(lesson => lesson.id),
+                },
+              })
+            }
           } catch {
             // Transition failed, try to release
             try {

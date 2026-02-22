@@ -715,18 +715,44 @@ describe('Dispatcher', () => {
     expect(capturedInput!.prompt).toContain('Always validate input')
   })
 
-  it('increments times_applied for injected lessons', async () => {
+  it('increments times_applied for injected lessons after successful execution', async () => {
     const lessonStore = new LessonStore(db)
     const lesson = lessonStore.create({ rule: 'Always validate input data', category: 'validation' })
     expect(lesson.times_applied).toBe(0)
 
-    const adapter = createHangingAdapter('claude-code', ['code'])
+    const adapter = createMockAdapter('claude-code', ['code'], async () => ({
+      output: 'done',
+      exit_code: 0,
+      duration_ms: 50,
+    }))
+
     taskStore.create(makeTaskInput({ prompt: 'Validate input data from user' }))
     const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG, lessonStore)
     await dispatcher.tick()
 
+    await new Promise(r => setTimeout(r, 20))
+
     const updated = lessonStore.getById(lesson.id)!
     expect(updated.times_applied).toBe(1)
+  })
+
+  it('does not increment times_applied when execution fails', async () => {
+    const lessonStore = new LessonStore(db)
+    const lesson = lessonStore.create({ rule: 'Always validate input data', category: 'validation' })
+    expect(lesson.times_applied).toBe(0)
+
+    const adapter = createMockAdapter('claude-code', ['code'], async () => {
+      throw new Error('execution failed')
+    })
+
+    taskStore.create(makeTaskInput({ prompt: 'Validate input data from user' }))
+    const dispatcher = new Dispatcher(taskStore, priorityQueue, auditLog, [adapter], DEFAULT_CONFIG, lessonStore)
+    await dispatcher.tick()
+
+    await new Promise(r => setTimeout(r, 20))
+
+    const updated = lessonStore.getById(lesson.id)!
+    expect(updated.times_applied).toBe(0)
   })
 
   it('skips lesson injection for review and lesson task types', async () => {
